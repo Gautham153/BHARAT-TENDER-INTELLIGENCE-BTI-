@@ -1,5 +1,7 @@
 // Bharat Tender Intelligence (BTI) — Domain Types & Interfaces
-// Phase 0: Master Foundation Type Architecture
+// Phase 0 & 1A: Master Foundation Type Architecture
+
+export * from './auth';
 
 export type UserRole = 'government' | 'agency' | 'public' | 'government_admin' | 'government_officer' | 'agency_user' | 'public_citizen';
 

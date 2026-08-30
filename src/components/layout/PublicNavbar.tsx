@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { Menu, X, ArrowRight, Shield, Building2, Users } from 'lucide-react';
+import { Menu, X, ArrowRight, Shield, Building2, Users, LogOut, User as UserIcon } from 'lucide-react';
 import { BtiLogo } from '../common/BtiLogo';
 import { Button } from '../ui/Button';
+import { useAuth } from '../../context/AuthContext';
 
 export interface PublicNavbarProps {
   currentPath: string;
@@ -10,6 +11,7 @@ export interface PublicNavbarProps {
 
 export const PublicNavbar: React.FC<PublicNavbarProps> = ({ currentPath, onNavigate }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const { user, isAuthenticated, logout } = useAuth();
 
   const navLinks = [
     { label: 'About', path: '/about' },
@@ -18,6 +20,16 @@ export const PublicNavbar: React.FC<PublicNavbarProps> = ({ currentPath, onNavig
     { label: 'Resources', path: '/resources' },
     { label: 'Contact', path: '/contact' },
   ];
+
+  const handleOpenWorkspace = () => {
+    if (user?.role === 'government') {
+      onNavigate('/government/dashboard');
+    } else if (user?.role === 'agency') {
+      onNavigate('/agency/dashboard');
+    } else {
+      onNavigate('/portal-selection');
+    }
+  };
 
   return (
     <header className="w-full bg-white border-b border-slate-200/90 shadow-2xs z-30">
@@ -48,24 +60,64 @@ export const PublicNavbar: React.FC<PublicNavbarProps> = ({ currentPath, onNavig
 
         {/* Action CTAs */}
         <div className="hidden md:flex items-center gap-3">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => onNavigate('/login')}
-            className="text-slate-700 font-semibold"
-          >
-            Login
-          </Button>
-          <Button
-            variant="gov"
-            size="sm"
-            onClick={() => onNavigate('/government/dashboard')}
-            icon={ArrowRight}
-            iconPosition="right"
-            className="bg-[#002B49] text-white"
-          >
-            Get Started
-          </Button>
+          {isAuthenticated && user ? (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleOpenWorkspace}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-100 border border-slate-200 hover:bg-slate-200/70 transition-all cursor-pointer text-xs font-semibold text-slate-800"
+              >
+                <div className="w-5 h-5 rounded-full bg-[#002B49] text-white flex items-center justify-center text-[10px] font-bold">
+                  {user.name.charAt(0)}
+                </div>
+                <span className="max-w-[120px] truncate">{user.name}</span>
+                <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-blue-100/80 text-[#002B49]">
+                  {user.role}
+                </span>
+              </button>
+
+              <Button
+                variant="gov"
+                size="sm"
+                onClick={handleOpenWorkspace}
+                icon={ArrowRight}
+                iconPosition="right"
+                className="bg-[#002B49] text-white"
+              >
+                Workspace
+              </Button>
+
+              <button
+                type="button"
+                onClick={() => logout()}
+                title="Sign Out"
+                className="p-2 text-slate-400 hover:text-rose-600 rounded-lg transition-colors cursor-pointer"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            </div>
+          ) : (
+            <>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => onNavigate('/login')}
+                className="text-slate-700 font-semibold"
+              >
+                Login
+              </Button>
+              <Button
+                variant="gov"
+                size="sm"
+                onClick={() => onNavigate('/register/agency')}
+                icon={ArrowRight}
+                iconPosition="right"
+                className="bg-[#002B49] text-white"
+              >
+                Get Started
+              </Button>
+            </>
+          )}
         </div>
 
         {/* Mobile Menu Toggle Button */}
@@ -103,28 +155,57 @@ export const PublicNavbar: React.FC<PublicNavbarProps> = ({ currentPath, onNavig
           </div>
 
           <div className="grid grid-cols-2 gap-2 pt-2">
-            <Button
-              variant="outline"
-              size="md"
-              onClick={() => {
-                onNavigate('/login');
-                setMobileMenuOpen(false);
-              }}
-              className="w-full"
-            >
-              Login
-            </Button>
-            <Button
-              variant="gov"
-              size="md"
-              onClick={() => {
-                onNavigate('/government/dashboard');
-                setMobileMenuOpen(false);
-              }}
-              className="w-full"
-            >
-              Get Started
-            </Button>
+            {isAuthenticated && user ? (
+              <>
+                <Button
+                  variant="gov"
+                  size="md"
+                  onClick={() => {
+                    handleOpenWorkspace();
+                    setMobileMenuOpen(false);
+                  }}
+                  className="w-full bg-[#002B49]"
+                >
+                  My Workspace
+                </Button>
+                <Button
+                  variant="outline"
+                  size="md"
+                  onClick={() => {
+                    logout();
+                    setMobileMenuOpen(false);
+                  }}
+                  className="w-full text-rose-700 border-rose-200"
+                >
+                  Sign Out
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  variant="outline"
+                  size="md"
+                  onClick={() => {
+                    onNavigate('/login');
+                    setMobileMenuOpen(false);
+                  }}
+                  className="w-full"
+                >
+                  Login
+                </Button>
+                <Button
+                  variant="gov"
+                  size="md"
+                  onClick={() => {
+                    onNavigate('/register/agency');
+                    setMobileMenuOpen(false);
+                  }}
+                  className="w-full bg-[#002B49]"
+                >
+                  Get Started
+                </Button>
+              </>
+            )}
           </div>
         </div>
       )}

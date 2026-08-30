@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { ToastProvider, useToast } from './context/ToastContext';
+import { ToastProvider } from './context/ToastContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import { GovTopBar } from './components/layout/GovTopBar';
 import { PublicNavbar } from './components/layout/PublicNavbar';
 import { PublicFooter } from './components/layout/PublicFooter';
 import { PortalLayout } from './components/layout/PortalLayout';
+import { ProtectedRoute } from './components/auth/ProtectedRoute';
 import { LandingPage } from './pages/public/LandingPage';
 import { PublicMapPage } from './pages/public/PublicMapPage';
 import { TransparencyPortal } from './pages/public/TransparencyPortal';
@@ -12,6 +14,9 @@ import { AboutPage } from './pages/public/AboutPage';
 import { ResourcesPage } from './pages/public/ResourcesPage';
 import { ContactPage } from './pages/public/ContactPage';
 import { LoginPage } from './pages/public/LoginPage';
+import { ForgotPasswordPage } from './pages/public/ForgotPasswordPage';
+import { AgencyRegistrationPage } from './pages/public/AgencyRegistrationPage';
+import { PortalSelectionPage } from './pages/public/PortalSelectionPage';
 import { DemoSwitcher } from './components/common/DemoSwitcher';
 
 // Government Portal Pages
@@ -33,7 +38,7 @@ import { ProjectMilestonesPage } from './pages/agency/ProjectMilestonesPage';
 import { DisbursementsPage } from './pages/agency/DisbursementsPage';
 import { ComplianceProfilePage } from './pages/agency/ComplianceProfilePage';
 
-import { UserRole, Tender } from './types';
+import { Tender } from './types';
 
 function AppContent() {
   // Navigation State
@@ -43,7 +48,6 @@ function AppContent() {
       : '/';
   });
 
-  const [currentRole, setCurrentRole] = useState<UserRole>('government');
   const [selectedTender, setSelectedTender] = useState<Tender | null>(null);
 
   // Sync with browser history
@@ -63,7 +67,7 @@ function AppContent() {
 
   // Router Engine
   const renderRoute = () => {
-    // 1. Government Portal Routes
+    // 1. Government Portal Routes (Protected by Government Role)
     if (currentPath.startsWith('/government')) {
       const renderGovPage = () => {
         switch (currentPath) {
@@ -93,17 +97,23 @@ function AppContent() {
       };
 
       return (
-        <PortalLayout
-          portal="government"
+        <ProtectedRoute
+          requiredRole="government"
           currentPath={currentPath}
           onNavigate={navigate}
         >
-          {renderGovPage()}
-        </PortalLayout>
+          <PortalLayout
+            portal="government"
+            currentPath={currentPath}
+            onNavigate={navigate}
+          >
+            {renderGovPage()}
+          </PortalLayout>
+        </ProtectedRoute>
       );
     }
 
-    // 2. Agency Portal Routes
+    // 2. Agency Portal Routes (Protected by Agency Role)
     if (currentPath.startsWith('/agency')) {
       const renderAgencyPage = () => {
         switch (currentPath) {
@@ -125,17 +135,23 @@ function AppContent() {
       };
 
       return (
-        <PortalLayout
-          portal="agency"
+        <ProtectedRoute
+          requiredRole="agency"
           currentPath={currentPath}
           onNavigate={navigate}
         >
-          {renderAgencyPage()}
-        </PortalLayout>
+          <PortalLayout
+            portal="agency"
+            currentPath={currentPath}
+            onNavigate={navigate}
+          >
+            {renderAgencyPage()}
+          </PortalLayout>
+        </ProtectedRoute>
       );
     }
 
-    // 3. Public Routes (Wrapped in GovTopBar + PublicNavbar + PublicFooter)
+    // 3. Public & Auth Routes (Wrapped in GovTopBar + PublicNavbar + PublicFooter)
     return (
       <div className="min-h-screen flex flex-col bg-slate-50">
         <GovTopBar />
@@ -185,10 +201,25 @@ function AppContent() {
               case '/login':
                 return (
                   <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-                    <LoginPage
-                      onNavigate={navigate}
-                      onLoginAsRole={(role) => setCurrentRole(role)}
-                    />
+                    <LoginPage onNavigate={navigate} />
+                  </div>
+                );
+              case '/forgot-password':
+                return (
+                  <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+                    <ForgotPasswordPage onNavigate={navigate} />
+                  </div>
+                );
+              case '/register/agency':
+                return (
+                  <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+                    <AgencyRegistrationPage onNavigate={navigate} />
+                  </div>
+                );
+              case '/portal-selection':
+                return (
+                  <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+                    <PortalSelectionPage onNavigate={navigate} />
                   </div>
                 );
               default:
@@ -215,7 +246,9 @@ function AppContent() {
 export default function App() {
   return (
     <ToastProvider>
-      <AppContent />
+      <AuthProvider>
+        <AppContent />
+      </AuthProvider>
     </ToastProvider>
   );
 }

@@ -19,18 +19,37 @@ import {
   FileSpreadsheet,
   FolderKanban,
   History,
+  HelpCircle,
 } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { Card } from '../../components/ui/Card';
 import { Timeline, TimelineStep } from '../../components/ui/Timeline';
 import { HeroArtwork } from '../../components/common/HeroArtwork';
 import { mockStats, mockProjects } from '../../data/mockData';
+import { useAuth } from '../../context/AuthContext';
 
 export interface LandingPageProps {
   onNavigate: (path: string) => void;
 }
 
 export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
+  const { user, isAuthenticated } = useAuth();
+
+  const handleGovAccess = () => {
+    if (isAuthenticated && user?.role === 'government') {
+      onNavigate('/government/dashboard');
+    } else {
+      onNavigate('/login?portal=government');
+    }
+  };
+
+  const handleAgencyAccess = () => {
+    if (isAuthenticated && user?.role === 'agency') {
+      onNavigate('/agency/dashboard');
+    } else {
+      onNavigate('/login?portal=agency');
+    }
+  };
   const lifecycleSteps: TimelineStep[] = [
     {
       id: 'step-1',
@@ -147,30 +166,39 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
                 <Button
                   variant="gov"
                   size="lg"
-                  onClick={() => onNavigate('/government/dashboard')}
+                  onClick={() => onNavigate('/transparency')}
                   icon={ArrowRight}
                   iconPosition="right"
                   className="bg-[#002B49] text-white hover:bg-[#001D33] shadow-sm"
                 >
-                  Government Portal
+                  Explore BTI
                 </Button>
                 <Button
                   variant="outline"
                   size="lg"
-                  onClick={() => onNavigate('/agency/dashboard')}
-                  icon={Building2}
+                  onClick={() => onNavigate('/how-it-works')}
+                  icon={HelpCircle}
                   className="border-slate-300 text-slate-800 hover:bg-slate-50"
                 >
-                  Agency Workspace
+                  How It Works
                 </Button>
                 <Button
                   variant="ghost"
                   size="lg"
-                  onClick={() => onNavigate('/transparency')}
-                  icon={Users}
+                  onClick={handleGovAccess}
+                  icon={Shield}
                   className="text-[#002B49] hover:bg-blue-50 font-semibold"
                 >
-                  Citizen Transparency
+                  Government Access
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="lg"
+                  onClick={handleAgencyAccess}
+                  icon={Building2}
+                  className="text-emerald-800 hover:bg-emerald-50 font-semibold"
+                >
+                  Agency Access
                 </Button>
               </div>
 
@@ -248,12 +276,12 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
               <Button
                 variant="gov"
                 size="md"
-                onClick={() => onNavigate('/government/dashboard')}
+                onClick={handleGovAccess}
                 icon={ArrowRight}
                 iconPosition="right"
                 className="w-full justify-between"
               >
-                Access Government Portal
+                Government Access
               </Button>
             </Card>
 
@@ -288,12 +316,12 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
               <Button
                 variant="outline"
                 size="md"
-                onClick={() => onNavigate('/agency/dashboard')}
+                onClick={handleAgencyAccess}
                 icon={ArrowRight}
                 iconPosition="right"
                 className="w-full justify-between border-emerald-300 text-emerald-900 hover:bg-emerald-50"
               >
-                Access Agency Workspace
+                Agency Access
               </Button>
             </Card>
 

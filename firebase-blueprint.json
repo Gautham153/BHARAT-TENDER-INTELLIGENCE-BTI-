@@ -1,0 +1,77 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Bharat Tender Intelligence user profile record with RBAC and verification details",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "displayName": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "role": {
+          "type": "string",
+          "enum": ["government", "agency", "public"]
+        },
+        "organizationId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "organizationName": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "designation": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "department": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "gstin": {
+          "type": "string",
+          "maxLength": 15
+        },
+        "phone": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "verified": {
+          "type": "boolean"
+        },
+        "verificationStatus": {
+          "type": "string",
+          "enum": ["not_started", "pending", "verified", "failed", "requires_review"]
+        },
+        "applicationId": {
+          "type": "string",
+          "maxLength": 50
+        },
+        "createdAt": {
+          "type": "string",
+          "maxLength": 50
+        },
+        "updatedAt": {
+          "type": "string",
+          "maxLength": 50
+        }
+      },
+      "required": ["uid", "email", "role", "verificationStatus"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": "User",
+      "description": "User profile collection partitioned by Firebase Auth UID"
+    }
+  }
+}

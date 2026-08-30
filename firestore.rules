@@ -1,0 +1,84 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 1. Global Default-Deny Catch-All
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isGovernmentUser() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'government'
+      );
+    }
+
+    function isValidUser(data) {
+      return data.uid is string && data.uid.size() <= 128
+        && data.email is string && data.email.size() <= 200
+        && data.role in ['government', 'agency', 'public']
+        && data.verificationStatus in ['not_started', 'pending', 'verified', 'failed', 'requires_review'];
+    }
+
+    // 2. Users Collection Rules (/users/{uid})
+    match /users/{uid} {
+      // Individual document read allowed for the account owner or verified government personnel
+      allow get: if isSignedIn() && isValidId(uid) && (
+        request.auth.uid == uid || isGovernmentUser()
+      );
+
+      // Query listings strictly restricted to user's own record
+      allow list: if isSignedIn() && resource.data.uid == request.auth.uid;
+
+      // Registration: User can create their profile only for themselves with role 'agency' and status 'pending'
+      // Preventing privilege escalation: self-assigned 'government' role or pre-verified status is forbidden.
+      allow create: if isSignedIn() 
+        && isValidId(uid) 
+        && request.auth.uid == uid
+        && isValidUser(incoming())
+        && incoming().uid == request.auth.uid
+        && incoming().role == 'agency'
+        && incoming().verificationStatus == 'pending'
+        && incoming().verified == false;
+
+      // Updates: Account owner can update profile information, but CANNOT change role, verificationStatus, or UID
+      allow update: if isSignedIn()
+        && isValidId(uid)
+        && request.auth.uid == uid
+        && isValidUser(incoming())
+        && incoming().uid == existing().uid
+        && incoming().role == existing().role
+        && incoming().verificationStatus == existing().verificationStatus
+        && incoming().verified == existing().verified
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'displayName', 'phone', 'designation', 'organizationName', 'address', 'businessCategory', 'updatedAt'
+        ]);
+
+      // Direct document deletion forbidden from client
+      allow delete: if false;
+    }
+  }
+}

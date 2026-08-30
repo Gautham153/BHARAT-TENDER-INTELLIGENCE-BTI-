@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Shield, Building2, Globe, ChevronDown, ChevronUp } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
 
 export interface DemoSwitcherProps {
   currentPath: string;
@@ -8,10 +9,25 @@ export interface DemoSwitcherProps {
 
 export const DemoSwitcher: React.FC<DemoSwitcherProps> = ({ currentPath, onNavigate }) => {
   const [collapsed, setCollapsed] = useState(false);
+  const { user, loginDemo } = useAuth();
 
   const isGov = currentPath.startsWith('/government');
   const isAgency = currentPath.startsWith('/agency');
   const isPublic = !isGov && !isAgency;
+
+  const handleSwitchToGov = async () => {
+    if (user?.role !== 'government') {
+      await loginDemo('government');
+    }
+    onNavigate('/government/dashboard');
+  };
+
+  const handleSwitchToAgency = async () => {
+    if (user?.role !== 'agency') {
+      await loginDemo('agency');
+    }
+    onNavigate('/agency/dashboard');
+  };
 
   return (
     <aside
@@ -39,7 +55,7 @@ export const DemoSwitcher: React.FC<DemoSwitcherProps> = ({ currentPath, onNavig
           {/* Government Portal */}
           <button
             type="button"
-            onClick={() => onNavigate('/government/dashboard')}
+            onClick={handleSwitchToGov}
             className={`px-2.5 py-1 rounded-full text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ${
               isGov
                 ? 'bg-[#002B49] text-white border border-blue-400 shadow-xs'
@@ -53,7 +69,7 @@ export const DemoSwitcher: React.FC<DemoSwitcherProps> = ({ currentPath, onNavig
           {/* Agency Portal */}
           <button
             type="button"
-            onClick={() => onNavigate('/agency/dashboard')}
+            onClick={handleSwitchToAgency}
             className={`px-2.5 py-1 rounded-full text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ${
               isAgency
                 ? 'bg-emerald-800 text-white border border-emerald-400 shadow-xs'
