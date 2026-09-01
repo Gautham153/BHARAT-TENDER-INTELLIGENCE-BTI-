@@ -304,21 +304,21 @@ export const AgencyRegistrationPage: React.FC<AgencyRegistrationPageProps> = ({ 
               <Button
                 variant="gov"
                 size="lg"
-                className="w-full justify-center bg-emerald-700 hover:bg-emerald-800"
+                className="w-full justify-center bg-[#002B49] hover:bg-[#003B64]"
                 icon={ArrowRight}
                 iconPosition="right"
-                onClick={() => onNavigate('/agency/dashboard')}
+                onClick={() => onNavigate('/transparency')}
               >
-                Enter Agency Workspace (Verification Pending)
+                Return to Public Transparency Hub
               </Button>
 
               <Button
                 variant="outline"
                 size="md"
-                className="w-full justify-center"
+                className="w-full justify-center border-slate-300"
                 onClick={() => onNavigate('/')}
               >
-                Return to Public Transparency Hub
+                Go to Citizen Portal Home
               </Button>
             </div>
 
@@ -435,11 +435,11 @@ export const AgencyRegistrationPage: React.FC<AgencyRegistrationPageProps> = ({ 
               </div>
             </div>
 
-            <div className="flex items-center justify-between pt-4 border-t border-slate-200">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-4 border-t border-slate-200">
               <button
                 type="button"
                 onClick={() => onNavigate('/login?portal=agency')}
-                className="text-xs font-semibold text-slate-600 hover:text-slate-900 cursor-pointer"
+                className="text-xs font-semibold text-slate-600 hover:text-slate-900 cursor-pointer text-center sm:text-left py-1"
               >
                 Already registered? Sign in →
               </button>
@@ -447,7 +447,7 @@ export const AgencyRegistrationPage: React.FC<AgencyRegistrationPageProps> = ({ 
               <Button
                 variant="gov"
                 size="md"
-                className="bg-[#002B49]"
+                className="w-full sm:w-auto justify-center bg-[#002B49]"
                 icon={ArrowRight}
                 iconPosition="right"
                 onClick={handleNext}
@@ -540,12 +540,13 @@ export const AgencyRegistrationPage: React.FC<AgencyRegistrationPageProps> = ({ 
               </div>
             </div>
 
-            <div className="flex items-center justify-between pt-4 border-t border-slate-200">
+            <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-4 border-t border-slate-200">
               <Button
                 variant="outline"
                 size="md"
                 icon={ArrowLeft}
                 onClick={handleBack}
+                className="w-full sm:w-auto justify-center"
               >
                 Back to Account
               </Button>
@@ -553,7 +554,7 @@ export const AgencyRegistrationPage: React.FC<AgencyRegistrationPageProps> = ({ 
               <Button
                 variant="gov"
                 size="md"
-                className="bg-[#002B49]"
+                className="w-full sm:w-auto justify-center bg-[#002B49]"
                 icon={ArrowRight}
                 iconPosition="right"
                 onClick={handleNext}
@@ -637,13 +638,14 @@ export const AgencyRegistrationPage: React.FC<AgencyRegistrationPageProps> = ({ 
               </div>
             )}
 
-            <div className="flex items-center justify-between pt-4 border-t border-slate-200">
+            <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-4 border-t border-slate-200">
               <Button
                 variant="outline"
                 size="md"
                 icon={ArrowLeft}
                 onClick={handleBack}
                 disabled={loading}
+                className="w-full sm:w-auto justify-center"
               >
                 Back to Details
               </Button>
@@ -651,7 +653,7 @@ export const AgencyRegistrationPage: React.FC<AgencyRegistrationPageProps> = ({ 
               <Button
                 variant="gov"
                 size="lg"
-                className="bg-emerald-700 hover:bg-emerald-800 text-white"
+                className="w-full sm:w-auto justify-center bg-emerald-700 hover:bg-emerald-800 text-white"
                 icon={CheckCircle2}
                 iconPosition="right"
                 onClick={handleSubmitRegistration}

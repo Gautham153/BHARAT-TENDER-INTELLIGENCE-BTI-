@@ -113,12 +113,26 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
     return (
       <AccessDenied
         requiredRole={requiredRole}
+        reason="role_mismatch"
         currentPath={currentPath}
         onNavigate={onNavigate}
       />
     );
   }
 
-  // 4. Authorized
+  // 4. Agency Statutory Verification Gate
+  // Full Agency Workspace access requires BOTH verified === true and verificationStatus === 'verified'
+  if (requiredRole === 'agency' && (!user.verified || user.verificationStatus !== 'verified')) {
+    return (
+      <AccessDenied
+        requiredRole="agency"
+        reason="verification_pending"
+        currentPath={currentPath}
+        onNavigate={onNavigate}
+      />
+    );
+  }
+
+  // 5. Authorized
   return <>{children}</>;
 };

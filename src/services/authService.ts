@@ -25,6 +25,7 @@ import {
 } from './firebase/users';
 
 const AUTH_STORAGE_KEY = 'bti_auth_session_v1';
+const DEMO_STORAGE_KEY = 'bti_demo_session_v1';
 
 // Pre-defined synthetic demo profiles for evaluation and development
 export const DEMO_USERS: Record<string, AuthUser> = {
@@ -119,6 +120,11 @@ export class AuthService {
     // 1. Direct Demo Evaluator Bypass
     if (cleanEmail === DEMO_USERS.government.email) {
       const user = DEMO_USERS.government;
+      try {
+        localStorage.setItem(DEMO_STORAGE_KEY, 'true');
+      } catch {
+        // Storage unavailable
+      }
       this.persistSession(user);
       return user;
     }
@@ -127,6 +133,11 @@ export class AuthService {
         throw new Error('This agency account is not authorized for the Government Portal. Please sign in via Agency Workspace.');
       }
       const user = DEMO_USERS.agency;
+      try {
+        localStorage.setItem(DEMO_STORAGE_KEY, 'true');
+      } catch {
+        // Storage unavailable
+      }
       this.persistSession(user);
       return user;
     }
@@ -135,6 +146,11 @@ export class AuthService {
         throw new Error('This account does not have government portal clearance.');
       }
       const user = DEMO_USERS.pending_agency;
+      try {
+        localStorage.setItem(DEMO_STORAGE_KEY, 'true');
+      } catch {
+        // Storage unavailable
+      }
       this.persistSession(user);
       return user;
     }
@@ -144,6 +160,13 @@ export class AuthService {
       try {
         const fbUser = await signInWithEmail(cleanEmail, password);
         
+        // Remove demo session marker upon authenticating with real Firebase credentials
+        try {
+          localStorage.removeItem(DEMO_STORAGE_KEY);
+        } catch {
+          // Ignore
+        }
+
         // Retrieve authoritative persistent user profile from Firestore /users/{uid}
         const profile = await fetchUserProfile(fbUser.uid);
 
@@ -180,6 +203,22 @@ export class AuthService {
     if (!user) {
       throw new Error('Requested demo role profile not found.');
     }
+
+    // If a real Firebase user session is currently active, terminate Firebase state before entering demo mode
+    if (isFirebaseConfigured) {
+      try {
+        await signOutUser();
+      } catch {
+        // Safe to ignore in demo mode
+      }
+    }
+
+    try {
+      localStorage.setItem(DEMO_STORAGE_KEY, 'true');
+    } catch {
+      // Ignore
+    }
+
     this.persistSession(user);
     return user;
   }
@@ -201,6 +240,13 @@ export class AuthService {
 
     if (isFirebaseConfigured) {
       try {
+        // Remove demo session marker upon real registration
+        try {
+          localStorage.removeItem(DEMO_STORAGE_KEY);
+        } catch {
+          // Ignore
+        }
+
         // Create user in Firebase Auth
         const fbUser = await createAgencyAccount(data.email, data.password, data.companyName);
 
@@ -238,6 +284,12 @@ export class AuthService {
       applicationId,
       createdAt: new Date().toISOString(),
     };
+
+    try {
+      localStorage.setItem(DEMO_STORAGE_KEY, 'true');
+    } catch {
+      // Ignore
+    }
 
     verification.applicationId = applicationId;
     this.persistSession(newUser);
@@ -281,6 +333,7 @@ export class AuthService {
     }
     try {
       localStorage.removeItem(AUTH_STORAGE_KEY);
+      localStorage.removeItem(DEMO_STORAGE_KEY);
     } catch {
       // Ignore
     }
@@ -293,10 +346,30 @@ export class AuthService {
     if (isFirebaseConfigured) {
       return subscribeToAuthState(async (fbUser) => {
         if (!fbUser) {
+          // If no Firebase user is authenticated, check if an explicit demo session is active
+          try {
+            const isDemo = localStorage.getItem(DEMO_STORAGE_KEY) === 'true';
+            const currentUser = AuthService.getCurrentUser();
+            if (isDemo && currentUser) {
+              // Preserve evaluator demo session across page reloads
+              callback(currentUser);
+              return;
+            }
+          } catch {
+            // Ignore
+          }
           callback(null);
           return;
         }
+
+        // Real Firebase user is authenticated
         try {
+          try {
+            localStorage.removeItem(DEMO_STORAGE_KEY);
+          } catch {
+            // Ignore
+          }
+
           const profile = await fetchUserProfile(fbUser.uid);
           if (profile) {
             this.persistSession(profile);
@@ -305,6 +378,7 @@ export class AuthService {
             // Profile not found in Firestore for authenticated Firebase user
             try {
               localStorage.removeItem(AUTH_STORAGE_KEY);
+              localStorage.removeItem(DEMO_STORAGE_KEY);
             } catch {
               // Ignore
             }

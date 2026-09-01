@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
+import { useAuth } from '../../context/AuthContext';
 
 export interface PortalLayoutProps {
   portal: 'government' | 'agency' | 'public';
@@ -19,6 +20,17 @@ export const PortalLayout: React.FC<PortalLayoutProps> = ({
 }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const { logout } = useAuth();
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+    } catch (err) {
+      console.error('Logout error:', err);
+    }
+    setMobileSidebarOpen(false);
+    onNavigate('/login');
+  };
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] flex">
@@ -30,7 +42,7 @@ export const PortalLayout: React.FC<PortalLayoutProps> = ({
           onNavigate={onNavigate}
           isCollapsed={isCollapsed}
           onToggleCollapse={() => setIsCollapsed(!isCollapsed)}
-          onLogout={() => onNavigate('/login')}
+          onLogout={handleLogout}
         />
       </div>
 
@@ -51,10 +63,7 @@ export const PortalLayout: React.FC<PortalLayoutProps> = ({
               }}
               isCollapsed={false}
               onToggleCollapse={() => {}}
-              onLogout={() => {
-                onNavigate('/login');
-                setMobileSidebarOpen(false);
-              }}
+              onLogout={handleLogout}
             />
           </div>
         </div>
