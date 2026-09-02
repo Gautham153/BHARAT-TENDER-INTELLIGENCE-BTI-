@@ -23,9 +23,15 @@ import { ProgressBar } from '../../components/ui/ProgressBar';
 import { SyntheticDataNotice } from '../../components/common/SyntheticDataNotice';
 import { mockTenders, mockProjects, mockProposals } from '../../data/mockData';
 import { Tender, Project } from '../../types';
+import { useAuth } from '../../context/AuthContext';
 
 export const AgencyDashboard: React.FC<{ onNavigate: (path: string) => void }> = ({ onNavigate }) => {
+  const { user } = useAuth();
   const wonProjects = mockProjects.filter((p) => p.executingAgencyName.includes('Vikramaditya'));
+
+  const agencyDisplayName = user?.agencyName || user?.name || 'Registered Agency Workspace';
+  const agencyGstin = user?.gstin ? `GSTIN: ${user.gstin}` : 'GSTIN Registered';
+  const verificationText = user?.verified ? 'Tier-1 Verified Contractor' : 'Registration & Verification in Progress';
 
   const tenderColumns: Column<Tender>[] = [
     {
@@ -83,11 +89,13 @@ export const AgencyDashboard: React.FC<{ onNavigate: (path: string) => void }> =
       {/* Header */}
       <PageHeader
         title="Agency & Vendor Execution Workspace"
-        subtitle="Vikramaditya Infrastructure Ltd (GSTIN: 09AABCV9821L1ZS) • Tier-1 Verified Contractor"
+        subtitle={`${agencyDisplayName} (${agencyGstin}) • ${verificationText}`}
         badge={
-          <span className="text-xs px-2.5 py-0.5 rounded-full font-bold bg-emerald-100 text-emerald-800 flex items-center gap-1">
+          <span className={`text-xs px-2.5 py-0.5 rounded-full font-bold flex items-center gap-1 ${
+            user?.verified ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+          }`}>
             <ShieldCheck className="w-3.5 h-3.5" />
-            <span>GST & CVC Verified</span>
+            <span>{user?.verified ? 'GST & CVC Verified' : 'Scrutiny Pending'}</span>
           </span>
         }
         actions={

@@ -111,6 +111,17 @@ const DETERMINISTIC_DEMO_CASES: Record<string, DemoCaseRule> = {
     message:
       '[Development Simulation] Verification failed: Simulated registrar flagged inactive/cancelled GST registration.',
   },
+
+  // TEST 6: VALID_DEMO_VERIFIED_TN
+  '33AAACI1607G2Z5': {
+    status: 'verified',
+    legalName: 'Southern Infrastructure Technologies',
+    taxpayerType: 'Regular Taxpayer',
+    activeStatus: true,
+    reference: 'DEV-VERIF-33-1607',
+    message:
+      '[Development Simulation] Entity records active and validated. Verification reference issued.',
+  },
 };
 
 export class DevelopmentVerificationProvider implements VerificationProvider {

@@ -46,8 +46,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onNavigate,
   isCollapsed,
   onToggleCollapse,
-  userRole = portal === 'government' ? 'District Collector / Nodal Officer' : 'Project Director',
-  userName = portal === 'government' ? 'Sh. Rajesh Varma, IAS' : 'Vikramaditya Infrastructure Ltd',
+  userRole = portal === 'government' ? 'District Magistrate & Nodal Officer' : 'Project Director',
+  userName = portal === 'government' ? 'Dr. Alok Verma, IAS' : 'Registered Agency Profile',
   onLogout,
 }) => {
   const govNavItems: NavItem[] = [

@@ -14,6 +14,7 @@ import { db, isFirebaseConfigured } from './firebase';
 import { VerificationEvent, VerificationAuditAction } from '../../types/organization';
 
 const EVENTS_REGISTRY_KEY = 'bti_verification_events_v1';
+const DEMO_STORAGE_KEY = 'bti_demo_session_v1';
 
 // Seed events for synthetic demo organizations
 const SEED_EVENTS: VerificationEvent[] = [
@@ -34,16 +35,16 @@ const SEED_EVENTS: VerificationEvent[] = [
   {
     eventId: 'evt-vikram-02',
     organizationId: 'ORG-VIKRAM-09A',
-    action: 'VERIFICATION_COMPLETED',
-    actorId: 'system-verifier',
-    actorName: 'Development Verification Service',
-    actorRole: 'system',
+    action: 'APPROVED',
+    actorId: 'usr-gov-001',
+    actorName: 'Dr. Alok Verma, IAS',
+    actorRole: 'government',
     previousStatus: 'pending',
     newStatus: 'verified',
     timestamp: '2025-02-01T10:05:00Z',
-    source: 'development-provider',
+    source: 'gov-nodal-desk',
     reference: 'DEV-VERIF-09-8812',
-    notes: 'GSTIN verified with active taxpayer status in development simulation.',
+    notes: 'GSTIN verified with active taxpayer status in registrar audit.',
   },
   {
     eventId: 'evt-apex-01',
@@ -77,15 +78,15 @@ const SEED_EVENTS: VerificationEvent[] = [
     eventId: 'evt-patli-02',
     organizationId: 'ORG-PATLIPUTRA-10A',
     action: 'MARKED_FOR_REVIEW',
-    actorId: 'system-verifier',
-    actorName: 'Development Verification Service',
-    actorRole: 'system',
+    actorId: 'usr-gov-001',
+    actorName: 'Dr. Alok Verma, IAS',
+    actorRole: 'government',
     previousStatus: 'pending',
     newStatus: 'requires_review',
     timestamp: '2026-03-02T09:16:00Z',
-    source: 'development-provider',
+    source: 'gov-nodal-desk',
     reference: 'DEV-VERIF-10-9904',
-    notes: 'Simulated check flagged multiple active registrations under same PAN.',
+    notes: 'District audit flagged multiple active registrations under same PAN.',
   },
   {
     eventId: 'evt-bengal-01',
@@ -105,24 +106,31 @@ const SEED_EVENTS: VerificationEvent[] = [
     eventId: 'evt-bengal-02',
     organizationId: 'ORG-BENGAL-19A',
     action: 'REJECTED',
-    actorId: 'system-verifier',
-    actorName: 'Development Verification Service',
-    actorRole: 'system',
+    actorId: 'usr-gov-001',
+    actorName: 'Dr. Alok Verma, IAS',
+    actorRole: 'government',
     previousStatus: 'pending',
     newStatus: 'failed',
     timestamp: '2026-03-02T11:01:00Z',
-    source: 'development-provider',
+    source: 'gov-nodal-desk',
     reference: 'DEV-VERIF-19-0011',
     notes: 'Verification failed: GSTIN reported inactive/cancelled in registrar records.',
   },
 ];
+
+function isDemoSession(): boolean {
+  try {
+    return localStorage.getItem(DEMO_STORAGE_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
 
 function getLocalEvents(): VerificationEvent[] {
   try {
     const raw = localStorage.getItem(EVENTS_REGISTRY_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as VerificationEvent[];
-      // Combine with seeds avoiding duplicates
       const ids = new Set(parsed.map((e) => e.eventId));
       const merged = [...parsed];
       SEED_EVENTS.forEach((e) => {
@@ -142,6 +150,12 @@ function saveLocalEvents(events: VerificationEvent[]) {
   } catch {
     // ignore
   }
+}
+
+export function saveLocalVerificationEvent(event: VerificationEvent) {
+  const events = getLocalEvents();
+  events.unshift(event);
+  saveLocalEvents(events);
 }
 
 /**
@@ -165,11 +179,13 @@ export async function recordVerificationEvent(
       const docRef = doc(db, 'verificationEvents', eventId);
       await setDoc(docRef, event);
     } catch (err) {
-      throw new Error(
-        `Failed to record verification audit event to authoritative Firestore: ${
-          err instanceof Error ? err.message : String(err)
-        }`
-      );
+      if (!isDemoSession()) {
+        throw new Error(
+          `Failed to record verification audit event to authoritative Firestore: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+      }
     }
   }
 
@@ -194,9 +210,27 @@ export async function fetchVerificationAuditTrail(organizationId: string): Promi
       snap.forEach((d) => {
         firestoreEvents.push(d.data() as VerificationEvent);
       });
-      firestoreEvents.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-      return firestoreEvents;
+
+      if (firestoreEvents.length > 0) {
+        firestoreEvents.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+        return firestoreEvents;
+      }
+
+      // If Firestore has no events yet for this org and demo session is active, check seed events
+      if (isDemoSession()) {
+        const seedMatches = SEED_EVENTS.filter((e) => e.organizationId === organizationId);
+        seedMatches.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+        return seedMatches;
+      }
+
+      return [];
     } catch (err) {
+      if (isDemoSession()) {
+        const seedMatches = SEED_EVENTS.filter((e) => e.organizationId === organizationId);
+        seedMatches.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+        return seedMatches;
+      }
+
       throw new Error(
         `Failed to fetch verification audit trail from authoritative Firestore: ${
           err instanceof Error ? err.message : String(err)

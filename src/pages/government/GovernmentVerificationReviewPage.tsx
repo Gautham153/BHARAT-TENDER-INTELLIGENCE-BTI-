@@ -72,9 +72,14 @@ export const GovernmentVerificationReviewPage: React.FC<GovernmentVerificationRe
         statusFilter === 'all' ? undefined : statusFilter
       );
       setOrganizations(list);
-      if (list.length > 0 && !selectedOrg) {
-        setSelectedOrg(list[0]);
-        loadOrgAudit(list[0].organizationId);
+      if (list.length > 0) {
+        const stillSelected = selectedOrg ? list.find((o) => o.organizationId === selectedOrg.organizationId) : null;
+        const toSelect = stillSelected || list[0];
+        setSelectedOrg(toSelect);
+        loadOrgAudit(toSelect.organizationId);
+      } else {
+        setSelectedOrg(null);
+        setAuditTrail([]);
       }
     } catch (err) {
       console.error('Error loading verification queue:', err);

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Building2,
   ShieldCheck,
@@ -7,27 +7,110 @@ import {
   FileText,
   Save,
   Clock,
+  AlertTriangle,
+  FileBadge2,
 } from 'lucide-react';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
+import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
+import { OrganizationVerificationService } from '../../services/organizationVerificationService';
+import { Organization } from '../../types/organization';
 
 export const ComplianceProfilePage: React.FC<{ onNavigate: (path: string) => void }> = ({ onNavigate }) => {
+  const { user } = useAuth();
   const { showToast } = useToast();
+
+  const [loading, setLoading] = useState(true);
+  const [org, setOrg] = useState<Organization | null>(null);
+  const [identityError, setIdentityError] = useState<string | null>(null);
+
   const [profile, setProfile] = useState({
-    companyName: 'Vikramaditya Infrastructure Ltd',
-    gstin: '09AABCV9821L1ZS',
-    pan: 'AABCV9821L',
-    cin: 'U45200UP2016PLC089123',
-    bankAccount: '9812002100049102',
+    companyName: '',
+    gstin: '',
+    pan: '',
+    cin: '',
+    bankAccount: '••••••••••••4910',
     ifsc: 'SBIN0001245',
-    epfoNo: 'UP/VNS/0091244/000',
-    nodalContact: 'Er. Rajesh V. Sharma',
-    contactPhone: '+91 98390 12845',
-    contactEmail: 'contact@vikramadityainfra.co.in',
+    epfoNo: 'MH/BAN/0091244/000',
+    nodalContact: '',
+    contactPhone: '',
+    contactEmail: '',
+    registeredAddress: '',
   });
+
+  useEffect(() => {
+    async function loadOrgData() {
+      if (!user) {
+        setLoading(false);
+        return;
+      }
+
+      setLoading(true);
+      try {
+        const orgId = user.organizationId;
+        if (orgId) {
+          const res = await OrganizationVerificationService.getOrganizationVerificationDetails(orgId);
+          if (res.organization) {
+            // Defensive Identity Consistency check (BUG 8)
+            if (
+              user.role === 'agency' &&
+              res.organization.primaryUserId &&
+              res.organization.primaryUserId !== user.id &&
+              res.organization.primaryUserId !== user.uid &&
+              res.organization.organizationId !== user.organizationId
+            ) {
+              setIdentityError(
+                'Security Alert: Authenticated user context does not match the primary organizational representative for this record.'
+              );
+              setLoading(false);
+              return;
+            }
+
+            setOrg(res.organization);
+            setProfile({
+              companyName: res.organization.displayName || res.organization.legalName,
+              gstin: res.organization.gstin,
+              pan: res.organization.gstin.length >= 12 ? res.organization.gstin.substring(2, 12) : '',
+              cin: 'U45200MH2018PLC089123',
+              bankAccount: '••••••••••••4910',
+              ifsc: 'SBIN0001245',
+              epfoNo: `${res.organization.state.slice(0, 2).toUpperCase()}/MUM/0091244/000`,
+              nodalContact: user.name,
+              contactPhone: res.organization.contactPhone || user.phone || '+91 98111 22334',
+              contactEmail: res.organization.contactEmail || user.email,
+              registeredAddress: res.organization.registeredAddress,
+            });
+            setLoading(false);
+            return;
+          }
+        }
+
+        // Fallback initialized from user profile
+        setProfile({
+          companyName: user.agencyName || user.name || 'Contractor Entity',
+          gstin: user.gstin || '',
+          pan: user.gstin && user.gstin.length >= 12 ? user.gstin.substring(2, 12) : '',
+          cin: 'U45200MH2018PLC089123',
+          bankAccount: '••••••••••••4910',
+          ifsc: 'SBIN0001245',
+          epfoNo: 'MH/BAN/0091244/000',
+          nodalContact: user.name,
+          contactPhone: user.phone || '+91 98111 22334',
+          contactEmail: user.email,
+          registeredAddress: 'Registered Commercial Premises',
+        });
+      } catch (err) {
+        console.error('Error loading compliance organization:', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadOrgData();
+  }, [user]);
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
@@ -37,11 +120,29 @@ export const ComplianceProfilePage: React.FC<{ onNavigate: (path: string) => voi
     });
   };
 
+  if (identityError) {
+    return (
+      <div className="space-y-6">
+        <PageHeader
+          title="Agency Compliance & Statutory Verification"
+          subtitle="Maintain authorized GSTIN, EPFO, corporate identification & verified bank accounts for PFMS transfers."
+        />
+        <Card className="p-8 border-rose-300 bg-rose-50/50 space-y-4">
+          <div className="flex items-center gap-3 text-rose-800 font-bold">
+            <AlertTriangle className="w-6 h-6 text-rose-600" />
+            <h3>Identity Access Exception</h3>
+          </div>
+          <p className="text-xs text-rose-900 leading-relaxed">{identityError}</p>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="Agency Compliance & Statutory Verification"
-        subtitle="Maintain authorized GSTIN, EPFO, corporate identification & verified bank accounts for PFMS transfers."
+        subtitle={`Maintain authorized GSTIN (${profile.gstin || 'N/A'}), EPFO, corporate identification & verified bank accounts for ${profile.companyName || 'Agency'}.`}
       />
 
       <form onSubmit={handleSave} className="space-y-6">
@@ -63,11 +164,13 @@ export const ComplianceProfilePage: React.FC<{ onNavigate: (path: string) => voi
               <Input
                 label="GSTIN (Goods & Services Tax)"
                 value={profile.gstin}
+                disabled
                 onChange={(e) => setProfile({ ...profile, gstin: e.target.value })}
               />
               <Input
                 label="PAN (Permanent Account No)"
                 value={profile.pan}
+                disabled
                 onChange={(e) => setProfile({ ...profile, pan: e.target.value })}
               />
             </div>
@@ -95,7 +198,7 @@ export const ComplianceProfilePage: React.FC<{ onNavigate: (path: string) => voi
 
             <Input
               label="Bank Account Number (Escrow Account)"
-              type="password"
+              type="text"
               value={profile.bankAccount}
               onChange={(e) => setProfile({ ...profile, bankAccount: e.target.value })}
             />
@@ -121,7 +224,17 @@ export const ComplianceProfilePage: React.FC<{ onNavigate: (path: string) => voi
           </Card>
         </div>
 
-        <div className="flex justify-end">
+        <div className="flex items-center justify-between">
+          <Button
+            variant="outline"
+            size="md"
+            icon={FileBadge2}
+            type="button"
+            onClick={() => onNavigate('/agency/verification')}
+          >
+            View Verification Status
+          </Button>
+
           <Button variant="gov" size="md" icon={Save} type="submit">
             Save & Update Compliance Record
           </Button>

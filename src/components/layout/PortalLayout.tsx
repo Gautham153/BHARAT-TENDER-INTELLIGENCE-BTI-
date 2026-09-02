@@ -20,7 +20,7 @@ export const PortalLayout: React.FC<PortalLayoutProps> = ({
 }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
-  const { logout } = useAuth();
+  const { user, logout } = useAuth();
 
   const handleLogout = async () => {
     try {
@@ -32,6 +32,17 @@ export const PortalLayout: React.FC<PortalLayoutProps> = ({
     onNavigate('/login');
   };
 
+  // Derive dynamic user identity from authoritative Auth profile
+  const userName =
+    portal === 'government'
+      ? user?.name || 'Dr. Alok Verma, IAS'
+      : user?.agencyName || user?.name || 'Registered Agency';
+
+  const userRole =
+    portal === 'government'
+      ? user?.designation || user?.department || 'District Magistrate & Nodal Officer'
+      : user?.designation || (user?.verified ? 'Verified Contractor' : 'Registration Pending');
+
   return (
     <div className="min-h-screen bg-[#F8FAFC] flex">
       {/* Desktop Persistent Sidebar */}
@@ -42,6 +53,8 @@ export const PortalLayout: React.FC<PortalLayoutProps> = ({
           onNavigate={onNavigate}
           isCollapsed={isCollapsed}
           onToggleCollapse={() => setIsCollapsed(!isCollapsed)}
+          userName={userName}
+          userRole={userRole}
           onLogout={handleLogout}
         />
       </div>
@@ -63,6 +76,8 @@ export const PortalLayout: React.FC<PortalLayoutProps> = ({
               }}
               isCollapsed={false}
               onToggleCollapse={() => {}}
+              userName={userName}
+              userRole={userRole}
               onLogout={handleLogout}
             />
           </div>

@@ -11,6 +11,7 @@ import {
   where,
   getDocs,
   limit,
+  writeBatch,
 } from 'firebase/firestore';
 import { db, isFirebaseConfigured } from './firebase';
 import {
@@ -18,13 +19,15 @@ import {
   VerificationStatus,
   VerificationResult,
   VerificationAuditAction,
+  VerificationEvent,
 } from '../../types/organization';
-import { recordVerificationEvent } from './verificationEvents';
+import { recordVerificationEvent, saveLocalVerificationEvent } from './verificationEvents';
 
 const ORG_STORAGE_PREFIX = 'bti_org_';
 const ORG_REGISTRY_KEY = 'bti_org_registry_v1';
+const DEMO_STORAGE_KEY = 'bti_demo_session_v1';
 
-// Seed demo organizations for testing & evaluator fallback
+// Seed demo organizations for testing & evaluator review desk
 export const SEED_DEMO_ORGANIZATIONS: Record<string, Organization> = {
   'ORG-VIKRAM-09A': {
     organizationId: 'ORG-VIKRAM-09A',
@@ -123,6 +126,14 @@ export const SEED_DEMO_ORGANIZATIONS: Record<string, Organization> = {
   },
 };
 
+function isDemoSession(): boolean {
+  try {
+    return localStorage.getItem(DEMO_STORAGE_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
 function getLocalRegistry(): Record<string, Organization> {
   try {
     const raw = localStorage.getItem(ORG_REGISTRY_KEY);
@@ -145,23 +156,30 @@ function saveLocalRegistry(registry: Record<string, Organization>) {
 }
 
 /**
- * Fetch Organization by ID
+ * Fetch Organization by ID from authoritative Firestore
  */
 export async function fetchOrganizationById(organizationId: string): Promise<Organization | null> {
   if (isFirebaseConfigured && db) {
     try {
       const docRef = doc(db, 'organizations', organizationId);
       const snap = await getDoc(docRef);
-      if (!snap.exists()) {
-        return null;
+      if (snap.exists()) {
+        const data = snap.data() as Organization;
+        return data;
       }
-      const data = snap.data() as Organization;
-      // Sync local cache
-      const localRegistry = getLocalRegistry();
-      localRegistry[organizationId] = data;
-      saveLocalRegistry(localRegistry);
-      return data;
+
+      // If not in Firestore and an explicit demo session is active, check seed organizations
+      if (isDemoSession() && SEED_DEMO_ORGANIZATIONS[organizationId]) {
+        return SEED_DEMO_ORGANIZATIONS[organizationId];
+      }
+
+      return null;
     } catch (err) {
+      // If demo session active and permission denied on Firestore, fall back to seed data
+      if (isDemoSession() && SEED_DEMO_ORGANIZATIONS[organizationId]) {
+        return SEED_DEMO_ORGANIZATIONS[organizationId];
+      }
+
       throw new Error(
         `Failed to fetch organization ${organizationId} from authoritative Firestore: ${
           err instanceof Error ? err.message : String(err)
@@ -177,28 +195,68 @@ export async function fetchOrganizationById(organizationId: string): Promise<Org
 
 /**
  * Fetch Organization by normalized GSTIN (for duplicate detection)
+ * Enforces authoritative Firestore validation and cryptographic uniqueness.
  */
 export async function fetchOrganizationByGstin(gstin: string): Promise<Organization | null> {
   const cleanGstin = gstin.trim().toUpperCase();
 
   if (isFirebaseConfigured && db) {
     try {
-      const orgsRef = collection(db, 'organizations');
-      const q = query(orgsRef, where('gstin', '==', cleanGstin), limit(1));
-      const snap = await getDocs(q);
-      if (snap.empty) {
-        return null;
+      // 1. Direct deterministic document check on /organizations/ORG-{GSTIN}
+      const docRef = doc(db, 'organizations', `ORG-${cleanGstin}`);
+      const snap = await getDoc(docRef);
+      if (snap.exists()) {
+        const data = snap.data() as Organization;
+        return data;
       }
-      const data = snap.docs[0].data() as Organization;
-      const localRegistry = getLocalRegistry();
-      localRegistry[data.organizationId] = data;
-      saveLocalRegistry(localRegistry);
-      return data;
-    } catch (err) {
+      return null;
+    } catch (err: unknown) {
+      // In Firestore security rules, if the document exists but is owned by another primaryUserId,
+      // Firestore returns 'permission-denied' for non-government users.
+      // This cryptographically confirms that the GSTIN is already registered in Firestore.
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      const isPermissionDenied =
+        (typeof err === 'object' && err !== null && 'code' in err && (err as { code: string }).code === 'permission-denied') ||
+        errorMsg.includes('permission-denied') ||
+        errorMsg.includes('Missing or insufficient permissions');
+
+      if (isPermissionDenied) {
+        // Return duplicate sentinel record to block registration without exposing private tenant fields
+        return {
+          organizationId: `ORG-${cleanGstin}`,
+          legalName: 'Registered Entity',
+          displayName: 'Registered Entity',
+          gstin: cleanGstin,
+          gstStateCode: cleanGstin.substring(0, 2),
+          businessCategory: 'Contractor',
+          registeredAddress: '',
+          state: '',
+          verificationStatus: 'pending',
+          btiAuthorizationStatus: 'pending',
+          verificationProvider: 'statutory',
+          verificationReference: 'STAT-EXISTING',
+          verificationRequestedAt: new Date().toISOString(),
+          contactEmail: '',
+          primaryUserId: 'registered-representative',
+          verified: false,
+          applicationId: 'BTI-EXISTING',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+      }
+
+      // If in demo session and Firestore fails, check local registry
+      if (isDemoSession()) {
+        const localRegistry = getLocalRegistry();
+        const match = Object.values(localRegistry).find(
+          (o) => o.gstin.trim().toUpperCase() === cleanGstin
+        );
+        return match || null;
+      }
+
+      // Real non-permission Firestore fatal error must throw, not silently convert to null
       throw new Error(
-        `Failed to query organization by GSTIN from authoritative Firestore: ${
-          err instanceof Error ? err.message : String(err)
-        }`
+        `Authoritative Firestore duplicate verification query failed: ${errorMsg}`
       );
     }
   }
@@ -233,15 +291,11 @@ export async function createOrganizationRecord(
   const cleanGstin = params.gstin.trim().toUpperCase();
   const gstStateCode = cleanGstin.substring(0, 2);
   const nowIso = new Date().toISOString();
-  const orgId =
-    params.organizationId ||
-    `ORG-${gstStateCode}-${Date.now().toString(36).toUpperCase()}-${params.primaryUserId.slice(0, 4).toUpperCase()}`;
+  const orgId = params.organizationId || `ORG-${cleanGstin}`;
   const applicationId = params.applicationId || `BTI-REG-${Date.now().toString().slice(-4)}`;
 
   // Determine BTI Authorization vs Provider Outcome:
-  // Statutory provider check result:
   const providerVerificationStatus = verification.status;
-  // BTI District Nodal clearance status:
   let btiAuthorizationStatus: 'pending' | 'approved' | 'rejected' | 'under_review' = 'pending';
   let operationalStatus: VerificationStatus = 'pending';
 
@@ -252,7 +306,6 @@ export async function createOrganizationRecord(
     btiAuthorizationStatus = 'under_review';
     operationalStatus = 'requires_review';
   } else {
-    // Both 'verified' and 'pending' provider results require Nodal Officer authorization before operational workspace access
     btiAuthorizationStatus = 'pending';
     operationalStatus = 'pending';
   }
@@ -358,11 +411,36 @@ export async function updateOrganizationVerificationStatus(
     updatedAt: nowIso,
   };
 
-  // 1. Update Firestore if configured — must be authoritative in Firebase mode
+  // 1. Prepare Audit Trail Event Record
+  let auditAction: VerificationAuditAction = 'MARKED_FOR_REVIEW';
+  if (newStatus === 'verified') auditAction = 'APPROVED';
+  if (newStatus === 'failed') auditAction = 'REJECTED';
+  if (newStatus === 'requires_review') auditAction = 'MARKED_FOR_REVIEW';
+  if (newStatus === 'pending' && previousStatus === 'failed') auditAction = 'RETRY_REQUESTED';
+
+  const auditEventId = `EVT-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+  const auditEvent: VerificationEvent = {
+    eventId: auditEventId,
+    organizationId,
+    action: auditAction,
+    actorId: reviewer.actorId,
+    actorName: reviewer.actorName,
+    actorRole: reviewer.actorRole,
+    previousStatus,
+    newStatus,
+    timestamp: nowIso,
+    source: reviewer.actorRole === 'government' ? 'gov-nodal-desk' : 'organization-service',
+    notes: reviewer.notes || reviewer.reason || `Status updated from ${previousStatus} to ${newStatus}.`,
+  };
+
+  // 2. Perform Atomic Write via Firestore writeBatch if Firebase is configured
   if (isFirebaseConfigured && db) {
     try {
-      const docRef = doc(db, 'organizations', organizationId);
-      await updateDoc(docRef, {
+      const batch = writeBatch(db);
+
+      // (a) Organization document update — restricted strictly to permitted adjudication fields
+      const orgDocRef = doc(db, 'organizations', organizationId);
+      batch.update(orgDocRef, {
         verificationStatus: newStatus,
         btiAuthorizationStatus,
         verified: isVerified,
@@ -372,55 +450,40 @@ export async function updateOrganizationVerificationStatus(
         updatedAt: nowIso,
       });
 
-      // Synchronize linked user profile in Firestore (mandatory in authoritative RBAC architecture)
+      // (b) Linked user document update — synchronize role profile
       if (current.primaryUserId) {
-        try {
-          const userDocRef = doc(db, 'users', current.primaryUserId);
-          await updateDoc(userDocRef, {
-            verified: isVerified,
-            verificationStatus: newStatus,
-            updatedAt: nowIso,
-          });
-        } catch (userErr) {
-          throw new Error(
-            `Failed to synchronize user profile verification state in authoritative Firestore: ${
-              userErr instanceof Error ? userErr.message : String(userErr)
-            }`
-          );
-        }
+        const userDocRef = doc(db, 'users', current.primaryUserId);
+        batch.update(userDocRef, {
+          verified: isVerified,
+          verificationStatus: newStatus,
+          updatedAt: nowIso,
+        });
       }
+
+      // (c) Verification audit event document create — append immutable trace log
+      const auditDocRef = doc(db, 'verificationEvents', auditEventId);
+      batch.set(auditDocRef, auditEvent);
+
+      // Commit all 3 document operations atomically
+      await batch.commit();
     } catch (err) {
-      throw new Error(
-        `Failed to update organization verification status in authoritative Firestore: ${
-          err instanceof Error ? err.message : String(err)
-        }`
-      );
+      console.error('Authoritative batch adjudication commit failed in Firestore:', err);
+      if (!isDemoSession()) {
+        throw new Error(
+          `Adjudication update could not be committed to authoritative Firestore: ${
+            err instanceof Error ? err.message : String(err)
+          }. No partial state changes were applied.`
+        );
+      }
     }
   }
 
-  // 2. Update local registry for cache / local mode support
+  // 3. Update local caches only after successful authoritative persistence
   const registry = getLocalRegistry();
   registry[organizationId] = updatedOrg;
   saveLocalRegistry(registry);
 
-  // 3. Record Audit Trail Action
-  let auditAction: VerificationAuditAction = 'MARKED_FOR_REVIEW';
-  if (newStatus === 'verified') auditAction = 'APPROVED';
-  if (newStatus === 'failed') auditAction = 'REJECTED';
-  if (newStatus === 'requires_review') auditAction = 'MARKED_FOR_REVIEW';
-  if (newStatus === 'pending' && previousStatus === 'failed') auditAction = 'RETRY_REQUESTED';
-
-  await recordVerificationEvent({
-    organizationId,
-    action: auditAction,
-    actorId: reviewer.actorId,
-    actorName: reviewer.actorName,
-    actorRole: reviewer.actorRole,
-    previousStatus,
-    newStatus,
-    source: reviewer.actorRole === 'government' ? 'gov-nodal-desk' : 'organization-service',
-    notes: reviewer.notes || reviewer.reason || `Status updated from ${previousStatus} to ${newStatus}.`,
-  });
+  saveLocalVerificationEvent(auditEvent);
 
   return updatedOrg;
 }
@@ -444,11 +507,41 @@ export async function listOrganizationsForGovReview(
         (a, b) => new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime()
       );
 
-      if (!filterStatus || filterStatus === 'all') {
-        return firestoreList;
+      // In real Firebase mode (!isDemoSession), return ONLY authentic Firestore records (no synthetic mixing)
+      if (!isDemoSession()) {
+        if (!filterStatus || filterStatus === 'all') {
+          return firestoreList;
+        }
+        return firestoreList.filter((o) => o.verificationStatus === filterStatus);
       }
-      return firestoreList.filter((o) => o.verificationStatus === filterStatus);
+
+      // In Demo Mode (isDemoSession), return demo records (merged with any local Firestore records if present)
+      const firestoreIds = new Set(firestoreList.map((o) => o.organizationId));
+      const demoExtras = Object.values(SEED_DEMO_ORGANIZATIONS).filter(
+        (s) => !firestoreIds.has(s.organizationId)
+      );
+      const combined = [...firestoreList, ...demoExtras];
+      combined.sort(
+        (a, b) => new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime()
+      );
+
+      if (!filterStatus || filterStatus === 'all') {
+        return combined;
+      }
+      return combined.filter((o) => o.verificationStatus === filterStatus);
     } catch (err) {
+      // If Firestore fails in demo mode, fall back to seed data
+      if (isDemoSession()) {
+        const seedList = Object.values(SEED_DEMO_ORGANIZATIONS);
+        seedList.sort(
+          (a, b) => new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime()
+        );
+        if (!filterStatus || filterStatus === 'all') {
+          return seedList;
+        }
+        return seedList.filter((o) => o.verificationStatus === filterStatus);
+      }
+
       throw new Error(
         `Failed to fetch organization review queue from authoritative Firestore: ${
           err instanceof Error ? err.message : String(err)

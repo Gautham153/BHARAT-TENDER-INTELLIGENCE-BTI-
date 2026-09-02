@@ -271,7 +271,7 @@ export class AuthService {
         // Create user in Firebase Auth
         const fbUser = await createAgencyAccount(data.email, data.password, data.companyName);
 
-        const orgId = `ORG-${cleanGstin.substring(0, 2)}-${Date.now().toString(36).toUpperCase()}-${fbUser.uid.slice(0, 4).toUpperCase()}`;
+        const orgId = `ORG-${cleanGstin}`;
 
         // Create persistent user profile in Firestore first (satisfies role == 'agency' requirement in firestore.rules)
         const profile = await createAgencyUserProfile(fbUser.uid, {
