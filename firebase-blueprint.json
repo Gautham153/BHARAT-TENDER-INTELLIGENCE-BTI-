@@ -66,12 +66,172 @@
         }
       },
       "required": ["uid", "email", "role", "verificationStatus"]
+    },
+    "Organization": {
+      "title": "Organization",
+      "description": "Statutory Organization & GSTIN verification record",
+      "type": "object",
+      "properties": {
+        "organizationId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "legalName": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "displayName": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "gstin": {
+          "type": "string",
+          "maxLength": 15
+        },
+        "gstStateCode": {
+          "type": "string",
+          "maxLength": 2
+        },
+        "businessCategory": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "registeredAddress": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "state": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "verificationStatus": {
+          "type": "string",
+          "enum": ["not_started", "pending", "verified", "failed", "requires_review"]
+        },
+        "verificationProvider": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "verificationReference": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "verificationRequestedAt": {
+          "type": "string",
+          "maxLength": 50
+        },
+        "verificationCompletedAt": {
+          "type": "string",
+          "maxLength": 50
+        },
+        "rejectionReason": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "reviewNotes": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "contactEmail": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "contactPhone": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "primaryUserId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "verified": {
+          "type": "boolean"
+        },
+        "applicationId": {
+          "type": "string",
+          "maxLength": 50
+        },
+        "createdAt": {
+          "type": "string",
+          "maxLength": 50
+        },
+        "updatedAt": {
+          "type": "string",
+          "maxLength": 50
+        }
+      },
+      "required": ["organizationId", "legalName", "gstin", "verificationStatus", "primaryUserId"]
+    },
+    "VerificationEvent": {
+      "title": "VerificationEvent",
+      "description": "Immutable verification audit trail event",
+      "type": "object",
+      "properties": {
+        "eventId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "organizationId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "action": {
+          "type": "string",
+          "enum": ["SUBMITTED", "VERIFICATION_STARTED", "VERIFICATION_COMPLETED", "MARKED_FOR_REVIEW", "APPROVED", "REJECTED", "RETRY_REQUESTED"]
+        },
+        "actorId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "actorName": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "actorRole": {
+          "type": "string",
+          "enum": ["government", "agency", "system"]
+        },
+        "previousStatus": {
+          "type": "string",
+          "maxLength": 50
+        },
+        "newStatus": {
+          "type": "string",
+          "maxLength": 50
+        },
+        "timestamp": {
+          "type": "string",
+          "maxLength": 50
+        },
+        "source": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "reference": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 500
+        }
+      },
+      "required": ["eventId", "organizationId", "action", "actorId", "actorName", "actorRole", "timestamp"]
     }
   },
   "firestore": {
     "/users/{uid}": {
       "schema": "User",
       "description": "User profile collection partitioned by Firebase Auth UID"
+    },
+    "/organizations/{organizationId}": {
+      "schema": "Organization",
+      "description": "Organization documents storing statutory registration and verification state"
+    },
+    "/verificationEvents/{eventId}": {
+      "schema": "VerificationEvent",
+      "description": "Append-only audit trail for verification transitions"
     }
   }
 }
+

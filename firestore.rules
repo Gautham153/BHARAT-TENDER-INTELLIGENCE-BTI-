@@ -36,6 +36,13 @@ service cloud.firestore {
       );
     }
 
+    function isAgencyUser() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'agency'
+      );
+    }
+
     function isValidUser(data) {
       return data.uid is string && data.uid.size() <= 128
         && data.email is string && data.email.size() <= 200
@@ -64,7 +71,7 @@ service cloud.firestore {
         && incoming().verificationStatus == 'pending'
         && incoming().verified == false;
 
-      // Updates: Account owner can update profile information, but CANNOT change role, verificationStatus, or UID
+      // Updates: Account owner can update non-privileged profile information
       allow update: if isSignedIn()
         && isValidId(uid)
         && request.auth.uid == uid
@@ -77,8 +84,114 @@ service cloud.firestore {
           'displayName', 'phone', 'designation', 'organizationName', 'address', 'businessCategory', 'updatedAt'
         ]);
 
+      // Updates by Government Nodal Reviewer (can update verification status and verified flag during adjudication)
+      allow update: if isGovernmentUser()
+        && isValidId(uid)
+        && incoming().uid == existing().uid
+        && incoming().role == existing().role
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'verified', 'verificationStatus', 'updatedAt'
+        ]);
+
       // Direct document deletion forbidden from client
       allow delete: if false;
     }
+
+    // 3. Organizations Collection Rules (/organizations/{organizationId})
+    match /organizations/{organizationId} {
+      // Read allowed for the primary organization user or verified government personnel
+      allow get: if isSignedIn() && isValidId(organizationId) && (
+        resource.data.primaryUserId == request.auth.uid || isGovernmentUser()
+      );
+
+      // List allowed for primary user or government reviewers
+      allow list: if isSignedIn() && (
+        resource.data.primaryUserId == request.auth.uid || isGovernmentUser()
+      );
+
+      // Create: Agency user only can create organization record for their own UID.
+      // Requires authenticated agency profile in /users/{uid} and unverified initial state.
+      allow create: if isSignedIn()
+        && isValidId(organizationId)
+        && incoming().primaryUserId == request.auth.uid
+        && isAgencyUser()
+        && incoming().gstin is string && incoming().gstin.size() == 15
+        && (incoming().verificationStatus in ['pending', 'not_started'])
+        && incoming().verified == false;
+
+      // Update by Government Nodal Reviewer (restricted strictly to adjudication state fields)
+      allow update: if isGovernmentUser()
+        && isValidId(organizationId)
+        && incoming().organizationId == existing().organizationId
+        && incoming().gstin == existing().gstin
+        && incoming().primaryUserId == existing().primaryUserId
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'verificationStatus', 'btiAuthorizationStatus', 'verified', 'verificationCompletedAt', 'rejectionReason', 'reviewNotes', 'updatedAt'
+        ]);
+
+      // Update by Agency Owner (cannot tamper with verification status or GSTIN)
+      allow update: if isSignedIn()
+        && isValidId(organizationId)
+        && request.auth.uid == existing().primaryUserId
+        && incoming().organizationId == existing().organizationId
+        && incoming().gstin == existing().gstin
+        && incoming().primaryUserId == existing().primaryUserId
+        && incoming().verificationStatus == existing().verificationStatus
+        && incoming().verified == existing().verified
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'displayName', 'registeredAddress', 'contactEmail', 'contactPhone', 'updatedAt'
+        ]);
+
+      allow delete: if false;
+    }
+
+    // 4. Verification Events Audit Log (/verificationEvents/{eventId})
+    // Audit records are strictly append-only (no updates, no deletions)
+    match /verificationEvents/{eventId} {
+      // Agency users may read events only for organizations they own
+      function isOrgOwnerForEvent() {
+        return isAgencyUser()
+          && exists(/databases/$(database)/documents/organizations/$(resource.data.organizationId))
+          && get(/databases/$(database)/documents/organizations/$(resource.data.organizationId)).data.primaryUserId == request.auth.uid;
+      }
+
+      // Read single event: authorized government reviewer or agency owner of the organization
+      allow get: if isSignedIn() && isValidId(eventId) && (
+        isGovernmentUser() || isOrgOwnerForEvent()
+      );
+
+      // List audit events: authorized government reviewer or agency owner of the organization
+      allow list: if isSignedIn() && (
+        isGovernmentUser() || isOrgOwnerForEvent()
+      );
+
+      // Agency audit action validation: only owner agency can create SUBMITTED or RETRY_REQUESTED events for their own org
+      function isAgencyEventValid() {
+        return isAgencyUser()
+          && incoming().actorId == request.auth.uid
+          && incoming().actorRole == 'agency'
+          && incoming().action in ['SUBMITTED', 'RETRY_REQUESTED']
+          && exists(/databases/$(database)/documents/organizations/$(incoming().organizationId))
+          && get(/databases/$(database)/documents/organizations/$(incoming().organizationId)).data.primaryUserId == request.auth.uid;
+      }
+
+      // Government nodal review audit action validation: government reviewers can record review/adjudication events
+      function isGovEventValid() {
+        return isGovernmentUser()
+          && incoming().actorId == request.auth.uid
+          && incoming().actorRole == 'government'
+          && incoming().action in ['MARKED_FOR_REVIEW', 'APPROVED', 'REJECTED']
+          && exists(/databases/$(database)/documents/organizations/$(incoming().organizationId));
+      }
+
+      // Append new audit event - strictly enforced by actor role authorization matrix & ownership
+      allow create: if isSignedIn()
+        && isValidId(eventId)
+        && (isAgencyEventValid() || isGovEventValid());
+
+      // Audit logs are strictly immutable
+      allow update, delete: if false;
+    }
   }
 }
+
