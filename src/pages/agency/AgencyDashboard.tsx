@@ -83,7 +83,7 @@ export const AgencyDashboard: React.FC<{ onNavigate: (path: string) => void }> =
       {/* Header */}
       <PageHeader
         title="Agency & Vendor Execution Workspace"
-        subtitle="Vikramaditya Infrastructure Ltd (GSTIN: 09AABCV9821L1ZM) • Tier-1 Verified Contractor"
+        subtitle="Vikramaditya Infrastructure Ltd (GSTIN: 09AABCV9821L1ZS) • Tier-1 Verified Contractor"
         badge={
           <span className="text-xs px-2.5 py-0.5 rounded-full font-bold bg-emerald-100 text-emerald-800 flex items-center gap-1">
             <ShieldCheck className="w-3.5 h-3.5" />

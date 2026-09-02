@@ -16,6 +16,7 @@ import {
   ChevronRight,
   LogOut,
   ShieldCheck,
+  UserCheck,
 } from 'lucide-react';
 import { BtiLogo } from '../common/BtiLogo';
 
@@ -51,6 +52,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const govNavItems: NavItem[] = [
     { id: 'gov-dash', label: 'Executive Dashboard', path: '/government/dashboard', icon: LayoutDashboard },
+    { id: 'gov-verif', label: 'Contractor Verification Desk', path: '/government/verification-review', icon: UserCheck, badge: 'Queue', badgeVariant: 'warning' },
     { id: 'gov-tenders', label: 'Tender Management', path: '/government/tenders', icon: FileSpreadsheet, badge: 14 },
     { id: 'gov-proposals', label: 'Proposal Evaluation', path: '/government/proposals', icon: FileCheck2, badge: 8 },
     { id: 'gov-risks', label: 'Anomaly & Risk Alerts', path: '/government/risk-alerts', icon: AlertTriangle, badge: 3, badgeVariant: 'danger' },
@@ -64,12 +66,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const agencyNavItems: NavItem[] = [
     { id: 'ag-dash', label: 'Agency Dashboard', path: '/agency/dashboard', icon: LayoutDashboard },
+    { id: 'ag-verif', label: 'Organization Verification', path: '/agency/verification', icon: FileBadge2 },
     { id: 'ag-tenders', label: 'Live Tenders (Bidding)', path: '/agency/tenders', icon: FileSpreadsheet, badge: 'New' },
     { id: 'ag-bids', label: 'My Submitted Proposals', path: '/agency/proposals', icon: FileCheck2, badge: 3 },
     { id: 'ag-milestones', label: 'Project Milestones', path: '/agency/milestones', icon: FolderKanban },
     { id: 'ag-disbursements', label: 'Disbursement Claims', path: '/agency/disbursements', icon: Receipt },
     { id: 'ag-compliance', label: 'GST & Compliance Profile', path: '/agency/compliance', icon: FileBadge2 },
   ];
+
 
   const navItems = portal === 'agency' ? agencyNavItems : govNavItems;
 

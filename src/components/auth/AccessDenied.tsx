@@ -105,9 +105,19 @@ export const AccessDenied: React.FC<AccessDeniedProps> = ({
             <Button
               variant="gov"
               size="lg"
-              className="w-full justify-center bg-[#002B49]"
+              className="w-full justify-center bg-[#002B49] hover:bg-[#003B64]"
               icon={ArrowRight}
               iconPosition="right"
+              onClick={() => onNavigate('/agency/verification')}
+            >
+              View Verification Status & Next Steps
+            </Button>
+
+            <Button
+              variant="outline"
+              size="md"
+              className="w-full justify-center border-slate-300"
+              icon={ArrowRight}
               onClick={() => onNavigate('/transparency')}
             >
               Return to Public Transparency Hub
@@ -116,7 +126,7 @@ export const AccessDenied: React.FC<AccessDeniedProps> = ({
             <div className="grid grid-cols-2 gap-2">
               <Button
                 variant="outline"
-                size="md"
+                size="sm"
                 className="w-full justify-center border-slate-300"
                 icon={Home}
                 onClick={() => onNavigate('/')}
@@ -125,7 +135,7 @@ export const AccessDenied: React.FC<AccessDeniedProps> = ({
               </Button>
               <Button
                 variant="ghost"
-                size="md"
+                size="sm"
                 className="w-full justify-center text-slate-700 hover:text-rose-700"
                 icon={LogOut}
                 onClick={handleLogoutAndSwitch}

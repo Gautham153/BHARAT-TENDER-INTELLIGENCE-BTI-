@@ -2,6 +2,7 @@
 // Phase 0 & 1A: Master Foundation Type Architecture
 
 export * from './auth';
+export * from './organization';
 
 export type UserRole = 'government' | 'agency' | 'public' | 'government_admin' | 'government_officer' | 'agency_user' | 'public_citizen';
 

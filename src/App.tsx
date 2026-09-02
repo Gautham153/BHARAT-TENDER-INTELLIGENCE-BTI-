@@ -21,6 +21,7 @@ import { DemoSwitcher } from './components/common/DemoSwitcher';
 
 // Government Portal Pages
 import { GovDashboard } from './pages/government/GovDashboard';
+import { GovernmentVerificationReviewPage } from './pages/government/GovernmentVerificationReviewPage';
 import { TenderManagement } from './pages/government/TenderManagement';
 import { ProposalReview } from './pages/government/ProposalReview';
 import { RiskAlerts } from './pages/government/RiskAlerts';
@@ -32,11 +33,13 @@ import { SettingsSecurityPage } from './pages/government/SettingsSecurityPage';
 
 // Agency Portal Pages
 import { AgencyDashboard } from './pages/agency/AgencyDashboard';
+import { AgencyVerificationStatusPage } from './pages/agency/AgencyVerificationStatusPage';
 import { LiveTendersPage } from './pages/agency/LiveTendersPage';
 import { SubmittedProposalsPage } from './pages/agency/SubmittedProposalsPage';
 import { ProjectMilestonesPage } from './pages/agency/ProjectMilestonesPage';
 import { DisbursementsPage } from './pages/agency/DisbursementsPage';
 import { ComplianceProfilePage } from './pages/agency/ComplianceProfilePage';
+
 
 import { Tender } from './types';
 
@@ -73,8 +76,11 @@ function AppContent() {
         switch (currentPath) {
           case '/government/dashboard':
             return <GovDashboard onNavigate={navigate} onSelectTender={setSelectedTender} />;
+          case '/government/verification-review':
+            return <GovernmentVerificationReviewPage onNavigate={navigate} />;
           case '/government/tenders':
             return <TenderManagement onNavigate={navigate} onSelectTender={setSelectedTender} />;
+
           case '/government/proposals':
             return <ProposalReview onNavigate={navigate} />;
           case '/government/risk-alerts':
@@ -119,8 +125,11 @@ function AppContent() {
         switch (currentPath) {
           case '/agency/dashboard':
             return <AgencyDashboard onNavigate={navigate} />;
+          case '/agency/verification':
+            return <AgencyVerificationStatusPage onNavigate={navigate} />;
           case '/agency/tenders':
             return <LiveTendersPage onNavigate={navigate} />;
+
           case '/agency/proposals':
             return <SubmittedProposalsPage onNavigate={navigate} />;
           case '/agency/milestones':

@@ -10,6 +10,7 @@ import {
   VerificationResult,
 } from '../types/auth';
 import { OrganizationVerificationService } from './organizationVerificationService';
+import { createOrganizationRecord } from './firebase/organizations';
 import { isFirebaseConfigured } from './firebase/firebase';
 import {
   signInWithEmail,
@@ -26,6 +27,7 @@ import {
 
 const AUTH_STORAGE_KEY = 'bti_auth_session_v1';
 const DEMO_STORAGE_KEY = 'bti_demo_session_v1';
+
 
 // Pre-defined synthetic demo profiles for evaluation and development
 export const DEMO_USERS: Record<string, AuthUser> = {
@@ -50,7 +52,7 @@ export const DEMO_USERS: Record<string, AuthUser> = {
     designation: 'Chief Project Engineer',
     agencyName: 'Vikramaditya Infrastructure Ltd',
     organizationId: 'ORG-VIKRAM-09A',
-    gstin: '09AABCV9821L1ZM',
+    gstin: '09AABCV9821L1ZS',
     phone: '+91 98765 43210',
     verified: true,
     verificationStatus: 'verified',
@@ -65,7 +67,7 @@ export const DEMO_USERS: Record<string, AuthUser> = {
     designation: 'Managing Director',
     agencyName: 'Apex BuildTech Enterprises',
     organizationId: 'ORG-APEX-27A',
-    gstin: '27AABCA1234F1Z5',
+    gstin: '27AABCA1234F1Z9',
     phone: '+91 98111 22334',
     verified: false,
     verificationStatus: 'pending',
@@ -224,18 +226,37 @@ export class AuthService {
   }
 
   /**
-   * Register a new Agency user with Firebase Auth and Firestore profile
+   * Register a new Agency user with Firebase Auth, Organization record, and Firestore profile
    */
   static async registerAgency(
     data: AgencyRegistrationData
   ): Promise<{ user: AuthUser; verificationResult: VerificationResult }> {
-    // 1. Verify GSTIN format
-    const formatCheck = OrganizationVerificationService.validateGSTINFormat(data.gstin);
+    // 1. Normalize GSTIN
+    const cleanGstin = OrganizationVerificationService.normalizeGSTIN(data.gstin);
+
+    // 2. Verify GSTIN format
+    const formatCheck = OrganizationVerificationService.validateGSTINFormat(cleanGstin);
     if (!formatCheck.isValid) {
       throw new Error(formatCheck.error || 'Invalid GSTIN format. 15-character statutory format required.');
     }
 
-    const verification = await OrganizationVerificationService.verifyGSTIN(data.gstin, data.businessName);
+    // 3. Duplicate Registration Check
+    const duplicateCheck = await OrganizationVerificationService.checkDuplicateGSTIN(cleanGstin);
+    if (duplicateCheck.isDuplicate && duplicateCheck.existingOrg) {
+      if (duplicateCheck.existingOrg.verificationStatus !== 'failed') {
+        throw new Error(
+          duplicateCheck.message ||
+            `An organization with GSTIN ${cleanGstin} is already registered on Bharat Tender Intelligence.`
+        );
+      }
+    }
+
+    // 4. Run Verification Check through Provider Abstraction
+    const verification = await OrganizationVerificationService.verifyOrganization(cleanGstin, {
+      legalName: data.companyName,
+      businessCategory: data.businessCategory,
+      state: data.state,
+    });
     const applicationId = `BTI-REG-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
 
     if (isFirebaseConfigured) {
@@ -250,15 +271,36 @@ export class AuthService {
         // Create user in Firebase Auth
         const fbUser = await createAgencyAccount(data.email, data.password, data.companyName);
 
-        // Create persistent user profile in Firestore
+        const orgId = `ORG-${cleanGstin.substring(0, 2)}-${Date.now().toString(36).toUpperCase()}-${fbUser.uid.slice(0, 4).toUpperCase()}`;
+
+        // Create persistent user profile in Firestore first (satisfies role == 'agency' requirement in firestore.rules)
         const profile = await createAgencyUserProfile(fbUser.uid, {
           name: data.companyName,
           email: data.email,
           agencyName: data.businessName || data.companyName,
-          gstin: data.gstin,
+          organizationId: orgId,
+          gstin: cleanGstin,
           phone: data.phone,
           applicationId,
         });
+
+        // Create Organization document in Firestore
+        const org = await createOrganizationRecord(
+          {
+            organizationId: orgId,
+            legalName: data.companyName,
+            displayName: data.businessName || data.companyName,
+            gstin: cleanGstin,
+            state: data.state,
+            businessCategory: data.businessCategory,
+            registeredAddress: data.address,
+            primaryUserId: fbUser.uid,
+            contactEmail: data.email,
+            contactPhone: data.phone,
+            applicationId,
+          },
+          verification
+        );
 
         verification.applicationId = applicationId;
         this.persistSession(profile);
@@ -270,17 +312,36 @@ export class AuthService {
 
     // Fallback registration for local prototype
     await new Promise((resolve) => setTimeout(resolve, 350));
+    const tempUid = `usr-ag-${Date.now().toString().slice(-5)}`;
+
+    const org = await createOrganizationRecord(
+      {
+        legalName: data.companyName,
+        displayName: data.businessName || data.companyName,
+        gstin: cleanGstin,
+        state: data.state,
+        businessCategory: data.businessCategory,
+        registeredAddress: data.address,
+        primaryUserId: tempUid,
+        contactEmail: data.email,
+        contactPhone: data.phone,
+        applicationId,
+      },
+      verification
+    );
+
     const newUser: AuthUser = {
-      id: `usr-ag-${Date.now().toString().slice(-5)}`,
-      uid: `usr-ag-${Date.now().toString().slice(-5)}`,
+      id: tempUid,
+      uid: tempUid,
       name: data.companyName,
       email: data.email.trim().toLowerCase(),
       role: 'agency',
+      organizationId: org.organizationId,
       agencyName: data.businessName || data.companyName,
-      gstin: data.gstin.trim().toUpperCase(),
+      gstin: cleanGstin,
       phone: data.phone,
-      verified: false,
-      verificationStatus: 'pending',
+      verified: verification.status === 'verified',
+      verificationStatus: verification.status,
       applicationId,
       createdAt: new Date().toISOString(),
     };
@@ -295,6 +356,7 @@ export class AuthService {
     this.persistSession(newUser);
     return { user: newUser, verificationResult: verification };
   }
+
 
   /**
    * Send password reset email

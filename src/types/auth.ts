@@ -1,14 +1,18 @@
 // Bharat Tender Intelligence (BTI) — Authentication & Verification Types
-// Phase 1A: Master Authentication Architecture
+// Phase 1 & 2A: Master Authentication & Organization Verification Types
+
+import { VerificationStatus, VerificationResult } from './organization';
 
 export type AuthRole = 'government' | 'agency' | 'public';
 
-export type VerificationStatus =
-  | 'not_started'
-  | 'pending'
-  | 'verified'
-  | 'failed'
-  | 'requires_review';
+export type { VerificationStatus, VerificationResult } from './organization';
+export type {
+  Organization,
+  VerificationEvent,
+  VerificationAuditAction,
+  VerificationProvider,
+  GSTINValidationResult,
+} from './organization';
 
 export type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated';
 
@@ -58,16 +62,3 @@ export interface AgencyRegistrationData {
   termsAccepted: boolean;
 }
 
-export interface VerificationResult {
-  gstin: string;
-  status: VerificationStatus;
-  businessName?: string;
-  registrationDate?: string;
-  stateCode?: string;
-  taxpayerType?: string;
-  activeStatus?: boolean;
-  riskFlag?: boolean;
-  message?: string;
-  applicationId?: string;
-  verifiedAt?: string;
-}

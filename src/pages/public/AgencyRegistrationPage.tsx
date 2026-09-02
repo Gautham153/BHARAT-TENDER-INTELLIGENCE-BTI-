@@ -23,6 +23,7 @@ import { RegistrationStepper } from '../../components/auth/RegistrationStepper';
 import { VerificationBadge } from '../../components/auth/VerificationBadge';
 import { BtiLogo } from '../../components/common/BtiLogo';
 import { SyntheticDataNotice } from '../../components/common/SyntheticDataNotice';
+import { DevelopmentEnvironmentNotice } from '../../components/common/DevelopmentEnvironmentNotice';
 import { useAuth } from '../../context/AuthContext';
 import { OrganizationVerificationService } from '../../services/organizationVerificationService';
 import { AgencyRegistrationData, VerificationResult } from '../../types/auth';
@@ -30,6 +31,7 @@ import { AgencyRegistrationData, VerificationResult } from '../../types/auth';
 export interface AgencyRegistrationPageProps {
   onNavigate: (path: string) => void;
 }
+
 
 const INDIAN_STATES = [
   { label: 'Select State / UT', value: '' },
@@ -300,25 +302,25 @@ export const AgencyRegistrationPage: React.FC<AgencyRegistrationPageProps> = ({ 
             </div>
 
             {/* Action Buttons */}
-            <div className="space-y-3 pt-2">
+            <div className="space-y-2.5 pt-2">
               <Button
                 variant="gov"
                 size="lg"
                 className="w-full justify-center bg-[#002B49] hover:bg-[#003B64]"
                 icon={ArrowRight}
                 iconPosition="right"
-                onClick={() => onNavigate('/transparency')}
+                onClick={() => onNavigate('/agency/verification')}
               >
-                Return to Public Transparency Hub
+                View Organization Verification Status
               </Button>
 
               <Button
                 variant="outline"
                 size="md"
                 className="w-full justify-center border-slate-300"
-                onClick={() => onNavigate('/')}
+                onClick={() => onNavigate('/agency/dashboard')}
               >
-                Go to Citizen Portal Home
+                Go to Agency Workspace
               </Button>
             </div>
 
@@ -345,6 +347,10 @@ export const AgencyRegistrationPage: React.FC<AgencyRegistrationPageProps> = ({ 
           Statutory vendor onboarding for participation in public MPLAD civil infrastructure works.
         </p>
       </div>
+
+      {/* Technical Honesty Disclaimer */}
+      <DevelopmentEnvironmentNotice />
+
 
       {/* Institutional Caution Note */}
       <div className="p-3.5 bg-blue-50/70 border border-blue-200/90 rounded-xl flex items-start gap-2.5 text-xs text-[#002B49]">
@@ -486,7 +492,7 @@ export const AgencyRegistrationPage: React.FC<AgencyRegistrationPageProps> = ({ 
                 <input
                   type="text"
                   maxLength={15}
-                  placeholder="e.g. 09AABCV9821L1ZM"
+                  placeholder="e.g. 09AABCV9821L1ZS"
                   value={formData.gstin}
                   onChange={(e) => handleGstinChange(e.target.value)}
                   className="w-full font-mono font-bold tracking-wider uppercase text-base p-3 rounded-lg border border-slate-300 focus:border-[#002B49] focus:ring-2 focus:ring-blue-100 bg-white text-slate-900 outline-none"

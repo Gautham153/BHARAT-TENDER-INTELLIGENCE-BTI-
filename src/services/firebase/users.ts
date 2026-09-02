@@ -92,6 +92,7 @@ export async function createAgencyUserProfile(
     name: string;
     email: string;
     agencyName: string;
+    organizationId?: string;
     gstin?: string;
     phone?: string;
     designation?: string;
@@ -104,7 +105,9 @@ export async function createAgencyUserProfile(
 
   const path = `users/${uid}`;
   const nowIso = new Date().toISOString();
-  const organizationId = `ORG-${Date.now().toString(36).toUpperCase()}-${uid.slice(0, 4).toUpperCase()}`;
+  const organizationId =
+    profile.organizationId ||
+    `ORG-${Date.now().toString(36).toUpperCase()}-${uid.slice(0, 4).toUpperCase()}`;
 
   const firestoreData = {
     uid,
@@ -147,6 +150,7 @@ export async function createAgencyUserProfile(
     handleFirestoreError(error, 'create', path);
   }
 }
+
 
 /**
  * Update allowed fields for user profile in Firestore

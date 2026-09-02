@@ -18,7 +18,7 @@ export const ComplianceProfilePage: React.FC<{ onNavigate: (path: string) => voi
   const { showToast } = useToast();
   const [profile, setProfile] = useState({
     companyName: 'Vikramaditya Infrastructure Ltd',
-    gstin: '09AABCV9821L1ZM',
+    gstin: '09AABCV9821L1ZS',
     pan: 'AABCV9821L',
     cin: 'U45200UP2016PLC089123',
     bankAccount: '9812002100049102',

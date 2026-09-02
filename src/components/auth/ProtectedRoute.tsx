@@ -120,17 +120,24 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
     );
   }
 
-  // 4. Agency Statutory Verification Gate
-  // Full Agency Workspace access requires BOTH verified === true and verificationStatus === 'verified'
-  if (requiredRole === 'agency' && (!user.verified || user.verificationStatus !== 'verified')) {
-    return (
-      <AccessDenied
-        requiredRole="agency"
-        reason="verification_pending"
-        currentPath={currentPath}
-        onNavigate={onNavigate}
-      />
-    );
+  // 4. Agency Statutory Verification & Operational Access Gate
+  // Operational routes (dashboard, tenders, proposals, milestones, disbursements) require BOTH verified === true AND verificationStatus === 'verified'
+  // Status & compliance review routes (/agency/verification, /agency/compliance) are accessible to pending/unverified agency users
+  if (requiredRole === 'agency') {
+    const STATUS_AND_ONBOARDING_ROUTES = ['/agency/verification', '/agency/compliance'];
+    const isStatusOrOnboardingRoute = STATUS_AND_ONBOARDING_ROUTES.includes(currentPath);
+    const isFullyVerified = Boolean(user.verified && user.verificationStatus === 'verified');
+
+    if (!isFullyVerified && !isStatusOrOnboardingRoute) {
+      return (
+        <AccessDenied
+          requiredRole="agency"
+          reason="verification_pending"
+          currentPath={currentPath}
+          onNavigate={onNavigate}
+        />
+      );
+    }
   }
 
   // 5. Authorized
