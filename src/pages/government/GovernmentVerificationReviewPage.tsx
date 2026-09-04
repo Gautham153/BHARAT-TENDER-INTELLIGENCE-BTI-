@@ -45,6 +45,7 @@ export const GovernmentVerificationReviewPage: React.FC<GovernmentVerificationRe
   const { showToast } = useToast();
 
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [selectedOrg, setSelectedOrg] = useState<Organization | null>(null);
   const [auditTrail, setAuditTrail] = useState<VerificationEvent[]>([]);
@@ -67,6 +68,7 @@ export const GovernmentVerificationReviewPage: React.FC<GovernmentVerificationRe
   // Load Organization Queue
   const loadQueue = async () => {
     setLoading(true);
+    setError(null);
     try {
       const list = await OrganizationVerificationService.listOrganizations(
         statusFilter === 'all' ? undefined : statusFilter
@@ -82,7 +84,12 @@ export const GovernmentVerificationReviewPage: React.FC<GovernmentVerificationRe
         setAuditTrail([]);
       }
     } catch (err) {
-      console.error('Error loading verification queue:', err);
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.error('[BTI Gov Review Queue] Error loading verification queue:', err);
+      setError(errMsg);
+      setOrganizations([]);
+      setSelectedOrg(null);
+      setAuditTrail([]);
     } finally {
       setLoading(false);
     }
@@ -169,6 +176,27 @@ export const GovernmentVerificationReviewPage: React.FC<GovernmentVerificationRe
       />
 
       <DevelopmentEnvironmentNotice />
+
+      {/* Authoritative Queue Retrieval Error Notification */}
+      {error && (
+        <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-red-900 text-xs flex items-start justify-between gap-3 shadow-xs">
+          <div className="flex items-start gap-2.5">
+            <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <div className="font-bold text-red-800">Authoritative Queue Retrieval Error</div>
+              <p className="font-mono text-[11px] text-red-700 break-all">{error}</p>
+            </div>
+          </div>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={loadQueue}
+            className="text-xs shrink-0 bg-white hover:bg-red-100/50 border border-red-300 text-red-900 cursor-pointer"
+          >
+            <RefreshCw className="w-3.5 h-3.5 mr-1" /> Retry
+          </Button>
+        </div>
+      )}
 
       {/* Filter and Search Bar */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">

@@ -553,6 +553,18 @@ export async function updateOrganizationVerificationStatus(
 export async function listOrganizationsForGovReview(
   filterStatus?: VerificationStatus | 'all'
 ): Promise<Organization[]> {
+  const currentAuthUid = auth?.currentUser?.uid || null;
+  const currentAuthEmail = auth?.currentUser?.email || null;
+  const demoActive = isDemoSession();
+
+  console.log('[BTI Gov Review Queue] Initiating organization review queue fetch:', {
+    isFirebaseConfigured,
+    currentAuthUid,
+    currentAuthEmail,
+    isDemoSession: demoActive,
+    filterStatus,
+  });
+
   if (isFirebaseConfigured && db) {
     try {
       const orgsRef = collection(db, 'organizations');
@@ -562,54 +574,39 @@ export async function listOrganizationsForGovReview(
         firestoreList.push(d.data() as Organization);
       });
 
+      console.log('[BTI Gov Review Queue] Firestore query succeeded:', {
+        count: firestoreList.length,
+        orgIds: firestoreList.map((o) => o.organizationId),
+        statuses: firestoreList.map((o) => ({ id: o.organizationId, status: o.verificationStatus })),
+      });
+
       firestoreList.sort(
         (a, b) => new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime()
       );
 
-      // In real Firebase mode (!isDemoSession), return ONLY authentic Firestore records (no synthetic mixing)
-      if (!isDemoSession()) {
-        if (!filterStatus || filterStatus === 'all') {
-          return firestoreList;
-        }
-        return firestoreList.filter((o) => o.verificationStatus === filterStatus);
-      }
-
-      // In Demo Mode (isDemoSession), return demo records (merged with any local Firestore records if present)
-      const firestoreIds = new Set(firestoreList.map((o) => o.organizationId));
-      const demoExtras = Object.values(SEED_DEMO_ORGANIZATIONS).filter(
-        (s) => !firestoreIds.has(s.organizationId)
-      );
-      const combined = [...firestoreList, ...demoExtras];
-      combined.sort(
-        (a, b) => new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime()
-      );
-
+      // In Firebase mode, return ONLY authentic Firestore records (no synthetic mixing)
       if (!filterStatus || filterStatus === 'all') {
-        return combined;
+        return firestoreList;
       }
-      return combined.filter((o) => o.verificationStatus === filterStatus);
+      return firestoreList.filter((o) => o.verificationStatus === filterStatus);
     } catch (err) {
-      // If Firestore fails in demo mode, fall back to seed data
-      if (isDemoSession()) {
-        const seedList = Object.values(SEED_DEMO_ORGANIZATIONS);
-        seedList.sort(
-          (a, b) => new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime()
-        );
-        if (!filterStatus || filterStatus === 'all') {
-          return seedList;
-        }
-        return seedList.filter((o) => o.verificationStatus === filterStatus);
-      }
+      console.error('[BTI Gov Review Queue] Authoritative Firestore query failed:', {
+        error: err,
+        currentAuthUid,
+        currentAuthEmail,
+        isDemoSession: demoActive,
+      });
 
       throw new Error(
-        `Failed to fetch organization review queue from authoritative Firestore: ${
+        `Failed to fetch organization review queue from authoritative Firestore (${
           err instanceof Error ? err.message : String(err)
-        }`
+        }). Current Auth UID: ${currentAuthUid || 'UNAUTHENTICATED'}.`
       );
     }
   }
 
-  // Explicit local/demo fallback
+  // Explicit local/demo fallback (only active when Firebase is NOT configured)
+  console.log('[BTI Gov Review Queue] Operating in local/mock fallback mode (Firebase not configured).');
   const localRegistry = getLocalRegistry();
   const orgList = Object.values(localRegistry);
   orgList.sort(

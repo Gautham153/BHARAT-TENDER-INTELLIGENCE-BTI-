@@ -11,6 +11,8 @@ import {
   CheckCircle2,
   HelpCircle,
   Sparkles,
+  UserCheck,
+  LogOut,
 } from 'lucide-react';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
@@ -30,7 +32,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   onNavigate,
   initialPortal = 'government',
 }) => {
-  const { login, loginDemo, isAuthenticated, user } = useAuth();
+  const { login, loginDemo, logout, isAuthenticated, user } = useAuth();
 
   // Detect portal from URL parameter if available
   const [selectedPortal, setSelectedPortal] = useState<AuthRole>(() => {
@@ -47,18 +49,16 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<{ email?: string; password?: string }>({});
 
-  // If already authenticated with an authorized role, redirect
+  // If already authenticated with the selected portal role, redirect to its dashboard
   useEffect(() => {
-    if (isAuthenticated && user) {
+    if (isAuthenticated && user && user.role === selectedPortal) {
       if (user.role === 'government') {
         onNavigate('/government/dashboard');
       } else if (user.role === 'agency') {
         onNavigate('/agency/dashboard');
-      } else {
-        onNavigate('/portal-selection');
       }
     }
-  }, [isAuthenticated, user, onNavigate]);
+  }, [isAuthenticated, user, selectedPortal, onNavigate]);
 
   const validateForm = (): boolean => {
     const errors: { email?: string; password?: string } = {};
@@ -207,6 +207,37 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             </div>
           </div>
 
+          {/* Active Session Warning / Switcher */}
+          {isAuthenticated && user && (
+            <div className="p-3 bg-blue-50/90 border border-blue-200 rounded-xl flex items-center justify-between gap-3 text-xs text-[#002B49]">
+              <div className="space-y-0.5 min-w-0">
+                <div className="flex items-center gap-1.5 font-bold">
+                  <UserCheck className="w-3.5 h-3.5 text-blue-700 shrink-0" />
+                  <span className="truncate">Active: {user.name || user.email}</span>
+                  <span className="px-1.5 py-0.2 rounded text-[10px] uppercase font-mono bg-blue-200/70 text-blue-900">
+                    {user.role}
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-600 truncate">
+                  {user.role === selectedPortal
+                    ? 'Currently signed in to this portal.'
+                    : `Currently signed in as ${user.role}. Sign in below to switch to ${selectedPortal}.`}
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={async () => {
+                  await logout();
+                }}
+                className="text-xs shrink-0 border-slate-300 text-rose-700 hover:text-rose-800 hover:bg-rose-50"
+              >
+                <LogOut className="w-3 h-3 mr-1" /> Sign Out
+              </Button>
+            </div>
+          )}
+
           {/* Error Message Box */}
           {errorMessage && (
             <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl flex items-start gap-2 text-xs text-rose-800 animate-fadeIn">
@@ -231,7 +262,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               autoComplete="email"
               helperText={
                 selectedPortal === 'government'
-                  ? 'Must be a verified @gov.in or @nic.in government address'
+                  ? 'Official institutional address (@gov.in, @nic.in, or provisioned Government email)'
                   : 'Registered organizational email ID'
               }
             />

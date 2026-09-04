@@ -11,7 +11,7 @@ import {
 } from '../types/auth';
 import { OrganizationVerificationService } from './organizationVerificationService';
 import { createOrganizationRecord } from './firebase/organizations';
-import { isFirebaseConfigured } from './firebase/firebase';
+import { isFirebaseConfigured, auth } from './firebase/firebase';
 import {
   signInWithEmail,
   createAgencyAccount,
@@ -160,6 +160,14 @@ export class AuthService {
     // 2. Real Firebase Authentication if configured
     if (isFirebaseConfigured) {
       try {
+        if (auth?.currentUser) {
+          try {
+            await signOutUser();
+          } catch {
+            // Ignore sign-out cleanup errors
+          }
+        }
+
         const fbUser = await signInWithEmail(cleanEmail, password);
         
         // Remove demo session marker upon authenticating with real Firebase credentials
@@ -181,6 +189,13 @@ export class AuthService {
         if (portal === 'government' && profile.role !== 'government') {
           throw new Error('Access Denied: This account is not authorized for the Government Intelligence Portal. Please sign in via the Agency Workspace.');
         }
+
+        console.log('[BTI Auth] Real Firebase Authentication successful:', {
+          uid: fbUser.uid,
+          email: fbUser.email,
+          role: profile.role,
+          isDemoSession: false,
+        });
 
         this.persistSession(profile);
         return profile;
