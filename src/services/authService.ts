@@ -271,6 +271,22 @@ export class AuthService {
         // Create user in Firebase Auth
         const fbUser = await createAgencyAccount(data.email, data.password, data.companyName);
 
+        // Authoritative duplicate check in Firestore as authenticated user
+        const authDuplicateCheck = await OrganizationVerificationService.checkDuplicateGSTIN(cleanGstin);
+        if (authDuplicateCheck.isDuplicate && authDuplicateCheck.existingOrg) {
+          if (authDuplicateCheck.existingOrg.verificationStatus !== 'failed') {
+            try {
+              await fbUser.delete();
+            } catch {
+              // Ignore cleanup error
+            }
+            throw new Error(
+              authDuplicateCheck.message ||
+                `An organization with GSTIN ${cleanGstin} is already registered on Bharat Tender Intelligence.`
+            );
+          }
+        }
+
         const orgId = `ORG-${cleanGstin}`;
 
         // Create persistent user profile in Firestore first (satisfies role == 'agency' requirement in firestore.rules)

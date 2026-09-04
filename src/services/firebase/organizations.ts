@@ -13,7 +13,7 @@ import {
   limit,
   writeBatch,
 } from 'firebase/firestore';
-import { db, isFirebaseConfigured } from './firebase';
+import { auth, db, isFirebaseConfigured } from './firebase';
 import {
   Organization,
   VerificationStatus,
@@ -201,6 +201,19 @@ export async function fetchOrganizationByGstin(gstin: string): Promise<Organizat
   const cleanGstin = gstin.trim().toUpperCase();
 
   if (isFirebaseConfigured && db) {
+    // If user is not authenticated in Firebase, Firestore security rules reject all reads.
+    // An unauthenticated pre-registration check must NOT misinterpret missing auth as "organization exists" (BTI-EXISTING).
+    if (!auth?.currentUser) {
+      if (isDemoSession()) {
+        const localRegistry = getLocalRegistry();
+        const match = Object.values(localRegistry).find(
+          (o) => o.gstin.trim().toUpperCase() === cleanGstin
+        );
+        return match || null;
+      }
+      return null;
+    }
+
     try {
       // 1. Direct deterministic document check on /organizations/ORG-{GSTIN}
       const docRef = doc(db, 'organizations', `ORG-${cleanGstin}`);
@@ -211,9 +224,9 @@ export async function fetchOrganizationByGstin(gstin: string): Promise<Organizat
       }
       return null;
     } catch (err: unknown) {
-      // In Firestore security rules, if the document exists but is owned by another primaryUserId,
-      // Firestore returns 'permission-denied' for non-government users.
-      // This cryptographically confirms that the GSTIN is already registered in Firestore.
+      // In Firestore security rules, an authenticated agency can read a non-existent document (snap.exists() === false),
+      // but if the document exists and belongs to another agency, Firestore returns 'permission-denied'.
+      // For an authenticated caller, permission-denied cryptographically confirms the GSTIN is already registered.
       const errorMsg = err instanceof Error ? err.message : String(err);
       const isPermissionDenied =
         (typeof err === 'object' && err !== null && 'code' in err && (err as { code: string }).code === 'permission-denied') ||
@@ -261,12 +274,16 @@ export async function fetchOrganizationByGstin(gstin: string): Promise<Organizat
     }
   }
 
-  // Explicit local/demo fallback
-  const localRegistry = getLocalRegistry();
-  const match = Object.values(localRegistry).find(
-    (o) => o.gstin.trim().toUpperCase() === cleanGstin
-  );
-  return match || null;
+  // Explicit local/demo fallback (only when genuinely in demo mode or Firebase not configured)
+  if (isDemoSession() || !isFirebaseConfigured) {
+    const localRegistry = getLocalRegistry();
+    const match = Object.values(localRegistry).find(
+      (o) => o.gstin.trim().toUpperCase() === cleanGstin
+    );
+    return match || null;
+  }
+
+  return null;
 }
 
 /**
