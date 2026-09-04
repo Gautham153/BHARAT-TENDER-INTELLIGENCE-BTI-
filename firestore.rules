@@ -101,7 +101,7 @@ service cloud.firestore {
     match /organizations/{organizationId} {
       // Read allowed for the primary organization user or verified government personnel
       allow get: if isSignedIn() && isValidId(organizationId) && (
-        resource.data.primaryUserId == request.auth.uid || isGovernmentUser()
+        resource == null || resource.data.primaryUserId == request.auth.uid || isGovernmentUser()
       );
 
       // List allowed for primary user or government reviewers
