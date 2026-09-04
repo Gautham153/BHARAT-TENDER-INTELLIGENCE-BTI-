@@ -158,6 +158,16 @@ export function saveLocalVerificationEvent(event: VerificationEvent) {
   saveLocalEvents(events);
 }
 
+function sanitizeFirestorePayload<T extends Record<string, any>>(data: T): Partial<T> {
+  const result: Record<string, any> = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (value !== undefined) {
+      result[key] = value;
+    }
+  }
+  return result as Partial<T>;
+}
+
 /**
  * Record a verification audit event
  */
@@ -177,7 +187,7 @@ export async function recordVerificationEvent(
   if (isFirebaseConfigured && db) {
     try {
       const docRef = doc(db, 'verificationEvents', eventId);
-      await setDoc(docRef, event);
+      await setDoc(docRef, sanitizeFirestorePayload(event));
     } catch (err) {
       if (!isDemoSession()) {
         throw new Error(

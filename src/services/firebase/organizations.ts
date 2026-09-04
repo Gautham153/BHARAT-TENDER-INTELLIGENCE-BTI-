@@ -287,6 +287,20 @@ export async function fetchOrganizationByGstin(gstin: string): Promise<Organizat
 }
 
 /**
+ * Utility to strip undefined properties from an object so Firestore SDK does not reject it.
+ * Preserves clean document representation and satisfies Firestore SDK constraints.
+ */
+export function sanitizeFirestorePayload<T extends Record<string, any>>(data: T): Partial<T> {
+  const result: Record<string, any> = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (value !== undefined) {
+      result[key] = value;
+    }
+  }
+  return result as Partial<T>;
+}
+
+/**
  * Create new persistent Organization record
  */
 export async function createOrganizationRecord(
@@ -327,6 +341,7 @@ export async function createOrganizationRecord(
     operationalStatus = 'pending';
   }
 
+  // Construct clean organization record omitting optional fields when undefined
   const newOrg: Organization = {
     organizationId: orgId,
     legalName: params.legalName.trim(),
@@ -342,9 +357,7 @@ export async function createOrganizationRecord(
     verificationProvider: verification.provider || 'development-simulation',
     verificationReference: verification.reference || `DEV-VERIF-${Date.now()}`,
     verificationRequestedAt: nowIso,
-    verificationCompletedAt: undefined,
     contactEmail: params.contactEmail.trim().toLowerCase(),
-    contactPhone: params.contactPhone?.trim(),
     primaryUserId: params.primaryUserId,
     verified: false,
     applicationId,
@@ -352,11 +365,16 @@ export async function createOrganizationRecord(
     updatedAt: nowIso,
   };
 
+  if (params.contactPhone?.trim()) {
+    newOrg.contactPhone = params.contactPhone.trim();
+  }
+
   // 1. Persist to Firestore first if configured — must be authoritative in Firebase mode
   if (isFirebaseConfigured && db) {
     try {
       const docRef = doc(db, 'organizations', orgId);
-      await setDoc(docRef, newOrg);
+      const firestorePayload = sanitizeFirestorePayload(newOrg);
+      await setDoc(docRef, firestorePayload);
     } catch (err) {
       throw new Error(
         `Failed to persist organization to authoritative Firestore: ${
@@ -422,11 +440,26 @@ export async function updateOrganizationVerificationStatus(
     verificationStatus: newStatus,
     btiAuthorizationStatus,
     verified: isVerified,
-    verificationCompletedAt: isVerified ? nowIso : current.verificationCompletedAt,
-    rejectionReason: newStatus === 'failed' ? reviewer.reason : undefined,
-    reviewNotes: reviewer.notes || current.reviewNotes,
     updatedAt: nowIso,
   };
+
+  if (isVerified) {
+    updatedOrg.verificationCompletedAt = nowIso;
+  } else if (current.verificationCompletedAt) {
+    updatedOrg.verificationCompletedAt = current.verificationCompletedAt;
+  }
+
+  if (newStatus === 'failed' && reviewer.reason?.trim()) {
+    updatedOrg.rejectionReason = reviewer.reason.trim();
+  } else if (current.rejectionReason && newStatus !== 'verified') {
+    updatedOrg.rejectionReason = current.rejectionReason;
+  }
+
+  if (reviewer.notes?.trim()) {
+    updatedOrg.reviewNotes = reviewer.notes.trim();
+  } else if (current.reviewNotes) {
+    updatedOrg.reviewNotes = current.reviewNotes;
+  }
 
   // 1. Prepare Audit Trail Event Record
   let auditAction: VerificationAuditAction = 'MARKED_FOR_REVIEW';
@@ -457,29 +490,38 @@ export async function updateOrganizationVerificationStatus(
 
       // (a) Organization document update — restricted strictly to permitted adjudication fields
       const orgDocRef = doc(db, 'organizations', organizationId);
-      batch.update(orgDocRef, {
+      const orgUpdatePayload: Record<string, any> = {
         verificationStatus: newStatus,
         btiAuthorizationStatus,
         verified: isVerified,
-        verificationCompletedAt: isVerified ? nowIso : null,
-        rejectionReason: updatedOrg.rejectionReason || null,
-        reviewNotes: updatedOrg.reviewNotes || null,
         updatedAt: nowIso,
-      });
+      };
+
+      if (isVerified) {
+        orgUpdatePayload.verificationCompletedAt = nowIso;
+      }
+      if (updatedOrg.rejectionReason) {
+        orgUpdatePayload.rejectionReason = updatedOrg.rejectionReason;
+      }
+      if (updatedOrg.reviewNotes) {
+        orgUpdatePayload.reviewNotes = updatedOrg.reviewNotes;
+      }
+
+      batch.update(orgDocRef, sanitizeFirestorePayload(orgUpdatePayload));
 
       // (b) Linked user document update — synchronize role profile
       if (current.primaryUserId) {
         const userDocRef = doc(db, 'users', current.primaryUserId);
-        batch.update(userDocRef, {
+        batch.update(userDocRef, sanitizeFirestorePayload({
           verified: isVerified,
           verificationStatus: newStatus,
           updatedAt: nowIso,
-        });
+        }));
       }
 
       // (c) Verification audit event document create — append immutable trace log
       const auditDocRef = doc(db, 'verificationEvents', auditEventId);
-      batch.set(auditDocRef, auditEvent);
+      batch.set(auditDocRef, sanitizeFirestorePayload(auditEvent));
 
       // Commit all 3 document operations atomically
       await batch.commit();

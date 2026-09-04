@@ -82,6 +82,16 @@ export async function fetchUserProfile(uid: string): Promise<AuthUser | null> {
   }
 }
 
+function sanitizeFirestorePayload<T extends Record<string, any>>(data: T): Partial<T> {
+  const result: Record<string, any> = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (value !== undefined) {
+      result[key] = value;
+    }
+  }
+  return result as Partial<T>;
+}
+
 /**
  * Create a new user profile document in Firestore upon Agency registration.
  * Role is strictly locked to 'agency' and verificationStatus to 'pending' to satisfy security rules.
@@ -109,16 +119,16 @@ export async function createAgencyUserProfile(
     profile.organizationId ||
     `ORG-${Date.now().toString(36).toUpperCase()}-${uid.slice(0, 4).toUpperCase()}`;
 
-  const firestoreData = {
+  const firestoreData: Record<string, any> = {
     uid,
-    displayName: profile.name,
-    email: profile.email.toLowerCase().trim(),
+    displayName: profile.name?.trim() || '',
+    email: profile.email?.toLowerCase().trim() || '',
     role: 'agency' as const,
     organizationId,
-    organizationName: profile.agencyName,
+    organizationName: profile.agencyName?.trim() || '',
     gstin: profile.gstin?.toUpperCase().trim() || '',
-    phone: profile.phone || '',
-    designation: profile.designation || '',
+    phone: profile.phone?.trim() || '',
+    designation: profile.designation?.trim() || '',
     verified: false,
     verificationStatus: 'pending' as const,
     applicationId: profile.applicationId || `APP-${Date.now()}`,
@@ -128,7 +138,7 @@ export async function createAgencyUserProfile(
 
   try {
     const userDocRef = doc(db, 'users', uid);
-    await setDoc(userDocRef, firestoreData);
+    await setDoc(userDocRef, sanitizeFirestorePayload(firestoreData));
 
     return {
       id: uid,
@@ -166,14 +176,14 @@ export async function updateUserProfile(
     updatedAt: new Date().toISOString(),
   };
 
-  if (updates.name !== undefined) firestoreUpdates.displayName = updates.name;
-  if (updates.phone !== undefined) firestoreUpdates.phone = updates.phone;
-  if (updates.designation !== undefined) firestoreUpdates.designation = updates.designation;
-  if (updates.agencyName !== undefined) firestoreUpdates.organizationName = updates.agencyName;
+  if (updates.name !== undefined) firestoreUpdates.displayName = updates.name.trim();
+  if (updates.phone !== undefined) firestoreUpdates.phone = updates.phone.trim();
+  if (updates.designation !== undefined) firestoreUpdates.designation = updates.designation.trim();
+  if (updates.agencyName !== undefined) firestoreUpdates.organizationName = updates.agencyName.trim();
 
   try {
     const userDocRef = doc(db, 'users', uid);
-    await updateDoc(userDocRef, firestoreUpdates);
+    await updateDoc(userDocRef, sanitizeFirestorePayload(firestoreUpdates));
   } catch (error) {
     handleFirestoreError(error, 'update', path);
   }
