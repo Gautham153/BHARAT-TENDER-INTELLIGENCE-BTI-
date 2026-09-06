@@ -1,7 +1,7 @@
 // Bharat Tender Intelligence (BTI) — Government Tender Creation Wizard
 // Phase 3A: Multi-Section Procurement Specifications Compiler
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   FileText,
   Building,
@@ -19,6 +19,7 @@ import {
   Plus,
   Trash2,
   HelpCircle,
+  Clock,
 } from 'lucide-react';
 import { TenderService } from '../../services/firebase/tenders';
 import {
@@ -26,20 +27,28 @@ import {
   TENDER_CATEGORIES_MAP,
   TenderFormData,
   DurationUnit,
+  Tender,
 } from '../../types/tender';
 import { useAuth } from '../../context/AuthContext';
 import { TenderConfirmationModal } from '../../components/tenders/TenderConfirmationModal';
 
 export interface GovernmentTenderCreatePageProps {
   onNavigate: (path: string) => void;
+  tenderId?: string;
 }
 
-export const GovernmentTenderCreatePage: React.FC<GovernmentTenderCreatePageProps> = ({ onNavigate }) => {
+export const GovernmentTenderCreatePage: React.FC<GovernmentTenderCreatePageProps> = ({ onNavigate, tenderId }) => {
   const { user } = useAuth();
 
   const [activeSection, setActiveSection] = useState<number>(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Draft Edit Mode state
+  const [loadedTender, setLoadedTender] = useState<Tender | null>(null);
+  const [loadingTender, setLoadingTender] = useState<boolean>(Boolean(tenderId));
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const initialLoadDoneRef = useRef(false);
 
   // Form State
   const todayStr = new Date().toISOString().split('T')[0];
@@ -93,8 +102,106 @@ export const GovernmentTenderCreatePage: React.FC<GovernmentTenderCreatePageProp
   // Confirmation Modal
   const [showPublishModal, setShowPublishModal] = useState(false);
 
+  // Load draft tender data when editing an existing draft
+  useEffect(() => {
+    if (!tenderId) {
+      initialLoadDoneRef.current = true;
+      return;
+    }
+
+    let isMounted = true;
+
+    async function loadDraftTender() {
+      try {
+        setLoadingTender(true);
+        setFetchError(null);
+        const data = await TenderService.getTenderById(tenderId, user?.role);
+        if (!isMounted) return;
+
+        if (!data) {
+          setFetchError('Draft tender record could not be found or access is restricted.');
+          return;
+        }
+
+        if (data.status !== 'DRAFT') {
+          setFetchError(`This tender is in '${data.status}' status and cannot be edited as a draft. Only DRAFT tenders can be edited.`);
+          setLoadedTender(data);
+          return;
+        }
+
+        setLoadedTender(data);
+
+        // Pre-populate Section 1: Basic Information
+        setTitle(data.title || '');
+        setDescription(data.description || data.scopeOfWork || '');
+        if (data.category) {
+          setCategory(data.category as CanonicalTenderCategory);
+        }
+        setSubCategory(data.subCategory || '');
+
+        // Pre-populate Section 2: Authority & MP Office
+        setIssuingAuthority(data.issuingAuthority || 'Office of the District Magistrate & District Nodal Officer');
+        setDepartment(data.department || 'Public Works Department (PWD), Civil Division');
+        setMpName(data.mpName || 'District Parliamentary Office');
+
+        // Pre-populate Section 3: Project Location
+        setState(data.state || 'Uttar Pradesh');
+        setDistrict(data.district || 'Varanasi');
+        setConstituency(data.constituency || 'Varanasi');
+        setProjectLocation(data.projectLocation || '');
+        setLatitude(data.latitude !== undefined && !isNaN(Number(data.latitude)) ? Number(data.latitude) : undefined);
+        setLongitude(data.longitude !== undefined && !isNaN(Number(data.longitude)) ? Number(data.longitude) : undefined);
+
+        // Pre-populate Section 4: Financial Allocation
+        setSanctionedAmount(Number(data.sanctionedAmount) || 0);
+        setEstimatedValue(Number(data.estimatedValue) || Number(data.estimatedCost) || 0);
+
+        // Pre-populate Section 5: Procurement Timeline
+        setDurationValue(Number(data.durationValue) || 30);
+        setDurationUnit((data.durationUnit as DurationUnit) || 'days');
+        setPublicationDate(data.publicationDate || (data.publishedDate ? data.publishedDate.split('T')[0] : todayStr));
+        setClosingDate(data.closingDate ? (data.closingDate.includes('T') ? data.closingDate.split('T')[0] : data.closingDate) : '');
+
+        // Pre-populate Section 6: Eligibility Criteria
+        if (Array.isArray(data.eligibilityCriteria) && data.eligibilityCriteria.length > 0) {
+          setEligibilityCriteria(data.eligibilityCriteria);
+        } else {
+          setEligibilityCriteria([]);
+        }
+
+        // Pre-populate Section 7: Document Checklist & Special Requirements
+        if (Array.isArray(data.requiredDocuments) && data.requiredDocuments.length > 0) {
+          setRequiredDocuments(data.requiredDocuments);
+        } else {
+          setRequiredDocuments([]);
+        }
+        setSpecialRequirements(data.specialRequirements || '');
+
+      } catch (err: any) {
+        if (!isMounted) return;
+        setFetchError(err?.message || 'Failed to load draft tender specifications.');
+      } finally {
+        if (isMounted) {
+          setLoadingTender(false);
+          setTimeout(() => {
+            initialLoadDoneRef.current = true;
+          }, 150);
+        }
+      }
+    }
+
+    loadDraftTender();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [tenderId, user?.role, todayStr]);
+
   // Auto-calculate closing date when publicationDate, durationValue, or durationUnit change
   useEffect(() => {
+    if (tenderId && !initialLoadDoneRef.current) {
+      return;
+    }
     try {
       const pub = new Date(publicationDate);
       if (!isNaN(pub.getTime()) && durationValue > 0) {
@@ -108,17 +215,20 @@ export const GovernmentTenderCreatePage: React.FC<GovernmentTenderCreatePageProp
     } catch (err) {
       console.warn('Error calculating closing date:', err);
     }
-  }, [publicationDate, durationValue, durationUnit]);
+  }, [publicationDate, durationValue, durationUnit, tenderId]);
 
   // Update subcategory options when category changes
   useEffect(() => {
+    if (tenderId && !initialLoadDoneRef.current) {
+      return;
+    }
     const subcats = TENDER_CATEGORIES_MAP[category] || [];
     if (subcats.length > 0) {
       setSubCategory(subcats[0]);
     } else {
       setSubCategory('');
     }
-  }, [category]);
+  }, [category, tenderId]);
 
   // Currency Formatter helper
   const formatINR = (val: number) => {
@@ -156,7 +266,7 @@ export const GovernmentTenderCreatePage: React.FC<GovernmentTenderCreatePageProp
       durationValue: Number(durationValue) || 30,
       durationUnit: durationUnit || 'days',
       publicationDate: publicationDate || new Date().toISOString().split('T')[0],
-      closingDate: closingDate || new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
+      closingDate: closingDate.trim() || (isDraftMode ? undefined : new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0]),
       eligibilityCriteria: eligibilityCriteria.filter((c) => c && c.trim().length > 0),
       requiredDocuments: requiredDocuments.filter((d) => d && d.trim().length > 0),
       specialRequirements: specialRequirements.trim() || undefined,
@@ -175,8 +285,13 @@ export const GovernmentTenderCreatePage: React.FC<GovernmentTenderCreatePageProp
     try {
       setLoading(true);
       const payload = getFormData(true);
-      await TenderService.createTender(payload, user, true);
-      onNavigate('/government/tenders');
+      if (tenderId) {
+        await TenderService.updateTenderDraft(tenderId, payload, user);
+        onNavigate(`/government/tenders/${tenderId}`);
+      } else {
+        const created = await TenderService.createTender(payload, user, true);
+        onNavigate(`/government/tenders/${created.id}`);
+      }
     } catch (err: any) {
       setError(err.message || 'Failed to save tender draft.');
     } finally {
@@ -190,8 +305,16 @@ export const GovernmentTenderCreatePage: React.FC<GovernmentTenderCreatePageProp
     try {
       setLoading(true);
       const payload = getFormData(false);
-      await TenderService.createTender(payload, user, false);
-      onNavigate('/government/tenders');
+      if (tenderId) {
+        // Save latest wizard modifications to draft first
+        await TenderService.updateTenderDraft(tenderId, payload, user);
+        // Transition draft to LIVE with strict audit logging and publication verification
+        await TenderService.publishTender(tenderId, user, notes);
+        onNavigate(`/government/tenders/${tenderId}`);
+      } else {
+        const created = await TenderService.createTender(payload, user, false);
+        onNavigate(`/government/tenders/${created.id}`);
+      }
     } catch (err: any) {
       setError(err.message || 'Failed to publish tender.');
     } finally {
@@ -286,23 +409,74 @@ export const GovernmentTenderCreatePage: React.FC<GovernmentTenderCreatePageProp
     { id: 8, title: 'Review & Publish', icon: CheckCircle2 },
   ];
 
+  if (loadingTender) {
+    return (
+      <div id="tender-wizard-loading" className="max-w-5xl mx-auto py-24 text-center">
+        <Clock className="w-8 h-8 mx-auto mb-3 animate-spin text-slate-400" />
+        <h2 className="text-base font-semibold text-slate-800">Loading Draft Tender Specifications...</h2>
+        <p className="text-xs text-slate-500 mt-1">Retrieving official draft registry parameters.</p>
+      </div>
+    );
+  }
+
+  if (fetchError) {
+    return (
+      <div id="tender-wizard-fetch-error" className="max-w-3xl mx-auto py-12 space-y-4">
+        <button
+          onClick={() => onNavigate('/government/tenders')}
+          className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-slate-800 transition-colors"
+        >
+          <ArrowLeft className="w-3.5 h-3.5" />
+          <span>Back to Tender Management</span>
+        </button>
+
+        <div className="p-6 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 space-y-2">
+          <div className="flex items-center gap-2 font-semibold text-rose-900 text-sm">
+            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+            <span>Unable to Edit Tender</span>
+          </div>
+          <p>{fetchError}</p>
+          {loadedTender && loadedTender.status !== 'DRAFT' && (
+            <div className="pt-2">
+              <button
+                onClick={() => onNavigate(`/government/tenders/${loadedTender.id}`)}
+                className="px-3.5 py-1.5 bg-white border border-rose-300 rounded-lg text-rose-800 font-medium hover:bg-rose-100 transition-colors"
+              >
+                View Tender Details
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div id="tender-creation-wizard-page" className="max-w-5xl mx-auto space-y-6">
       {/* Top Breadcrumb & Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
           <button
-            onClick={() => onNavigate('/government/tenders')}
+            onClick={() => onNavigate(tenderId ? `/government/tenders/${tenderId}` : '/government/tenders')}
             className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-slate-800 transition-colors mb-2"
           >
             <ArrowLeft className="w-3.5 h-3.5" />
-            <span>Back to Tender Management</span>
+            <span>{tenderId ? 'Back to Tender Details' : 'Back to Tender Management'}</span>
           </button>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-            Create New Government Tender
-          </h1>
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+              {tenderId ? 'Edit Draft Tender' : 'Create New Government Tender'}
+            </h1>
+            {tenderId && loadedTender && (
+              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-mono font-semibold bg-amber-100 text-amber-900 border border-amber-300">
+                {loadedTender.tenderNumber || 'DRAFT'}
+              </span>
+            )}
+          </div>
           <p className="text-xs text-slate-500 mt-0.5">
-            Compile statutory MPLAD procurement parameters, financial sanctions, and compliance criteria.
+            {tenderId
+              ? 'Update statutory MPLAD procurement parameters, financial sanctions, and compliance criteria.'
+              : 'Compile statutory MPLAD procurement parameters, financial sanctions, and compliance criteria.'}
           </p>
         </div>
 
@@ -918,6 +1092,10 @@ export const GovernmentTenderCreatePage: React.FC<GovernmentTenderCreatePageProp
                   <span className="text-slate-500">Issuing Entity:</span>
                   <p className="font-medium text-slate-800 mt-0.5">{issuingAuthority}</p>
                 </div>
+                <div>
+                  <span className="text-slate-500">Nodal Department / MP Office:</span>
+                  <p className="font-medium text-slate-800 mt-0.5">{department} • {mpName}</p>
+                </div>
               </div>
 
               <div className="p-4 bg-slate-50 rounded-xl border border-slate-200/80 space-y-2">
@@ -938,8 +1116,52 @@ export const GovernmentTenderCreatePage: React.FC<GovernmentTenderCreatePageProp
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-500">Bidding Closes:</span>
-                  <span className="font-bold text-amber-700">{closingDate}</span>
+                  <span className="font-bold text-amber-700">{closingDate || 'Pending Definition'}</span>
                 </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+              <div className="p-4 bg-slate-50 rounded-xl border border-slate-200/80 space-y-2">
+                <span className="font-semibold text-slate-900 uppercase tracking-wider text-[11px] block">
+                  Project Location & Parliamentary Seat
+                </span>
+                <div>
+                  <span className="text-slate-500">Site / Landmark:</span>
+                  <p className="font-medium text-slate-900 mt-0.5">{projectLocation || '—'}</p>
+                </div>
+                <div>
+                  <span className="text-slate-500">Constituency & District:</span>
+                  <p className="font-medium text-slate-800 mt-0.5">{constituency}, {district}, {state}</p>
+                </div>
+                <div>
+                  <span className="text-slate-500">Coordinates:</span>
+                  <p className="font-mono text-slate-700 mt-0.5">
+                    {latitude !== undefined && longitude !== undefined
+                      ? `${latitude.toFixed(4)}° N, ${longitude.toFixed(4)}° E`
+                      : 'Coordinates pending (optional)'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-4 bg-slate-50 rounded-xl border border-slate-200/80 space-y-2">
+                <span className="font-semibold text-slate-900 uppercase tracking-wider text-[11px] block">
+                  Compliance & Document Checklist
+                </span>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Eligibility Criteria:</span>
+                  <span className="font-bold text-slate-900">{eligibilityCriteria.length} criteria defined</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Required Documents:</span>
+                  <span className="font-bold text-slate-900">{requiredDocuments.length} statutory documents</span>
+                </div>
+                {specialRequirements && (
+                  <div>
+                    <span className="text-slate-500">Special Terms:</span>
+                    <p className="font-medium text-slate-800 mt-0.5 line-clamp-2">{specialRequirements}</p>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1023,8 +1245,8 @@ export const GovernmentTenderCreatePage: React.FC<GovernmentTenderCreatePageProp
           isOpen={showPublishModal}
           action="PUBLISH"
           tender={{
-            id: 'draft',
-            tenderNumber: 'Pending Assignment',
+            id: tenderId || 'draft',
+            tenderNumber: loadedTender?.tenderNumber || 'Pending Assignment',
             title,
             category,
             sanctionedAmount,
@@ -1037,9 +1259,9 @@ export const GovernmentTenderCreatePage: React.FC<GovernmentTenderCreatePageProp
             constituency,
             description,
             mpName,
-            proposalsCount: 0,
-            riskScore: 0,
-            riskLevel: 'LOW',
+            proposalsCount: loadedTender?.proposalsCount || 0,
+            riskScore: loadedTender?.riskScore || 0,
+            riskLevel: loadedTender?.riskLevel || 'LOW',
           }}
           onClose={() => setShowPublishModal(false)}
           onConfirm={handlePublishConfirm}

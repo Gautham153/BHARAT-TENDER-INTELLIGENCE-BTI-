@@ -161,7 +161,7 @@ export interface TenderFormData {
   title: string;
   description: string;
   category: TenderCategory;
-  subCategory: string;
+  subCategory?: string;
   issuingAuthority: string;
   department: string;
   state: string;
@@ -175,7 +175,7 @@ export interface TenderFormData {
   durationValue: number;
   durationUnit: DurationUnit;
   publicationDate: string;
-  closingDate: string;
+  closingDate?: string;
   eligibilityCriteria: string[];
   requiredDocuments: string[];
   specialRequirements?: string;

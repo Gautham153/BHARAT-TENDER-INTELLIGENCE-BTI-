@@ -25,7 +25,6 @@ import { GovernmentVerificationReviewPage } from './pages/government/GovernmentV
 import { GovernmentTenderListPage } from './pages/government/GovernmentTenderListPage';
 import { GovernmentTenderCreatePage } from './pages/government/GovernmentTenderCreatePage';
 import { GovernmentTenderDetailPage } from './pages/government/GovernmentTenderDetailPage';
-import { GovernmentTenderEditPage } from './pages/government/GovernmentTenderEditPage';
 import { ProposalReview } from './pages/government/ProposalReview';
 import { RiskAlerts } from './pages/government/RiskAlerts';
 import { FraudInvestigations } from './pages/government/FraudInvestigations';
@@ -109,7 +108,7 @@ function AppContent() {
               const cleanSubPath = rawSubPath.split('?')[0].split('#')[0].replace(/\/+$/, '');
               if (cleanSubPath.endsWith('/edit')) {
                 const tenderId = cleanSubPath.replace('/edit', '').replace(/\/+$/, '');
-                return <GovernmentTenderEditPage tenderId={tenderId} onNavigate={navigate} />;
+                return <GovernmentTenderCreatePage tenderId={tenderId} onNavigate={navigate} />;
               } else if (cleanSubPath.length > 0) {
                 return <GovernmentTenderDetailPage tenderId={cleanSubPath} onNavigate={navigate} />;
               }

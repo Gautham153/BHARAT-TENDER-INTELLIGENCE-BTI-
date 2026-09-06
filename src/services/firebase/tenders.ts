@@ -1151,7 +1151,11 @@ export class TenderService {
           const ts = parseClosingDateToTimestamp(formData.closingDate);
           if (ts) {
             rawPayload.closingDate = ts;
+          } else {
+            delete rawPayload.closingDate;
           }
+        } else {
+          delete rawPayload.closingDate;
         }
         if (formData.specialRequirements !== undefined) {
           rawPayload.specialRequirements = formData.specialRequirements.trim() || undefined;
