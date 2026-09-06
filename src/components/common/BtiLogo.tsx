@@ -58,30 +58,24 @@ export const BtiLogo: React.FC<BtiLogoProps> = ({
 
   return (
     <div className={`inline-flex items-center gap-2.5 select-none ${className}`}>
-      {/* Geometric Emblem: Ashoka & Modern Tech Grid */}
+      {/* Authoritative BTI Logo Mark */}
       <div
         className={`relative ${sizeClasses[size].mark} shrink-0 rounded-lg flex items-center justify-center shadow-xs overflow-hidden ${
           isDark ? 'bg-slate-900 border border-slate-700/80' : 'bg-white border border-slate-200'
         }`}
       >
-        {/* Tricolor edge accent */}
-        <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-[#FF671F] via-white to-[#046A38]" />
-
-        <svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-4/5 h-4/5">
-          {/* Geometric mandala / 24-spoke stylized chakra center */}
-          <circle cx="20" cy="20" r="14" stroke="#002B49" strokeWidth="1.5" strokeOpacity={isDark ? '0.6' : '0.3'} />
-          <circle cx="20" cy="20" r="9" stroke="#FF671F" strokeWidth="1.2" />
-          <circle cx="20" cy="20" r="4.5" fill="#046A38" fillOpacity="0.85" />
-
-          {/* Geometrical quadrant tick points */}
-          <line x1="20" y1="2" x2="20" y2="7" stroke="#002B49" strokeWidth="1.5" strokeLinecap="round" />
-          <line x1="20" y1="33" x2="20" y2="38" stroke="#002B49" strokeWidth="1.5" strokeLinecap="round" />
-          <line x1="2" y1="20" x2="7" y2="20" stroke="#002B49" strokeWidth="1.5" strokeLinecap="round" />
-          <line x1="33" y1="20" x2="38" y2="20" stroke="#002B49" strokeWidth="1.5" strokeLinecap="round" />
-
-          {/* Angular tech diamond */}
-          <path d="M20 10L30 20L20 30L10 20Z" stroke="#002B49" strokeWidth="0.8" strokeDasharray="1.5 1.5" />
-        </svg>
+        <img
+          src="/assets/bti-logo.png"
+          alt="Bharat Tender Intelligence (BTI) Logo"
+          className="w-full h-full object-contain p-0.5"
+          referrerPolicy="no-referrer"
+          onError={(e) => {
+            const target = e.currentTarget;
+            if (!target.src.includes('WhatsApp')) {
+              target.src = '/assets/WhatsApp Image 2026-08-31 at 9.50.54 PM.jpeg';
+            }
+          }}
+        />
       </div>
 
       {/* Wordmark (hidden in compact mode) */}

@@ -1,0 +1,189 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 560" width="960" height="560" fill="none">
+  <defs>
+    <!-- Indian Tricolor Watercolor Brushstrokes -->
+    <linearGradient id="saffronWash" x1="100" y1="400" x2="920" y2="50" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FF671F" stop-opacity="0" />
+      <stop offset="25%" stop-color="#FF671F" stop-opacity="0.35" />
+      <stop offset="50%" stop-color="#FF7A2F" stop-opacity="0.85" />
+      <stop offset="85%" stop-color="#FF9933" stop-opacity="0.95" />
+      <stop offset="100%" stop-color="#FFA845" stop-opacity="0.6" />
+    </linearGradient>
+
+    <linearGradient id="blueSkyWash" x1="200" y1="200" x2="800" y2="100" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#E0F2FE" stop-opacity="0.7" />
+      <stop offset="50%" stop-color="#BAE6FD" stop-opacity="0.4" />
+      <stop offset="100%" stop-color="#F0F9FF" stop-opacity="0.1" />
+    </linearGradient>
+
+    <linearGradient id="domeShadow" x1="520" y1="120" x2="520" y2="300" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#002B49" stop-opacity="0.08" />
+      <stop offset="100%" stop-color="#002B49" stop-opacity="0.02" />
+    </linearGradient>
+  </defs>
+
+  <!-- Sky Soft Watercolor Clouds -->
+  <path d="M 40 280 C 120 180 320 120 540 160 C 700 180 860 140 940 200 L 960 400 L 0 400 Z" fill="url(#blueSkyWash)" />
+
+  <!-- Diagonal Tricolor Watercolor Brush Stroke sweeping upwards to the right -->
+  <g opacity="0.9">
+    <!-- Main Saffron Stroke -->
+    <path d="M 220 380 Q 460 260 940 40 L 960 120 Q 560 300 280 430 Z" fill="url(#saffronWash)" />
+    <!-- Secondary Splatter and texture streaks -->
+    <path d="M 340 330 Q 520 220 900 80 L 920 105 Q 550 240 380 350 Z" fill="#FF8238" opacity="0.4" />
+    <path d="M 450 280 Q 640 180 940 90" stroke="#FF671F" stroke-width="8" stroke-linecap="round" opacity="0.5" />
+    <path d="M 500 250 Q 680 150 960 70" stroke="#FF7A2F" stroke-width="14" stroke-linecap="round" opacity="0.3" />
+  </g>
+
+  <!-- Soaring Birds in the Sky -->
+  <g fill="#1E293B" opacity="0.75">
+    <!-- High Birds -->
+    <path d="M 370 100 Q 380 94 390 102 Q 400 94 410 100 Q 395 98 390 105 Q 385 98 370 100 Z" />
+    <path d="M 425 145 Q 432 140 440 146 Q 448 140 455 145 Q 444 143 440 148 Q 436 143 425 145 Z" transform="scale(0.8) translate(80, 20)" />
+    <path d="M 245 270 Q 252 265 260 271 Q 268 265 275 270 Q 264 268 260 273 Q 256 268 245 270 Z" transform="scale(0.7) translate(80, 50)" />
+    <path d="M 285 290 Q 292 285 300 291 Q 308 285 315 290 Q 304 288 300 293 Q 296 288 285 290 Z" transform="scale(0.6) translate(140, 100)" />
+    <path d="M 330 230 Q 338 224 346 231 Q 354 224 362 230 Q 350 228 346 234 Q 342 228 330 230 Z" transform="scale(0.75) translate(80, 30)" />
+  </g>
+
+  <!-- ========================================================================= -->
+  <!-- Sansad Bhavan Neoclassical Architectural Rendering (Colonnades & Domes)   -->
+  <!-- ========================================================================= -->
+  <g stroke="#1E293B" stroke-width="1.8" stroke-linejoin="round" fill="#FAFAFA">
+    
+    <!-- 1. Left Wing Smaller Dome & Portico -->
+    <g transform="translate(140, 200)">
+      <!-- Lantern Finial -->
+      <line x1="60" y1="30" x2="60" y2="10" stroke-width="2.5" />
+      <circle cx="60" cy="8" r="4" fill="#1E293B" />
+      <path d="M 52 32 C 52 18 68 18 68 32 Z" fill="#E2E8F0" />
+      
+      <!-- Dome Ribs -->
+      <path d="M 20 85 C 20 35 100 35 100 85 Z" fill="#F8FAFC" />
+      <path d="M 35 85 C 35 48 85 48 85 85 Z" fill="none" stroke-width="1.2" />
+      <line x1="60" y1="35" x2="60" y2="85" stroke-width="1.2" />
+
+      <!-- Drum & Balustrade -->
+      <rect x="15" y="85" width="90" height="18" fill="#F1F5F9" />
+      <line x1="15" y1="94" x2="105" y2="94" stroke-width="1" />
+      <rect x="0" y="103" width="120" height="30" fill="#E2E8F0" />
+      <!-- Colonnade Columns -->
+      <line x1="15" y1="103" x2="15" y2="133" stroke-width="3" />
+      <line x1="35" y1="103" x2="35" y2="133" stroke-width="3" />
+      <line x1="55" y1="103" x2="55" y2="133" stroke-width="3" />
+      <line x1="75" y1="103" x2="75" y2="133" stroke-width="3" />
+      <line x1="95" y1="103" x2="95" y2="133" stroke-width="3" />
+    </g>
+
+    <!-- Intermediate Wing Pavilion -->
+    <g transform="translate(320, 240)">
+      <path d="M 30 50 C 30 25 70 25 70 50 Z" fill="#F1F5F9" />
+      <line x1="50" y1="25" x2="50" y2="12" stroke-width="2" />
+      <circle cx="50" cy="10" r="3" fill="#1E293B" />
+      <rect x="25" y="50" width="50" height="15" fill="#E2E8F0" />
+      <rect x="10" y="65" width="80" height="35" fill="#F8FAFC" />
+    </g>
+
+    <!-- 2. Grand Central Sansad Dome -->
+    <g transform="translate(420, 100)">
+      <!-- Central Finial Spire & Kalash -->
+      <line x1="110" y1="40" x2="110" y2="2" stroke-width="3.5" />
+      <circle cx="110" cy="0" r="6" fill="#1E293B" />
+      <path d="M 96 45 C 96 22 124 22 124 45 Z" fill="#CBD5E1" />
+      <!-- Lantern Drum & Columns -->
+      <rect x="90" y="45" width="40" height="25" fill="#E2E8F0" />
+      <line x1="96" y1="45" x2="96" y2="70" stroke-width="2" />
+      <line x1="105" y1="45" x2="105" y2="70" stroke-width="2" />
+      <line x1="115" y1="45" x2="115" y2="70" stroke-width="2" />
+      <line x1="124" y1="45" x2="124" y2="70" stroke-width="2" />
+
+      <!-- Outer Stepped Dome Shell -->
+      <path d="M 30 150 C 30 70 190 70 190 150 Z" fill="#F8FAFC" />
+      <!-- Architectural Ribbing Lines -->
+      <path d="M 55 150 C 55 88 165 88 165 150 Z" fill="none" stroke-width="1.5" stroke="#334155" />
+      <path d="M 80 150 C 80 102 140 102 140 150 Z" fill="none" stroke-width="1.5" stroke="#334155" />
+      <line x1="110" y1="70" x2="110" y2="150" stroke-width="2" stroke="#334155" />
+      
+      <!-- Dome Attic Base -->
+      <rect x="20" y="150" width="180" height="20" fill="#E2E8F0" />
+      
+      <!-- High Peripteral Circular Colonnade (Drum with Pillars) -->
+      <rect x="10" y="170" width="200" height="55" fill="#F1F5F9" />
+      <!-- Columns -->
+      <g stroke="#002B49" stroke-width="4">
+        <line x1="20" y1="170" x2="20" y2="225" />
+        <line x1="38" y1="170" x2="38" y2="225" />
+        <line x1="56" y1="170" x2="56" y2="225" />
+        <line x1="74" y1="170" x2="74" y2="225" />
+        <line x1="92" y1="170" x2="92" y2="225" />
+        <line x1="110" y1="170" x2="110" y2="225" />
+        <line x1="128" y1="170" x2="128" y2="225" />
+        <line x1="146" y1="170" x2="146" y2="225" />
+        <line x1="164" y1="170" x2="164" y2="225" />
+        <line x1="182" y1="170" x2="182" y2="225" />
+        <line x1="200" y1="170" x2="200" y2="225" />
+      </g>
+      <!-- Base Plinth -->
+      <rect x="0" y="225" width="220" height="15" fill="#E2E8F0" />
+    </g>
+
+    <!-- 3. Right Wing Neoclassical Colonnade & Balustrade Facade -->
+    <g transform="translate(560, 230)">
+      <!-- Roof Balustrade with Finials -->
+      <rect x="0" y="0" width="360" height="14" fill="#E2E8F0" />
+      <g stroke="#1E293B" stroke-width="1">
+        <circle cx="20" cy="-4" r="3" fill="#1E293B" />
+        <circle cx="60" cy="-4" r="3" fill="#1E293B" />
+        <circle cx="100" cy="-4" r="3" fill="#1E293B" />
+        <circle cx="140" cy="-4" r="3" fill="#1E293B" />
+        <circle cx="180" cy="-4" r="3" fill="#1E293B" />
+        <circle cx="220" cy="-4" r="3" fill="#1E293B" />
+        <circle cx="260" cy="-4" r="3" fill="#1E293B" />
+        <circle cx="300" cy="-4" r="3" fill="#1E293B" />
+        <circle cx="340" cy="-4" r="3" fill="#1E293B" />
+      </g>
+      
+      <!-- Classical Entablature Architrave -->
+      <rect x="0" y="14" width="360" height="22" fill="#F8FAFC" />
+      <line x1="0" y1="25" x2="360" y2="25" stroke-width="1.2" />
+      
+      <!-- Colonnade Pillars -->
+      <g stroke="#002B49" stroke-width="4.5">
+        <line x1="15" y1="36" x2="15" y2="120" />
+        <line x1="50" y1="36" x2="50" y2="120" />
+        <line x1="85" y1="36" x2="85" y2="120" />
+        <line x1="120" y1="36" x2="120" y2="120" />
+        <line x1="155" y1="36" x2="155" y2="120" />
+        <line x1="190" y1="36" x2="190" y2="120" />
+        <line x1="225" y1="36" x2="225" y2="120" />
+        <line x1="260" y1="36" x2="260" y2="120" />
+        <line x1="295" y1="36" x2="295" y2="120" />
+        <line x1="330" y1="36" x2="330" y2="120" />
+      </g>
+
+      <!-- Windows between columns -->
+      <g fill="#CBD5E1">
+        <rect x="25" y="55" width="16" height="35" rx="2" />
+        <rect x="60" y="55" width="16" height="35" rx="2" />
+        <rect x="95" y="55" width="16" height="35" rx="2" />
+        <rect x="130" y="55" width="16" height="35" rx="2" />
+        <rect x="165" y="55" width="16" height="35" rx="2" />
+        <rect x="200" y="55" width="16" height="35" rx="2" />
+        <rect x="235" y="55" width="16" height="35" rx="2" />
+        <rect x="270" y="55" width="16" height="35" rx="2" />
+        <rect x="305" y="55" width="16" height="35" rx="2" />
+      </g>
+
+      <!-- Monumental Base Plinth & Classical Stair Steps -->
+      <rect x="-10" y="120" width="380" height="15" fill="#E2E8F0" />
+      <rect x="-20" y="135" width="400" height="12" fill="#CBD5E1" />
+      <rect x="-30" y="147" width="420" height="10" fill="#E2E8F0" />
+    </g>
+
+    <!-- Trees & Greenery on the Far Right Edge -->
+    <g fill="#046A38" opacity="0.8" stroke="none">
+      <circle cx="890" cy="270" r="35" />
+      <circle cx="920" cy="250" r="40" fill="#0A893D" />
+      <circle cx="945" cy="285" r="32" />
+      <circle cx="875" cy="295" r="28" fill="#024D28" />
+    </g>
+  </g>
+</svg>
