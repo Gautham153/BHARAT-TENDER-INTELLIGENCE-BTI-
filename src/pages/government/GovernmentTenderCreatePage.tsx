@@ -133,41 +133,40 @@ export const GovernmentTenderCreatePage: React.FC<GovernmentTenderCreatePageProp
   };
 
   // Build current payload
-  const getFormData = (): TenderFormData => {
+  const getFormData = (isDraftMode: boolean = false): TenderFormData => {
+    const effectiveTitle = title.trim() || (isDraftMode ? `Draft Tender - ${new Date().toLocaleDateString('en-IN')}` : '');
+    const latNum = latitude !== undefined && !isNaN(Number(latitude)) ? Number(latitude) : undefined;
+    const lngNum = longitude !== undefined && !isNaN(Number(longitude)) ? Number(longitude) : undefined;
+
     return {
-      title: title.trim(),
+      title: effectiveTitle,
       description: description.trim(),
-      category,
-      subCategory,
-      issuingAuthority,
-      department,
-      state,
-      district,
-      constituency,
-      projectLocation,
-      latitude,
-      longitude,
-      sanctionedAmount: Number(sanctionedAmount),
-      estimatedValue: Number(estimatedValue),
-      durationValue: Number(durationValue),
-      durationUnit,
-      publicationDate,
-      closingDate,
-      eligibilityCriteria: eligibilityCriteria.filter((c) => c.trim().length > 0),
-      requiredDocuments: requiredDocuments.filter((d) => d.trim().length > 0),
+      category: category || 'Road Infrastructure',
+      subCategory: subCategory.trim() || undefined,
+      issuingAuthority: issuingAuthority.trim() || 'Office of the District Magistrate & District Nodal Officer',
+      department: department.trim() || 'Public Works Department (PWD)',
+      state: state.trim() || 'Uttar Pradesh',
+      district: district.trim() || 'Varanasi',
+      constituency: constituency.trim() || 'Varanasi',
+      projectLocation: projectLocation.trim(),
+      latitude: latNum,
+      longitude: lngNum,
+      sanctionedAmount: Number(sanctionedAmount) || 0,
+      estimatedValue: Number(estimatedValue) || 0,
+      durationValue: Number(durationValue) || 30,
+      durationUnit: durationUnit || 'days',
+      publicationDate: publicationDate || new Date().toISOString().split('T')[0],
+      closingDate: closingDate || new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
+      eligibilityCriteria: eligibilityCriteria.filter((c) => c && c.trim().length > 0),
+      requiredDocuments: requiredDocuments.filter((d) => d && d.trim().length > 0),
       specialRequirements: specialRequirements.trim() || undefined,
       mpName: mpName.trim() || undefined,
     };
   };
 
-  // Save as Draft handler
+  // Save as Draft handler - Allows saving from any step with incomplete wizard data
   const handleSaveDraft = async () => {
     setError(null);
-    if (!title.trim()) {
-      setError('Please provide at least a Title to save this tender draft.');
-      setActiveSection(1);
-      return;
-    }
     if (!user) {
       setError('User session expired. Please sign in again.');
       return;
@@ -175,7 +174,7 @@ export const GovernmentTenderCreatePage: React.FC<GovernmentTenderCreatePageProp
 
     try {
       setLoading(true);
-      const payload = getFormData();
+      const payload = getFormData(true);
       await TenderService.createTender(payload, user, true);
       onNavigate('/government/tenders');
     } catch (err: any) {
@@ -190,7 +189,7 @@ export const GovernmentTenderCreatePage: React.FC<GovernmentTenderCreatePageProp
     if (!user) return;
     try {
       setLoading(true);
-      const payload = getFormData();
+      const payload = getFormData(false);
       await TenderService.createTender(payload, user, false);
       onNavigate('/government/tenders');
     } catch (err: any) {
@@ -251,6 +250,11 @@ export const GovernmentTenderCreatePage: React.FC<GovernmentTenderCreatePageProp
     if (!estimatedValue || estimatedValue <= 0) {
       setError('Section D: Estimated Value must be greater than zero.');
       setActiveSection(4);
+      return false;
+    }
+    if (!closingDate || isNaN(new Date(closingDate).getTime())) {
+      setError('Section E: A valid closing date is required before publishing.');
+      setActiveSection(5);
       return false;
     }
     if (new Date(closingDate).getTime() <= new Date(publicationDate).getTime()) {

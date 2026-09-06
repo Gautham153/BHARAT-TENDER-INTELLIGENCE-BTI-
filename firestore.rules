@@ -234,19 +234,23 @@ service cloud.firestore {
       // Create tender:
       // Restricted strictly to authenticated government personnel.
       // Must set createdBy to the user's UID and status to DRAFT or PUBLISHED/LIVE.
-      // Must persist closingDate as a valid Firestore timestamp for database-level deadline enforcement.
+      // DRAFT may omit closingDate; PUBLISHED/LIVE tenders must persist closingDate as a valid Firestore Timestamp.
       allow create: if isGovernmentUser()
         && isValidId(tenderId)
         && incoming().createdBy == request.auth.uid
         && incoming().title is string && incoming().title.size() > 0
         && incoming().category is string
         && (incoming().status in ['DRAFT', 'PUBLISHED', 'LIVE'])
-        && (incoming().closingDate is timestamp);
+        && (
+          (incoming().status == 'DRAFT' && (!('closingDate' in incoming()) || incoming().closingDate == null || incoming().closingDate is timestamp))
+          ||
+          (incoming().status in ['PUBLISHED', 'LIVE'] && incoming().closingDate is timestamp)
+        );
 
       // Update tender:
       // Restricted strictly to authorized government personnel.
       // Prevents arbitrary jumps (e.g. DRAFT straight to AWARDED is strictly denied).
-      // If updating a DRAFT, allow field edits within legal draft transitions and maintain timestamp type.
+      // If updating a DRAFT, allow field edits within legal draft transitions: DRAFT may omit closingDate, while transition to PUBLISHED/LIVE requires a valid Timestamp closingDate.
       // If updating a non-DRAFT tender, prevent modifications to fundamental procurement specs and closingDate.
       allow update: if isGovernmentUser()
         && isValidId(tenderId)
@@ -258,7 +262,11 @@ service cloud.firestore {
           (
             existing().status == 'DRAFT'
             && incoming().status in ['DRAFT', 'PUBLISHED', 'LIVE', 'CANCELLED']
-            && (incoming().closingDate is timestamp)
+            && (
+              (incoming().status in ['PUBLISHED', 'LIVE'] && incoming().closingDate is timestamp)
+              ||
+              (incoming().status in ['DRAFT', 'CANCELLED'] && (!('closingDate' in incoming()) || incoming().closingDate == null || incoming().closingDate is timestamp))
+            )
           )
           ||
           // Case 2: Controlled lifecycle transitions for PUBLISHED/LIVE/CLOSED tenders

@@ -30,8 +30,12 @@ import { AuthUser } from '../../types/auth';
  * Safely parses any date, string, or Timestamp into an authoritative Firestore Timestamp.
  * If closingDate is a date string without time (e.g. YYYY-MM-DD), sets the deadline
  * to 23:59:59.999 UTC of that date so the bidding window remains open until the end of that day.
+ * Returns undefined if closingDate is empty, null, or undefined (e.g. for incomplete drafts).
  */
-export function parseClosingDateToTimestamp(closingDate: string | Date | Timestamp): Timestamp {
+export function parseClosingDateToTimestamp(closingDate?: string | Date | Timestamp | null): Timestamp | undefined {
+  if (!closingDate) {
+    return undefined;
+  }
   if (closingDate instanceof Timestamp) {
     return closingDate;
   }
@@ -49,8 +53,7 @@ export function parseClosingDateToTimestamp(closingDate: string | Date | Timesta
       return Timestamp.fromDate(parsedDate);
     }
   }
-  // Default fallback to 30 days in future if completely invalid
-  return Timestamp.fromDate(new Date(Date.now() + 30 * 86400000));
+  return undefined;
 }
 
 /**
@@ -84,6 +87,102 @@ export function normalizeTenderFromFirestore(data: Record<string, any>): Tender 
     estimatedCost: data.estimatedCost ?? data.estimatedValue ?? 0,
     status: data.status,
   } as Tender;
+}
+
+/**
+ * Recursively removes undefined keys from objects or arrays.
+ * This guarantees that WriteBatch.set(), WriteBatch.update(), setDoc(), and updateDoc()
+ * never send `undefined` values to Firestore, preventing raw Firestore runtime rejection.
+ */
+export function sanitizeFirestorePayload<T extends Record<string, any>>(obj: T): Record<string, any> {
+  const result: Record<string, any> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value === undefined) {
+      continue;
+    }
+    if (
+      value !== null &&
+      typeof value === 'object' &&
+      !(value instanceof Timestamp) &&
+      !(value instanceof Date) &&
+      !Array.isArray(value)
+    ) {
+      result[key] = sanitizeFirestorePayload(value);
+    } else if (Array.isArray(value)) {
+      result[key] = value
+        .filter((item) => item !== undefined)
+        .map((item) =>
+          item !== null && typeof item === 'object' && !(item instanceof Timestamp) && !(item instanceof Date)
+            ? sanitizeFirestorePayload(item)
+            : item
+        );
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
+/**
+ * Replaces raw Firestore or system errors with user-friendly, field-specific validation messages.
+ */
+export function formatTenderError(error: any): Error {
+  if (!error) return new Error('An unexpected error occurred. Please try again.');
+
+  const msg = typeof error === 'string' ? error : error.message || '';
+
+  // 1. Detect Firestore undefined / invalid field error
+  const undefinedFieldMatch = msg.match(/(?:found in field|in field)\s+([a-zA-Z0-9_]+)/i);
+  if (undefinedFieldMatch && undefinedFieldMatch[1]) {
+    const rawFieldName = undefinedFieldMatch[1];
+    const friendlyNames: Record<string, string> = {
+      latitude: 'Latitude (GPS Coordinates)',
+      longitude: 'Longitude (GPS Coordinates)',
+      specialRequirements: 'Special Terms & Statutory Requirements',
+      mpName: 'MP Office Oversight',
+      subCategory: 'Sub-Category',
+      publishedAt: 'Publication Timestamp',
+      closedAt: 'Closing Timestamp',
+      sanctionedAmount: 'Sanctioned Budget Amount',
+      estimatedValue: 'Estimated Tender Value',
+      projectLocation: 'Project Location',
+      eligibilityCriteria: 'Eligibility Criteria',
+      requiredDocuments: 'Required Documents Checklist',
+    };
+    const displayField = friendlyNames[rawFieldName] || rawFieldName;
+    return new Error(`Invalid data in field "${displayField}". Please review the value entered or leave it blank.`);
+  }
+
+  if (
+    msg.includes('Function WriteBatch.set() called with invalid data') ||
+    msg.includes('Function WriteBatch.update() called with invalid data') ||
+    msg.includes('Unsupported field value')
+  ) {
+    return new Error(
+      'Tender specifications contain invalid or unsupported optional data. Please verify all optional inputs and try again.'
+    );
+  }
+
+  // 2. Permission denied
+  if (msg.includes('permission-denied') || msg.includes('Missing or insufficient permissions')) {
+    return new Error(
+      'Administrative permission denied: Your institutional account does not have nodal authority to modify or view this tender record.'
+    );
+  }
+
+  // 3. Not found
+  if (msg.includes('not-found')) {
+    return new Error('The requested tender record could not be found in the official registry.');
+  }
+
+  // 4. Precondition failed
+  if (msg.includes('failed-precondition')) {
+    return new Error(
+      'The tender operation could not be completed due to a database state mismatch. Please refresh and try again.'
+    );
+  }
+
+  return error instanceof Error ? error : new Error(msg);
 }
 
 const TENDERS_STORAGE_KEY = 'bti_tenders_store_v1';
@@ -728,14 +827,17 @@ export class TenderService {
     const isLiveAuthSession = isFirebaseConfigured && !isDemoSession() && db && auth?.currentUser;
 
     if (isLiveAuthSession) {
-      // In authenticated Firebase mode, Firestore is authoritative.
-      // If Firestore read fails, propagate the error. Do not silently fall back to local store.
-      const tenderRef = doc(db, 'tenders', tenderId);
-      const snap = await getDoc(tenderRef);
-      if (snap.exists()) {
-        tender = normalizeTenderFromFirestore(snap.data());
-      } else {
-        return null; // Authoritative not found in Firestore
+      try {
+        const tenderRef = doc(db, 'tenders', tenderId);
+        const snap = await getDoc(tenderRef);
+        if (snap.exists()) {
+          tender = normalizeTenderFromFirestore(snap.data());
+        } else {
+          return null;
+        }
+      } catch (err: any) {
+        console.error('[BTI TenderService] Firestore getTenderById error:', err);
+        throw formatTenderError(err);
       }
     } else {
       // Demo / offline fallback only
@@ -793,41 +895,54 @@ export class TenderService {
     }
 
     // 1. Validation
-    if (!formData.title || formData.title.trim().length === 0) {
-      throw new Error('Tender title is required.');
-    }
-    if (!formData.category) {
-      throw new Error('Tender category is required.');
-    }
-    if (!formData.sanctionedAmount || formData.sanctionedAmount <= 0) {
-      throw new Error('Sanctioned Amount must be greater than zero.');
-    }
-    if (!formData.estimatedValue || formData.estimatedValue <= 0) {
-      throw new Error('Estimated Value must be greater than zero.');
-    }
-    if (!formData.projectLocation || formData.projectLocation.trim().length === 0) {
-      throw new Error('Project location is required.');
-    }
-    if (formData.durationValue <= 0) {
-      throw new Error('Tender duration must be greater than zero.');
-    }
-
-    const pubTime = new Date(formData.publicationDate).getTime();
-    const closeTime = new Date(formData.closingDate).getTime();
-    if (isNaN(pubTime) || isNaN(closeTime)) {
-      throw new Error('Please provide valid publication and closing dates.');
-    }
-    if (closeTime <= pubTime) {
-      throw new Error('Closing date must be strictly after the publication date.');
-    }
+    const effectiveTitle = formData.title?.trim() || (isDraft ? `Draft Tender - ${new Date().toLocaleDateString('en-IN')}` : '');
+    const effectiveCategory = formData.category || 'Road Infrastructure';
 
     if (!isDraft) {
-      // Direct publishing checks
+      // Direct publishing checks: strict requirements
+      if (!effectiveTitle) {
+        throw new Error('Tender Title is required before publishing.');
+      }
+      if (!effectiveCategory) {
+        throw new Error('Tender Category is required before publishing.');
+      }
+      if (!formData.sanctionedAmount || formData.sanctionedAmount <= 0) {
+        throw new Error('Sanctioned Budget Amount is required and must be greater than zero.');
+      }
+      if (!formData.estimatedValue || formData.estimatedValue <= 0) {
+        throw new Error('Estimated Tender Value is required and must be greater than zero.');
+      }
+      if (!formData.projectLocation || formData.projectLocation.trim().length === 0) {
+        throw new Error('Project Location is required before publishing.');
+      }
+      if (formData.durationValue <= 0) {
+        throw new Error('Tender duration must be greater than zero.');
+      }
+
+      const pubTime = new Date(formData.publicationDate).getTime();
+      const closeTime = new Date(formData.closingDate).getTime();
+      if (isNaN(pubTime) || isNaN(closeTime)) {
+        throw new Error('Please provide valid publication and closing dates.');
+      }
+      if (closeTime <= pubTime) {
+        throw new Error('Closing date must be strictly after the publication date.');
+      }
       if (!formData.eligibilityCriteria || formData.eligibilityCriteria.length === 0) {
-        throw new Error('Eligibility criteria must be specified before publishing.');
+        throw new Error('At least one statutory eligibility criterion must be specified before publishing.');
       }
       if (!formData.requiredDocuments || formData.requiredDocuments.length === 0) {
-        throw new Error('At least one required document must be listed before publishing.');
+        throw new Error('At least one required document checklist item must be listed before publishing.');
+      }
+    } else {
+      // Draft validation: Minimal requirement so drafts can be saved from ANY wizard step
+      if (!effectiveTitle) {
+        throw new Error('Tender title or draft label is required to save a draft.');
+      }
+      if (formData.latitude !== undefined && isNaN(Number(formData.latitude))) {
+        throw new Error('Latitude coordinate must be a valid number.');
+      }
+      if (formData.longitude !== undefined && isNaN(Number(formData.longitude))) {
+        throw new Error('Longitude coordinate must be a valid number.');
       }
     }
 
@@ -842,41 +957,45 @@ export class TenderService {
     const status: TenderStatus = isDraft ? 'DRAFT' : 'LIVE';
     const nowIso = new Date().toISOString();
 
-    const closeTimestamp = parseClosingDateToTimestamp(formData.closingDate);
+    const closeTimestamp = (formData.closingDate && formData.closingDate.trim().length > 0)
+      ? parseClosingDateToTimestamp(formData.closingDate)
+      : undefined;
+    const authorId = (auth?.currentUser && auth.currentUser.uid) ? auth.currentUser.uid : user.id;
+
     const newTender: Tender = {
       id: tenderId,
       tenderNumber,
-      title: formData.title.trim(),
-      description: formData.description.trim(),
-      category: formData.category,
-      subCategory: formData.subCategory,
-      issuingAuthority: formData.issuingAuthority || 'District Magistrate & District Nodal Officer',
-      department: formData.department || 'Public Works Department (PWD)',
-      state: formData.state,
-      district: formData.district,
-      constituency: formData.constituency,
-      projectLocation: formData.projectLocation.trim(),
-      latitude: formData.latitude,
-      longitude: formData.longitude,
-      sanctionedAmount: formData.sanctionedAmount,
-      estimatedValue: formData.estimatedValue,
-      estimatedCost: formData.estimatedValue, // alias
-      durationValue: formData.durationValue,
-      durationUnit: formData.durationUnit,
-      publicationDate: formData.publicationDate,
-      publishedDate: formData.publicationDate,
-      closingDate: formatClosingDateToString(closeTimestamp),
-      eligibilityCriteria: formData.eligibilityCriteria,
-      requiredDocuments: formData.requiredDocuments,
-      specialRequirements: formData.specialRequirements,
+      title: effectiveTitle,
+      description: formData.description ? formData.description.trim() : '',
+      category: effectiveCategory,
+      subCategory: formData.subCategory ? formData.subCategory.trim() : undefined,
+      issuingAuthority: formData.issuingAuthority ? formData.issuingAuthority.trim() : 'District Magistrate & District Nodal Officer',
+      department: formData.department ? formData.department.trim() : 'Public Works Department (PWD)',
+      state: formData.state ? formData.state.trim() : 'Uttar Pradesh',
+      district: formData.district ? formData.district.trim() : 'Varanasi',
+      constituency: formData.constituency ? formData.constituency.trim() : 'Varanasi',
+      projectLocation: formData.projectLocation ? formData.projectLocation.trim() : '',
+      latitude: formData.latitude !== undefined && !isNaN(Number(formData.latitude)) ? Number(formData.latitude) : undefined,
+      longitude: formData.longitude !== undefined && !isNaN(Number(formData.longitude)) ? Number(formData.longitude) : undefined,
+      sanctionedAmount: Number(formData.sanctionedAmount) || 0,
+      estimatedValue: Number(formData.estimatedValue) || 0,
+      estimatedCost: Number(formData.estimatedValue) || Number(formData.sanctionedAmount) || 0,
+      durationValue: Number(formData.durationValue) || 30,
+      durationUnit: formData.durationUnit || 'days',
+      publicationDate: formData.publicationDate || nowIso.split('T')[0],
+      publishedDate: formData.publicationDate || nowIso.split('T')[0],
+      closingDate: closeTimestamp ? formatClosingDateToString(closeTimestamp) : (formData.closingDate || ''),
+      eligibilityCriteria: formData.eligibilityCriteria || [],
+      requiredDocuments: formData.requiredDocuments || [],
+      specialRequirements: formData.specialRequirements ? formData.specialRequirements.trim() : undefined,
       status,
-      createdBy: user.id,
+      createdBy: authorId,
       createdByName: user.name || user.email,
       createdByEmail: user.email,
       createdAt: nowIso,
       updatedAt: nowIso,
       publishedAt: isDraft ? undefined : nowIso,
-      mpName: formData.mpName || 'District MP Office',
+      mpName: formData.mpName ? formData.mpName.trim() : 'District MP Office',
       proposalsCount: 0,
       riskScore: 10,
       riskLevel: 'LOW',
@@ -887,7 +1006,7 @@ export class TenderService {
       eventId: `evt-${Date.now()}-created`,
       tenderId,
       action: 'CREATED',
-      actorId: user.id,
+      actorId: authorId,
       actorRole: 'government',
       actorName: user.name || user.email,
       actorEmail: user.email,
@@ -900,24 +1019,34 @@ export class TenderService {
     };
 
     // 4. Atomic Commit (Tender State + Audit Trail)
-    // In an authenticated Firebase session, authoritative writes MUST succeed atomically.
-    // We use writeBatch so that the tender state and audit events are committed together.
     const isLiveAuthSession = isFirebaseConfigured && !isDemoSession() && db && auth?.currentUser;
 
     if (isLiveAuthSession) {
-      const batch = writeBatch(db);
-      const tenderRef = doc(db, 'tenders', tenderId);
-      // Persist closingDate as an authoritative Firestore Timestamp for database-level deadline enforcement
-      const firestorePayload = {
-        ...newTender,
-        closingDate: closeTimestamp,
-      };
-      batch.set(tenderRef, firestorePayload);
+      try {
+        const batch = writeBatch(db);
+        const tenderRef = doc(db, 'tenders', tenderId);
+        
+        // Critical: Omit any undefined optional fields before WriteBatch.set to avoid Firestore rejection
+        const rawFirestorePayload: Record<string, any> = {
+          ...newTender,
+        };
+        if (closeTimestamp) {
+          rawFirestorePayload.closingDate = closeTimestamp;
+        } else {
+          delete rawFirestorePayload.closingDate;
+        }
+        const cleanTenderPayload = sanitizeFirestorePayload(rawFirestorePayload);
+        batch.set(tenderRef, cleanTenderPayload);
 
-      const createdEventRef = doc(db, 'tenderEvents', createdEvent.eventId);
-      batch.set(createdEventRef, createdEvent);
+        const createdEventRef = doc(db, 'tenderEvents', createdEvent.eventId);
+        const cleanEventPayload = sanitizeFirestorePayload(createdEvent);
+        batch.set(createdEventRef, cleanEventPayload);
 
-      await batch.commit();
+        await batch.commit();
+      } catch (commitErr) {
+        console.error('[BTI TenderService] Batch set commit error:', commitErr);
+        throw formatTenderError(commitErr);
+      }
     }
 
     // Update local cache / demo session store
@@ -944,7 +1073,7 @@ export class TenderService {
       throw new Error('Permission Denied: Only authorized government officers can modify tenders.');
     }
 
-    const tender = await this.getTenderById(tenderId);
+    const tender = await this.getTenderById(tenderId, user.role);
     if (!tender) {
       throw new Error('Tender not found.');
     }
@@ -953,14 +1082,11 @@ export class TenderService {
       throw new Error('Active or Closed tenders cannot have core procurement specifications modified directly.');
     }
 
-    if (formData.sanctionedAmount !== undefined && formData.sanctionedAmount <= 0) {
-      throw new Error('Sanctioned Amount must be greater than zero.');
-    }
-    if (formData.estimatedValue !== undefined && formData.estimatedValue <= 0) {
-      throw new Error('Estimated Value must be greater than zero.');
-    }
+    // For drafts, allow incomplete data. Only validate if dates are both provided and inverted
     if (formData.publicationDate && formData.closingDate) {
-      if (new Date(formData.closingDate).getTime() <= new Date(formData.publicationDate).getTime()) {
+      const pubMs = new Date(formData.publicationDate).getTime();
+      const closeMs = new Date(formData.closingDate).getTime();
+      if (!isNaN(pubMs) && !isNaN(closeMs) && closeMs <= pubMs) {
         throw new Error('Closing date must be strictly after publication date.');
       }
     }
@@ -969,15 +1095,24 @@ export class TenderService {
     const updated: Tender = {
       ...tender,
       ...formData,
-      estimatedCost: formData.estimatedValue !== undefined ? formData.estimatedValue : tender.estimatedCost,
+      title: formData.title !== undefined ? formData.title.trim() : tender.title,
+      description: formData.description !== undefined ? formData.description.trim() : tender.description,
+      estimatedCost: formData.estimatedValue !== undefined ? Number(formData.estimatedValue) : tender.estimatedCost,
+      sanctionedAmount: formData.sanctionedAmount !== undefined ? Number(formData.sanctionedAmount) : tender.sanctionedAmount,
+      estimatedValue: formData.estimatedValue !== undefined ? Number(formData.estimatedValue) : tender.estimatedValue,
+      latitude: formData.latitude !== undefined && !isNaN(Number(formData.latitude)) ? Number(formData.latitude) : tender.latitude,
+      longitude: formData.longitude !== undefined && !isNaN(Number(formData.longitude)) ? Number(formData.longitude) : tender.longitude,
+      specialRequirements: formData.specialRequirements !== undefined ? (formData.specialRequirements.trim() || undefined) : tender.specialRequirements,
       updatedAt: nowIso,
     };
+
+    const authorId = (auth?.currentUser && auth.currentUser.uid) ? auth.currentUser.uid : user.id;
 
     const updatedEvent: TenderAuditEvent = {
       eventId: `evt-${Date.now()}-updated`,
       tenderId,
       action: 'UPDATED',
-      actorId: user.id,
+      actorId: authorId,
       actorRole: 'government',
       actorName: user.name || user.email,
       actorEmail: user.email,
@@ -990,25 +1125,50 @@ export class TenderService {
     const isLiveAuthSession = isFirebaseConfigured && !isDemoSession() && db && auth?.currentUser;
 
     if (isLiveAuthSession) {
-      const batch = writeBatch(db);
-      const tenderRef = doc(db, 'tenders', tenderId);
-      // Exclude undefined values for strict Firestore payload hygiene
-      const payload: Record<string, unknown> = { updatedAt: nowIso };
-      for (const [key, value] of Object.entries(formData)) {
-        if (value !== undefined) payload[key] = value;
-      }
-      if (formData.estimatedValue !== undefined) {
-        payload.estimatedCost = formData.estimatedValue;
-      }
-      if (formData.closingDate) {
-        payload.closingDate = parseClosingDateToTimestamp(formData.closingDate);
-      }
-      batch.update(tenderRef, payload);
+      try {
+        const batch = writeBatch(db);
+        const tenderRef = doc(db, 'tenders', tenderId);
 
-      const eventRef = doc(db, 'tenderEvents', updatedEvent.eventId);
-      batch.set(eventRef, updatedEvent);
+        // Exclude undefined values for strict Firestore payload hygiene
+        const rawPayload: Record<string, any> = {
+          ...formData,
+          updatedAt: nowIso,
+        };
+        if (formData.title !== undefined) {
+          rawPayload.title = formData.title.trim();
+        }
+        if (formData.description !== undefined) {
+          rawPayload.description = formData.description.trim();
+        }
+        if (formData.estimatedValue !== undefined) {
+          rawPayload.estimatedCost = Number(formData.estimatedValue);
+          rawPayload.estimatedValue = Number(formData.estimatedValue);
+        }
+        if (formData.sanctionedAmount !== undefined) {
+          rawPayload.sanctionedAmount = Number(formData.sanctionedAmount);
+        }
+        if (formData.closingDate && formData.closingDate.trim().length > 0) {
+          const ts = parseClosingDateToTimestamp(formData.closingDate);
+          if (ts) {
+            rawPayload.closingDate = ts;
+          }
+        }
+        if (formData.specialRequirements !== undefined) {
+          rawPayload.specialRequirements = formData.specialRequirements.trim() || undefined;
+        }
 
-      await batch.commit();
+        const cleanPayload = sanitizeFirestorePayload(rawPayload);
+        batch.update(tenderRef, cleanPayload);
+
+        const eventRef = doc(db, 'tenderEvents', updatedEvent.eventId);
+        const cleanEvent = sanitizeFirestorePayload(updatedEvent);
+        batch.set(eventRef, cleanEvent);
+
+        await batch.commit();
+      } catch (updateErr) {
+        console.error('[BTI TenderService] Batch update draft error:', updateErr);
+        throw formatTenderError(updateErr);
+      }
     }
 
     const locals = getLocalTenders().map((t) => (t.id === tenderId ? updated : t));
@@ -1029,7 +1189,7 @@ export class TenderService {
       throw new Error('Permission Denied: Only authorized government officers can publish tenders.');
     }
 
-    const tender = await this.getTenderById(tenderId);
+    const tender = await this.getTenderById(tenderId, user.role);
     if (!tender) {
       throw new Error('Tender not found.');
     }
@@ -1042,6 +1202,16 @@ export class TenderService {
     if (!tender.title || !tender.category || !tender.sanctionedAmount || !tender.estimatedValue) {
       throw new Error('Incomplete tender specifications. Please complete financial and scope details before publishing.');
     }
+    if (!tender.closingDate || !tender.closingDate.trim() || isNaN(new Date(tender.closingDate).getTime())) {
+      throw new Error('A valid future closing date must be defined before publishing.');
+    }
+    const closeTs = parseClosingDateToTimestamp(tender.closingDate);
+    if (!closeTs) {
+      throw new Error('Please provide a valid closing date before publishing.');
+    }
+    if (closeTs.toMillis() <= Date.now()) {
+      throw new Error('Closing date must be strictly in the future before publishing.');
+    }
     if (!tender.eligibilityCriteria || tender.eligibilityCriteria.length === 0) {
       throw new Error('At least one eligibility criterion is required to publish.');
     }
@@ -1052,16 +1222,19 @@ export class TenderService {
     const nowIso = new Date().toISOString();
     const updated: Tender = {
       ...tender,
+      closingDate: formatClosingDateToString(closeTs),
       status: 'LIVE',
       publishedAt: nowIso,
       updatedAt: nowIso,
     };
 
+    const authorId = (auth?.currentUser && auth.currentUser.uid) ? auth.currentUser.uid : user.id;
+
     const publishedEvent: TenderAuditEvent = {
       eventId: `evt-${Date.now()}-published`,
       tenderId,
       action: 'PUBLISHED',
-      actorId: user.id,
+      actorId: authorId,
       actorRole: 'government',
       actorName: user.name || user.email,
       actorEmail: user.email,
@@ -1074,18 +1247,24 @@ export class TenderService {
     const isLiveAuthSession = isFirebaseConfigured && !isDemoSession() && db && auth?.currentUser;
 
     if (isLiveAuthSession) {
-      const batch = writeBatch(db);
-      const tenderRef = doc(db, 'tenders', tenderId);
-      batch.update(tenderRef, {
-        status: 'LIVE',
-        publishedAt: nowIso,
-        updatedAt: nowIso,
-      });
+      try {
+        const batch = writeBatch(db);
+        const tenderRef = doc(db, 'tenders', tenderId);
+        batch.update(tenderRef, sanitizeFirestorePayload({
+          status: 'LIVE',
+          publishedAt: nowIso,
+          updatedAt: nowIso,
+          closingDate: closeTs,
+        }));
 
-      const eventRef = doc(db, 'tenderEvents', publishedEvent.eventId);
-      batch.set(eventRef, publishedEvent);
+        const eventRef = doc(db, 'tenderEvents', publishedEvent.eventId);
+        batch.set(eventRef, sanitizeFirestorePayload(publishedEvent));
 
-      await batch.commit();
+        await batch.commit();
+      } catch (publishErr) {
+        console.error('[BTI TenderService] Publish commit error:', publishErr);
+        throw formatTenderError(publishErr);
+      }
     }
 
     const locals = getLocalTenders().map((t) => (t.id === tenderId ? updated : t));
@@ -1106,7 +1285,7 @@ export class TenderService {
       throw new Error('Permission Denied: Only authorized government officers can close tenders.');
     }
 
-    const tender = await this.getTenderById(tenderId);
+    const tender = await this.getTenderById(tenderId, user.role);
     if (!tender) {
       throw new Error('Tender not found.');
     }
@@ -1123,11 +1302,13 @@ export class TenderService {
       updatedAt: nowIso,
     };
 
+    const authorId = (auth?.currentUser && auth.currentUser.uid) ? auth.currentUser.uid : user.id;
+
     const closedEvent: TenderAuditEvent = {
       eventId: `evt-${Date.now()}-closed`,
       tenderId,
       action: 'CLOSED',
-      actorId: user.id,
+      actorId: authorId,
       actorRole: 'government',
       actorName: user.name || user.email,
       actorEmail: user.email,
@@ -1140,18 +1321,23 @@ export class TenderService {
     const isLiveAuthSession = isFirebaseConfigured && !isDemoSession() && db && auth?.currentUser;
 
     if (isLiveAuthSession) {
-      const batch = writeBatch(db);
-      const tenderRef = doc(db, 'tenders', tenderId);
-      batch.update(tenderRef, {
-        status: 'CLOSED',
-        closedAt: nowIso,
-        updatedAt: nowIso,
-      });
+      try {
+        const batch = writeBatch(db);
+        const tenderRef = doc(db, 'tenders', tenderId);
+        batch.update(tenderRef, sanitizeFirestorePayload({
+          status: 'CLOSED',
+          closedAt: nowIso,
+          updatedAt: nowIso,
+        }));
 
-      const eventRef = doc(db, 'tenderEvents', closedEvent.eventId);
-      batch.set(eventRef, closedEvent);
+        const eventRef = doc(db, 'tenderEvents', closedEvent.eventId);
+        batch.set(eventRef, sanitizeFirestorePayload(closedEvent));
 
-      await batch.commit();
+        await batch.commit();
+      } catch (closeErr) {
+        console.error('[BTI TenderService] Close commit error:', closeErr);
+        throw formatTenderError(closeErr);
+      }
     }
 
     const locals = getLocalTenders().map((t) => (t.id === tenderId ? updated : t));
@@ -1172,7 +1358,7 @@ export class TenderService {
       throw new Error('Permission Denied: Only authorized government officers can cancel tenders.');
     }
 
-    const tender = await this.getTenderById(tenderId);
+    const tender = await this.getTenderById(tenderId, user.role);
     if (!tender) {
       throw new Error('Tender not found.');
     }
@@ -1192,11 +1378,13 @@ export class TenderService {
       updatedAt: nowIso,
     };
 
+    const authorId = (auth?.currentUser && auth.currentUser.uid) ? auth.currentUser.uid : user.id;
+
     const cancelledEvent: TenderAuditEvent = {
       eventId: `evt-${Date.now()}-cancelled`,
       tenderId,
       action: 'CANCELLED',
-      actorId: user.id,
+      actorId: authorId,
       actorRole: 'government',
       actorName: user.name || user.email,
       actorEmail: user.email,
@@ -1209,17 +1397,22 @@ export class TenderService {
     const isLiveAuthSession = isFirebaseConfigured && !isDemoSession() && db && auth?.currentUser;
 
     if (isLiveAuthSession) {
-      const batch = writeBatch(db);
-      const tenderRef = doc(db, 'tenders', tenderId);
-      batch.update(tenderRef, {
-        status: 'CANCELLED',
-        updatedAt: nowIso,
-      });
+      try {
+        const batch = writeBatch(db);
+        const tenderRef = doc(db, 'tenders', tenderId);
+        batch.update(tenderRef, sanitizeFirestorePayload({
+          status: 'CANCELLED',
+          updatedAt: nowIso,
+        }));
 
-      const eventRef = doc(db, 'tenderEvents', cancelledEvent.eventId);
-      batch.set(eventRef, cancelledEvent);
+        const eventRef = doc(db, 'tenderEvents', cancelledEvent.eventId);
+        batch.set(eventRef, sanitizeFirestorePayload(cancelledEvent));
 
-      await batch.commit();
+        await batch.commit();
+      } catch (cancelErr) {
+        console.error('[BTI TenderService] Cancel commit error:', cancelErr);
+        throw formatTenderError(cancelErr);
+      }
     }
 
     const locals = getLocalTenders().map((t) => (t.id === tenderId ? updated : t));
@@ -1239,7 +1432,7 @@ export class TenderService {
     if (user.role !== 'government') {
       throw new Error('Permission Denied: Only authorized government officers can archive tenders.');
     }
-    const tender = await this.getTenderById(tenderId);
+    const tender = await this.getTenderById(tenderId, user.role);
     if (!tender) {
       throw new Error('Tender not found.');
     }
@@ -1255,11 +1448,13 @@ export class TenderService {
       updatedAt: nowIso,
     };
 
+    const authorId = (auth?.currentUser && auth.currentUser.uid) ? auth.currentUser.uid : user.id;
+
     const archivedEvent: TenderAuditEvent = {
       eventId: `evt-${Date.now()}-archived`,
       tenderId,
       action: 'ARCHIVED',
-      actorId: user.id,
+      actorId: authorId,
       actorRole: 'government',
       actorName: user.name || user.email,
       actorEmail: user.email,
@@ -1272,17 +1467,22 @@ export class TenderService {
     const isLiveAuthSession = isFirebaseConfigured && !isDemoSession() && db && auth?.currentUser;
 
     if (isLiveAuthSession) {
-      const batch = writeBatch(db);
-      const tenderRef = doc(db, 'tenders', tenderId);
-      batch.update(tenderRef, {
-        status: 'ARCHIVED',
-        updatedAt: nowIso,
-      });
+      try {
+        const batch = writeBatch(db);
+        const tenderRef = doc(db, 'tenders', tenderId);
+        batch.update(tenderRef, sanitizeFirestorePayload({
+          status: 'ARCHIVED',
+          updatedAt: nowIso,
+        }));
 
-      const eventRef = doc(db, 'tenderEvents', archivedEvent.eventId);
-      batch.set(eventRef, archivedEvent);
+        const eventRef = doc(db, 'tenderEvents', archivedEvent.eventId);
+        batch.set(eventRef, sanitizeFirestorePayload(archivedEvent));
 
-      await batch.commit();
+        await batch.commit();
+      } catch (archiveErr) {
+        console.error('[BTI TenderService] Archive commit error:', archiveErr);
+        throw formatTenderError(archiveErr);
+      }
     }
 
     const locals = getLocalTenders().map((t) => (t.id === tenderId ? updated : t));
@@ -1302,12 +1502,18 @@ export class TenderService {
     const isLiveAuthSession = isFirebaseConfigured && !isDemoSession() && db && auth?.currentUser;
 
     if (isLiveAuthSession) {
-      // In authenticated Firebase mode, Firestore is authoritative.
-      // We do NOT fall back to local synthetic events if the audit trail is empty or if read fails.
-      const eventsRef = collection(db, 'tenderEvents');
-      const q = query(eventsRef, where('tenderId', '==', tenderId), orderBy('timestamp', 'asc'));
-      const snap = await getDocs(q);
-      return snap.docs.map((d) => d.data() as TenderAuditEvent);
+      try {
+        const eventsRef = collection(db, 'tenderEvents');
+        const q = query(eventsRef, where('tenderId', '==', tenderId));
+        const snap = await getDocs(q);
+        const events = snap.docs.map((d) => d.data() as TenderAuditEvent);
+        events.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+        if (events.length > 0) {
+          return events;
+        }
+      } catch (err) {
+        console.warn('[BTI] Notice: Firestore audit events query failed:', err);
+      }
     }
 
     // Explicit demo / offline mode only
@@ -1328,8 +1534,12 @@ export class TenderService {
     const isLiveAuthSession = isFirebaseConfigured && !isDemoSession() && db && auth?.currentUser;
 
     if (isLiveAuthSession) {
-      const eventRef = doc(db, 'tenderEvents', event.eventId);
-      await setDoc(eventRef, event);
+      try {
+        const eventRef = doc(db, 'tenderEvents', event.eventId);
+        await setDoc(eventRef, sanitizeFirestorePayload(event));
+      } catch (auditErr) {
+        console.error('[BTI TenderService] Audit event write error:', auditErr);
+      }
     }
 
     const allEvents = getLocalEvents();

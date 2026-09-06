@@ -105,12 +105,13 @@ function AppContent() {
             return <SettingsSecurityPage onNavigate={navigate} />;
           default: {
             if (currentPath.startsWith('/government/tenders/')) {
-              const subPath = currentPath.substring('/government/tenders/'.length);
-              if (subPath.endsWith('/edit')) {
-                const tenderId = subPath.replace('/edit', '');
+              const rawSubPath = currentPath.substring('/government/tenders/'.length);
+              const cleanSubPath = rawSubPath.split('?')[0].split('#')[0].replace(/\/+$/, '');
+              if (cleanSubPath.endsWith('/edit')) {
+                const tenderId = cleanSubPath.replace('/edit', '').replace(/\/+$/, '');
                 return <GovernmentTenderEditPage tenderId={tenderId} onNavigate={navigate} />;
-              } else if (subPath.length > 0) {
-                return <GovernmentTenderDetailPage tenderId={subPath} onNavigate={navigate} />;
+              } else if (cleanSubPath.length > 0) {
+                return <GovernmentTenderDetailPage tenderId={cleanSubPath} onNavigate={navigate} />;
               }
             }
             return <GovDashboard onNavigate={navigate} onSelectTender={setSelectedTender} />;

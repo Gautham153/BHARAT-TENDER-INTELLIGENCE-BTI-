@@ -52,15 +52,19 @@ export const GovernmentTenderDetailPage: React.FC<GovernmentTenderDetailPageProp
     try {
       setLoading(true);
       setError(null);
-      const data = await TenderService.getTenderById(tenderId);
+      const data = await TenderService.getTenderById(tenderId, user?.role);
       if (!data) {
-        setError('Tender record not found in repository.');
+        setError('Tender record not found or access is restricted.');
         return;
       }
       setTender(data);
 
-      const events = await TenderService.getTenderAuditEvents(tenderId);
-      setAuditEvents(events);
+      try {
+        const events = await TenderService.getTenderAuditEvents(tenderId);
+        setAuditEvents(events);
+      } catch (eventErr: any) {
+        console.warn('[BTI] Notice: Audit trail could not be retrieved:', eventErr);
+      }
     } catch (err: any) {
       setError(err.message || 'Error loading tender details.');
     } finally {
@@ -70,7 +74,7 @@ export const GovernmentTenderDetailPage: React.FC<GovernmentTenderDetailPageProp
 
   useEffect(() => {
     loadTenderData();
-  }, [tenderId]);
+  }, [tenderId, user?.role]);
 
   const handleConfirmAction = async (notes: string) => {
     if (!tender || !modalAction || !user) return;

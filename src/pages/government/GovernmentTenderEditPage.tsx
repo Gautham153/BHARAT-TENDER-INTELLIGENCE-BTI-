@@ -78,9 +78,9 @@ export const GovernmentTenderEditPage: React.FC<GovernmentTenderEditPageProps> =
       if (!tenderId) return;
       try {
         setLoading(true);
-        const data = await TenderService.getTenderById(tenderId);
+        const data = await TenderService.getTenderById(tenderId, user?.role);
         if (!data) {
-          setError('Tender record not found.');
+          setError('Tender record not found or access is restricted.');
           return;
         }
         setTender(data);
@@ -116,7 +116,7 @@ export const GovernmentTenderEditPage: React.FC<GovernmentTenderEditPageProps> =
     };
 
     fetchTender();
-  }, [tenderId]);
+  }, [tenderId, user?.role]);
 
   // Recalculate closing date on duration change
   const handleDurationChange = (val: number, unit: DurationUnit) => {
@@ -145,54 +145,92 @@ export const GovernmentTenderEditPage: React.FC<GovernmentTenderEditPageProps> =
     return `₹${val.toLocaleString('en-IN')}`;
   };
 
+  const getSanitizedDraftPayload = (): Partial<TenderFormData> => {
+    const latNum = latitude !== undefined && !isNaN(Number(latitude)) ? Number(latitude) : undefined;
+    const lngNum = longitude !== undefined && !isNaN(Number(longitude)) ? Number(longitude) : undefined;
+
+    return {
+      title: title.trim() || tender?.title || 'Draft Tender',
+      description: description.trim(),
+      category,
+      subCategory: subCategory.trim() || undefined,
+      issuingAuthority: issuingAuthority.trim() || undefined,
+      department: department.trim() || undefined,
+      mpName: mpName.trim() || undefined,
+      state: state.trim() || undefined,
+      district: district.trim() || undefined,
+      constituency: constituency.trim() || undefined,
+      projectLocation: projectLocation.trim(),
+      latitude: latNum,
+      longitude: lngNum,
+      sanctionedAmount: Number(sanctionedAmount) || 0,
+      estimatedValue: Number(estimatedValue) || 0,
+      durationValue: Number(durationValue) || 30,
+      durationUnit,
+      publicationDate: publicationDate || undefined,
+      closingDate: closingDate || undefined,
+      eligibilityCriteria: eligibilityCriteria.filter((c) => c && c.trim().length > 0),
+      requiredDocuments: requiredDocuments.filter((d) => d && d.trim().length > 0),
+      specialRequirements: specialRequirements.trim() || undefined,
+    };
+  };
+
+  const validateForPublish = (): boolean => {
+    setError(null);
+    if (!title.trim()) {
+      setError('Tender Title is required before publishing.');
+      return false;
+    }
+    if (!description.trim()) {
+      setError('Tender Scope of Work / Description is required before publishing.');
+      return false;
+    }
+    if (!projectLocation.trim()) {
+      setError('Project Location is required before publishing.');
+      return false;
+    }
+    if (sanctionedAmount <= 0) {
+      setError('Sanctioned Amount must be greater than zero before publishing.');
+      return false;
+    }
+    if (estimatedValue <= 0) {
+      setError('Estimated Tender Value must be greater than zero before publishing.');
+      return false;
+    }
+    if (!closingDate || !closingDate.trim()) {
+      setError('A valid closing date must be set before publishing the tender.');
+      return false;
+    }
+    if (publicationDate && closingDate && new Date(closingDate).getTime() <= new Date(publicationDate).getTime()) {
+      setError('Closing date must be strictly after the publication date.');
+      return false;
+    }
+    if (eligibilityCriteria.length === 0) {
+      setError('At least one statutory eligibility criterion must be defined before publishing.');
+      return false;
+    }
+    if (requiredDocuments.length === 0) {
+      setError('At least one required document must be listed before publishing.');
+      return false;
+    }
+    return true;
+  };
+
   const handleSave = async () => {
     if (!tender || !user) return;
     setError(null);
 
-    if (!title.trim()) {
-      setError('Tender Title is required.');
-      return;
-    }
-    if (sanctionedAmount <= 0) {
-      setError('Sanctioned Amount must be greater than zero.');
-      return;
-    }
-    if (estimatedValue <= 0) {
-      setError('Estimated Value must be greater than zero.');
-      return;
-    }
-    if (new Date(closingDate).getTime() <= new Date(publicationDate).getTime()) {
-      setError('Closing date must be strictly after publication date.');
-      return;
+    // Save draft allows saving incomplete wizard data from any step
+    if (publicationDate && closingDate) {
+      if (new Date(closingDate).getTime() <= new Date(publicationDate).getTime()) {
+        setError('Closing date must be strictly after publication date.');
+        return;
+      }
     }
 
     try {
       setSaving(true);
-      const payload: Partial<TenderFormData> = {
-        title: title.trim(),
-        description: description.trim(),
-        category,
-        subCategory,
-        issuingAuthority,
-        department,
-        mpName,
-        state,
-        district,
-        constituency,
-        projectLocation,
-        latitude,
-        longitude,
-        sanctionedAmount: Number(sanctionedAmount),
-        estimatedValue: Number(estimatedValue),
-        durationValue: Number(durationValue),
-        durationUnit,
-        publicationDate,
-        closingDate,
-        eligibilityCriteria,
-        requiredDocuments,
-        specialRequirements,
-      };
-
+      const payload = getSanitizedDraftPayload();
       await TenderService.updateTenderDraft(tender.id, payload, user);
       onNavigate(`/government/tenders/${tender.id}`);
     } catch (err: any) {
@@ -204,37 +242,16 @@ export const GovernmentTenderEditPage: React.FC<GovernmentTenderEditPageProps> =
 
   const handlePublishConfirm = async (notes: string) => {
     if (!tender || !user) return;
+    if (!validateForPublish()) {
+      setShowPublishModal(false);
+      return;
+    }
+
     try {
       setSaving(true);
       // Save changes first
-      await TenderService.updateTenderDraft(
-        tender.id,
-        {
-          title: title.trim(),
-          description: description.trim(),
-          category,
-          subCategory,
-          issuingAuthority,
-          department,
-          mpName,
-          state,
-          district,
-          constituency,
-          projectLocation,
-          latitude,
-          longitude,
-          sanctionedAmount: Number(sanctionedAmount),
-          estimatedValue: Number(estimatedValue),
-          durationValue: Number(durationValue),
-          durationUnit,
-          publicationDate,
-          closingDate,
-          eligibilityCriteria,
-          requiredDocuments,
-          specialRequirements,
-        },
-        user
-      );
+      const payload = getSanitizedDraftPayload();
+      await TenderService.updateTenderDraft(tender.id, payload, user);
 
       // Publish
       await TenderService.publishTender(tender.id, user, notes);
@@ -335,7 +352,11 @@ export const GovernmentTenderEditPage: React.FC<GovernmentTenderEditPageProps> =
 
           <button
             type="button"
-            onClick={() => setShowPublishModal(true)}
+            onClick={() => {
+              if (validateForPublish()) {
+                setShowPublishModal(true);
+              }
+            }}
             disabled={saving}
             className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white transition-colors shadow-xs disabled:opacity-50"
           >
