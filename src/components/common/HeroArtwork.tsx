@@ -3,7 +3,7 @@ import React from 'react';
 export const HeroArtwork: React.FC<{ className?: string }> = ({ className = '' }) => {
   return (
     <div
-      className={`relative w-full h-[360px] sm:h-[400px] lg:h-[440px] flex items-center justify-center select-none overflow-hidden ${className}`}
+      className={`relative w-full flex items-center justify-center select-none ${className}`}
       aria-label="Illustration of the Parliament of India with Indian National Flag and BTI Monitoring Network"
     >
       {/* Background Soft Atmospheric Radiance */}
@@ -15,7 +15,7 @@ export const HeroArtwork: React.FC<{ className?: string }> = ({ className = '' }
       <img
         src="/assets/parliament-illustration.png"
         alt="Stylized Indian Parliament illustration with tricolor brush-stroke elements"
-        className="w-full h-full max-w-[600px] object-contain drop-shadow-sm transition-transform duration-500 hover:scale-[1.01]"
+        className="w-full h-auto max-w-full object-contain drop-shadow-sm transition-transform duration-500 hover:scale-[1.01]"
         referrerPolicy="no-referrer"
         onError={(e) => {
           const target = e.currentTarget;
