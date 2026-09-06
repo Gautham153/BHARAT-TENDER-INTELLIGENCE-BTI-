@@ -217,6 +217,176 @@
         }
       },
       "required": ["eventId", "organizationId", "action", "actorId", "actorName", "actorRole", "timestamp"]
+    },
+    "Tender": {
+      "title": "Tender",
+      "description": "Government tender document under MPLAD scheme procurement",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "tenderNumber": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 5000
+        },
+        "category": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "subCategory": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "issuingAuthority": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "department": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "state": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "district": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "constituency": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "projectLocation": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "latitude": {
+          "type": "number"
+        },
+        "longitude": {
+          "type": "number"
+        },
+        "sanctionedAmount": {
+          "type": "number"
+        },
+        "estimatedValue": {
+          "type": "number"
+        },
+        "estimatedCost": {
+          "type": "number"
+        },
+        "durationValue": {
+          "type": "number"
+        },
+        "durationUnit": {
+          "type": "string",
+          "enum": ["days", "weeks", "months"]
+        },
+        "publicationDate": {
+          "type": "string",
+          "maxLength": 50
+        },
+        "closingDate": {
+          "type": "string",
+          "maxLength": 50
+        },
+        "status": {
+          "type": "string",
+          "enum": ["DRAFT", "PUBLISHED", "LIVE", "CLOSED", "UNDER_EVALUATION", "AWARDED", "CANCELLED", "ARCHIVED"]
+        },
+        "createdBy": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "createdByName": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "createdByEmail": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "createdAt": {
+          "type": "string",
+          "maxLength": 50
+        },
+        "updatedAt": {
+          "type": "string",
+          "maxLength": 50
+        },
+        "publishedAt": {
+          "type": "string",
+          "maxLength": 50
+        },
+        "closedAt": {
+          "type": "string",
+          "maxLength": 50
+        }
+      },
+      "required": ["id", "tenderNumber", "title", "category", "status", "createdBy", "createdAt"]
+    },
+    "TenderAuditEvent": {
+      "title": "TenderAuditEvent",
+      "description": "Immutable lifecycle audit event for tender state transitions",
+      "type": "object",
+      "properties": {
+        "eventId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "tenderId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "action": {
+          "type": "string",
+          "enum": ["CREATED", "UPDATED", "PUBLISHED", "CLOSED", "CANCELLED", "ARCHIVED"]
+        },
+        "actorId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "actorRole": {
+          "type": "string",
+          "enum": ["government", "system"]
+        },
+        "actorName": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "actorEmail": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "timestamp": {
+          "type": "string",
+          "maxLength": 50
+        },
+        "previousStatus": {
+          "type": "string",
+          "maxLength": 50
+        },
+        "newStatus": {
+          "type": "string",
+          "maxLength": 50
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 1000
+        }
+      },
+      "required": ["eventId", "tenderId", "action", "actorId", "actorRole", "timestamp", "newStatus"]
     }
   },
   "firestore": {
@@ -231,6 +401,14 @@
     "/verificationEvents/{eventId}": {
       "schema": "VerificationEvent",
       "description": "Append-only audit trail for verification transitions"
+    },
+    "/tenders/{tenderId}": {
+      "schema": "Tender",
+      "description": "Government tenders published under MPLAD scheme"
+    },
+    "/tenderEvents/{eventId}": {
+      "schema": "TenderAuditEvent",
+      "description": "Append-only audit events tracking tender lifecycle actions"
     }
   }
 }

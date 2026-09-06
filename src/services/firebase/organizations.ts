@@ -38,6 +38,7 @@ export const SEED_DEMO_ORGANIZATIONS: Record<string, Organization> = {
     businessCategory: 'Civil Infrastructure',
     registeredAddress: 'Plot 42, Vibhuti Khand, Gomti Nagar, Lucknow, Uttar Pradesh - 226010',
     state: 'Uttar Pradesh',
+    district: 'Lucknow',
     verificationStatus: 'verified',
     providerVerificationStatus: 'verified',
     btiAuthorizationStatus: 'approved',
@@ -52,6 +53,25 @@ export const SEED_DEMO_ORGANIZATIONS: Record<string, Organization> = {
     applicationId: 'BTI-REG-2025-1049',
     createdAt: '2025-02-01T10:00:00Z',
     updatedAt: '2025-02-01T10:05:00Z',
+    capabilities: [
+      'Road Construction & Paving',
+      'Highway Bituminous Works',
+      'Storm Water Kerb Drainage',
+      'Bridge & Culvert Works',
+      'Concrete Structures'
+    ],
+    specializations: [
+      'Road Construction & Paving',
+      'Road Repair & Resurfacing',
+      'Bridge & Culvert Construction',
+      'Storm Water Drainage & Kerbs'
+    ],
+    serviceCategories: ['Road Infrastructure', 'Public Buildings'],
+    operatingRegions: ['Uttar Pradesh', 'Bihar', 'Madhya Pradesh'],
+    experienceCategories: ['Road Infrastructure', 'Public Buildings'],
+    // Financial Capacity: ₹12.50 Cr verified annual turnover (Demonstration synthetic credential)
+    annualTurnover: 125000000,
+    financialCapacityVerified: true,
   },
   'ORG-APEX-27A': {
     organizationId: 'ORG-APEX-27A',
@@ -62,6 +82,7 @@ export const SEED_DEMO_ORGANIZATIONS: Record<string, Organization> = {
     businessCategory: 'Water & Sanitation',
     registeredAddress: 'Level 4, MIDC Industrial Area, Andheri East, Mumbai, Maharashtra - 400093',
     state: 'Maharashtra',
+    district: 'Mumbai',
     verificationStatus: 'pending',
     providerVerificationStatus: 'pending',
     btiAuthorizationStatus: 'pending',
@@ -75,6 +96,12 @@ export const SEED_DEMO_ORGANIZATIONS: Record<string, Organization> = {
     applicationId: 'BTI-REG-2026-8941',
     createdAt: '2026-03-01T08:30:00Z',
     updatedAt: '2026-03-01T08:30:00Z',
+    capabilities: ['Solar RO Filtration', 'Piped Water Supply Networks'],
+    specializations: ['Community Borewell & Solar RO Filtration Plant'],
+    operatingRegions: ['Maharashtra', 'Gujarat'],
+    // Financial Capacity: ₹4.50 Cr annual turnover
+    annualTurnover: 45000000,
+    financialCapacityVerified: true,
   },
   'ORG-PATLIPUTRA-10A': {
     organizationId: 'ORG-PATLIPUTRA-10A',
@@ -99,6 +126,9 @@ export const SEED_DEMO_ORGANIZATIONS: Record<string, Organization> = {
     applicationId: 'BTI-REG-2026-4421',
     createdAt: '2026-03-02T09:15:00Z',
     updatedAt: '2026-03-02T09:15:00Z',
+    // Financial Capacity: ₹1.80 Cr unverified annual turnover
+    annualTurnover: 18000000,
+    financialCapacityVerified: false,
   },
   'ORG-BENGAL-19A': {
     organizationId: 'ORG-BENGAL-19A',
@@ -123,6 +153,9 @@ export const SEED_DEMO_ORGANIZATIONS: Record<string, Organization> = {
     applicationId: 'BTI-REG-2026-1109',
     createdAt: '2026-03-02T11:00:00Z',
     updatedAt: '2026-03-02T11:00:00Z',
+    // Financial Capacity: ₹0.80 Cr unverified annual turnover
+    annualTurnover: 8000000,
+    financialCapacityVerified: false,
   },
 };
 
@@ -619,3 +652,15 @@ export async function listOrganizationsForGovReview(
 
   return orgList.filter((o) => o.verificationStatus === filterStatus);
 }
+
+/**
+ * Organization Service namespace for unified client access
+ */
+export const OrganizationService = {
+  getOrganizationById: fetchOrganizationById,
+  getOrganizationByGstin: fetchOrganizationByGstin,
+  getAllOrganizations: async (): Promise<Organization[]> => {
+    return listOrganizationsForGovReview('all');
+  },
+};
+

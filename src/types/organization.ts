@@ -23,6 +23,7 @@ export interface Organization {
   businessCategory: string;
   registeredAddress: string;
   state: string;
+  district?: string;
   verificationStatus: VerificationStatus; // Authoritative combined operational status
   providerVerificationStatus?: VerificationStatus; // Outcome from statutory registrar / simulation check
   btiAuthorizationStatus?: BTIAuthorizationStatus; // District Nodal Officer clearance status
@@ -39,6 +40,17 @@ export interface Organization {
   applicationId: string;
   createdAt: string;
   updatedAt: string;
+
+  // Phase 3B Profile Attributes for Deterministic Matching
+  capabilities?: string[];
+  specializations?: string[];
+  serviceCategories?: string[];
+  operatingRegions?: string[];
+  experienceCategories?: string[];
+
+  // Financial Capacity Ratio Parameters
+  annualTurnover?: number; // In INR (e.g., 125000000 for ₹12.50 Cr)
+  financialCapacityVerified?: boolean;
 }
 
 export type VerificationAuditAction =

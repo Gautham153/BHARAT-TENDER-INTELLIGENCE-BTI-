@@ -1,8 +1,11 @@
 // Bharat Tender Intelligence (BTI) — Domain Types & Interfaces
 // Phase 0 & 1A: Master Foundation Type Architecture
 
+import { Tender, TenderCategory, TenderStatus } from './tender';
+
 export * from './auth';
 export * from './organization';
+export * from './tender';
 
 export type UserRole = 'government' | 'agency' | 'public' | 'government_admin' | 'government_officer' | 'agency_user' | 'public_citizen';
 
@@ -18,63 +21,6 @@ export interface User {
   phone?: string;
   verified: boolean;
   createdAt: string;
-}
-
-export type TenderStatus = 'Open' | 'Closed' | 'In Evaluation' | 'Under Evaluation' | 'Awarded' | 'Cancelled';
-export type TenderCategory =
-  | 'Civil Infrastructure'
-  | 'Water & Sanitation'
-  | 'Drinking Water Project'
-  | 'Health & Sanitation'
-  | 'Healthcare Infrastructure'
-  | 'Education & Schools'
-  | 'Educational Facilities'
-  | 'Rural Electrification'
-  | 'Rural Road Construction'
-  | 'Community Facilities'
-  | 'Community Infrastructure';
-
-export interface Document {
-  id: string;
-  name: string;
-  type: string;
-  size: string;
-  url: string;
-  uploadedAt: string;
-  verified?: boolean;
-}
-
-export interface Tender {
-  id: string;
-  tenderNumber: string;
-  title: string;
-  description: string;
-  department?: string;
-  constituency: string;
-  state: string;
-  district?: string;
-  mpName: string;
-  category: TenderCategory;
-  budget?: number;
-  estimatedCost: number; // in INR
-  publishedDate: string;
-  submissionDeadline?: string;
-  closingDate: string;
-  status: TenderStatus;
-  proposalsCount: number;
-  anomaliesCount?: number;
-  riskScore: number;
-  riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' | 'Low' | 'Medium' | 'High' | 'Critical';
-  createdBy?: string;
-  eligibilityCriteria?: string[];
-  scopeOfWork?: string;
-  documents?: Document[];
-  estimatedDurationMonths?: number;
-  contactPerson?: {
-    name: string;
-    designation: string;
-    email: string;
-  };
 }
 
 export type ProposalStatus = 'Draft' | 'Submitted' | 'Under Review' | 'Under Evaluation' | 'Shortlisted' | 'Awarded' | 'Rejected';

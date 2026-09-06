@@ -1,5 +1,5 @@
-// Bharat Tender Intelligence (BTI) — Agency Live Tenders & Discovery Page
-// Phase 3B: Authoritative Live Tender Opportunities with Deterministic Match Engine & Dual View Modes
+// Bharat Tender Intelligence (BTI) — Agency Tender Discovery Page
+// Phase 3B: Search, Multi-Filter, Deterministic Matching & Opportunity Repository
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
@@ -14,25 +14,14 @@ import {
   CheckCircle2,
   X,
   Clock,
-  LayoutGrid,
-  Table as TableIcon,
-  ChevronRight,
+  ArrowUpDown,
   Filter,
-  Layers,
-  MapPin,
 } from 'lucide-react';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
-import { Table, Column } from '../../components/ui/Table';
-import { StatusBadge } from '../../components/ui/StatusBadge';
 import { VerificationGate } from '../../components/auth/VerificationGate';
-import {
-  TenderOpportunityCard,
-  formatCurrencyINR,
-  getDaysRemainingInfo,
-} from '../../components/tenders/TenderOpportunityCard';
-import { TenderMatchBadge } from '../../components/tenders/TenderMatchBadge';
+import { TenderOpportunityCard, getDaysRemainingInfo } from '../../components/tenders/TenderOpportunityCard';
 import { SyntheticDataNotice } from '../../components/common/SyntheticDataNotice';
 import { TenderService } from '../../services/firebase/tenders';
 import { OrganizationService } from '../../services/firebase/organizations';
@@ -47,11 +36,14 @@ import {
 } from '../../types/tender';
 import { Organization } from '../../types/organization';
 
-type DiscoveryTab = 'recommended' | 'all' | 'closing_soon';
+type DiscoveryTab = 'recommended' | 'all' | 'closing_soon' | 'newest';
 type SortOption = 'recommended' | 'newest' | 'closing_soon' | 'highest_value' | 'lowest_value';
-type ViewMode = 'cards' | 'table';
 
-export const LiveTendersPage: React.FC<{ onNavigate: (path: string) => void }> = ({ onNavigate }) => {
+export interface AgencyTenderListPageProps {
+  onNavigate: (path: string) => void;
+}
+
+export const AgencyTenderListPage: React.FC<AgencyTenderListPageProps> = ({ onNavigate }) => {
   const { user } = useAuth();
 
   // Data states
@@ -60,10 +52,7 @@ export const LiveTendersPage: React.FC<{ onNavigate: (path: string) => void }> =
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
-  // View mode
-  const [viewMode, setViewMode] = useState<ViewMode>('cards');
-
-  // Tab & Filter states
+  // Tab & Filters state
   const [activeTab, setActiveTab] = useState<DiscoveryTab>('recommended');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
@@ -76,12 +65,12 @@ export const LiveTendersPage: React.FC<{ onNavigate: (path: string) => void }> =
   const [sortBy, setSortBy] = useState<SortOption>('recommended');
   const [showFilterDrawer, setShowFilterDrawer] = useState<boolean>(false);
 
-  // Fetch live tenders from TenderService (role: agency) and organization
+  // Fetch live tenders and organization data
   const loadData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      // 1. Authoritative tenders fetch for agency: excludes DRAFT, CANCELLED, ARCHIVED, CLOSED
+      // 1. Fetch live tenders for agency (enforces non-draft, non-closed visibility)
       const liveTenders = await TenderService.getTenders('agency');
       setTenders(liveTenders);
 
@@ -90,6 +79,7 @@ export const LiveTendersPage: React.FC<{ onNavigate: (path: string) => void }> =
         const org = await OrganizationService.getOrganizationById(user.organizationId);
         setOrganization(org);
       } else if (user) {
+        // Fallback: search organization by user UID or GSTIN
         const orgs = await OrganizationService.getAllOrganizations();
         const userOrg = orgs.find(
           (o) => o.primaryUserId === user.id || (user.gstin && o.gstin === user.gstin)
@@ -99,8 +89,8 @@ export const LiveTendersPage: React.FC<{ onNavigate: (path: string) => void }> =
         }
       }
     } catch (err: unknown) {
-      console.error('[BTI LiveTenders] Error loading tenders:', err);
-      setError(err instanceof Error ? err.message : 'Unable to retrieve live tenders.');
+      console.error('[BTI Agency] Failed to fetch tenders:', err);
+      setError(err instanceof Error ? err.message : 'Unable to load tender opportunities. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -110,12 +100,12 @@ export const LiveTendersPage: React.FC<{ onNavigate: (path: string) => void }> =
     loadData();
   }, [loadData]);
 
-  // Compute deterministic match results for all tenders
+  // Compute match results for all tenders against organization
   const matchMap = useMemo<Map<string, TenderMatchResult>>(() => {
     return TenderMatchingService.batchMatch(tenders, organization);
   }, [tenders, organization]);
 
-  // Derive unique states and districts
+  // Derive unique states and districts for filters
   const uniqueStates = useMemo(() => {
     const states = new Set<string>();
     tenders.forEach((t) => {
@@ -141,14 +131,17 @@ export const LiveTendersPage: React.FC<{ onNavigate: (path: string) => void }> =
     return [];
   }, [selectedCategory]);
 
+  // Reset SubCategory when Category changes
   useEffect(() => {
     setSelectedSubCategory('ALL');
   }, [selectedCategory]);
 
+  // Reset District when State changes
   useEffect(() => {
     setSelectedDistrict('ALL');
   }, [selectedState]);
 
+  // Reset all filters
   const handleResetFilters = () => {
     setSearchQuery('');
     setSelectedCategory('ALL');
@@ -161,6 +154,7 @@ export const LiveTendersPage: React.FC<{ onNavigate: (path: string) => void }> =
     setSortBy('recommended');
   };
 
+  // Active filter count (excluding tab)
   const activeFilterCount = useMemo(() => {
     let count = 0;
     if (searchQuery.trim()) count++;
@@ -183,17 +177,18 @@ export const LiveTendersPage: React.FC<{ onNavigate: (path: string) => void }> =
     closingSoonOnly,
   ]);
 
-  // Filtered & Sorted Tenders
+  // Filter & Sort Logic
   const filteredTenders = useMemo(() => {
     let result = [...tenders];
 
-    // 1. Tab preset
+    // 1. Tab-based presets
     if (activeTab === 'closing_soon') {
       result = result.filter((t) => {
         const info = getDaysRemainingInfo(t.closingDate);
         return !info.isClosed && info.days <= 15;
       });
     } else if (activeTab === 'recommended') {
+      // Prioritize high/moderate matches
       if (organization) {
         result = result.filter((t) => {
           const match = matchMap.get(t.id);
@@ -202,7 +197,7 @@ export const LiveTendersPage: React.FC<{ onNavigate: (path: string) => void }> =
       }
     }
 
-    // 2. Search query
+    // 2. Search Query (Tender No, Title, Category, Subcategory, Location, Authority)
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase().trim();
       result = result.filter((t) => {
@@ -220,36 +215,42 @@ export const LiveTendersPage: React.FC<{ onNavigate: (path: string) => void }> =
       });
     }
 
-    // 3. Category
+    // 3. Category Filter
     if (selectedCategory !== 'ALL') {
       result = result.filter((t) => t.category.toLowerCase() === selectedCategory.toLowerCase());
     }
 
-    // 4. SubCategory
+    // 4. SubCategory Filter
     if (selectedSubCategory !== 'ALL') {
       result = result.filter(
         (t) => (t.subCategory || '').toLowerCase() === selectedSubCategory.toLowerCase()
       );
     }
 
-    // 5. State
+    // 5. State Filter
     if (selectedState !== 'ALL') {
       result = result.filter((t) => (t.state || '').toLowerCase() === selectedState.toLowerCase());
     }
 
-    // 6. District
+    // 6. District Filter
     if (selectedDistrict !== 'ALL') {
       result = result.filter((t) => (t.district || '').toLowerCase() === selectedDistrict.toLowerCase());
     }
 
-    // 7. Value Range
+    // 7. Amount Range
     const minVal = parseFloat(minAmount);
     if (!isNaN(minVal) && minVal > 0) {
-      result = result.filter((t) => (t.sanctionedAmount || t.estimatedValue || 0) >= minVal);
+      result = result.filter((t) => {
+        const val = t.sanctionedAmount || t.estimatedValue || 0;
+        return val >= minVal;
+      });
     }
     const maxVal = parseFloat(maxAmount);
     if (!isNaN(maxVal) && maxVal > 0) {
-      result = result.filter((t) => (t.sanctionedAmount || t.estimatedValue || 0) <= maxVal);
+      result = result.filter((t) => {
+        const val = t.sanctionedAmount || t.estimatedValue || 0;
+        return val <= maxVal;
+      });
     }
 
     // 8. Closing Soon Toggle
@@ -308,118 +309,6 @@ export const LiveTendersPage: React.FC<{ onNavigate: (path: string) => void }> =
     organization,
   ]);
 
-  // Alternate Table Columns
-  const tableColumns: Column<Tender>[] = [
-    {
-      key: 'tenderNumber',
-      header: 'Tender ID',
-      width: '160px',
-      render: (t) => (
-        <div>
-          <span
-            onClick={() => onNavigate(`/agency/tenders/${t.id}`)}
-            className="font-mono text-xs font-bold text-[#002B49] hover:underline cursor-pointer"
-          >
-            {t.tenderNumber}
-          </span>
-          <div className="text-[10px] text-slate-400 truncate max-w-[150px]">
-            {t.issuingAuthority}
-          </div>
-        </div>
-      ),
-    },
-    {
-      key: 'title',
-      header: 'Scope of Works',
-      render: (t) => (
-        <div className="max-w-md">
-          <div
-            onClick={() => onNavigate(`/agency/tenders/${t.id}`)}
-            className="font-bold text-slate-900 text-xs hover:text-[#002B49] cursor-pointer line-clamp-1"
-          >
-            {t.title}
-          </div>
-          <div className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
-            <MapPin className="w-3 h-3 text-slate-400" />
-            <span>{t.district ? `${t.district}, ` : ''}{t.state}</span>
-          </div>
-        </div>
-      ),
-    },
-    {
-      key: 'category',
-      header: 'Sector',
-      render: (t) => (
-        <div>
-          <span className="text-xs font-semibold text-slate-800">{t.category}</span>
-          {t.subCategory && (
-            <div className="text-[10px] text-slate-500 truncate max-w-[130px]">{t.subCategory}</div>
-          )}
-        </div>
-      ),
-    },
-    {
-      key: 'sanctionedAmount',
-      header: 'Sanctioned Cost',
-      align: 'right',
-      render: (t) => (
-        <span className="font-bold text-slate-900 text-xs">
-          {formatCurrencyINR(t.sanctionedAmount || t.estimatedValue || t.estimatedCost)}
-        </span>
-      ),
-    },
-    {
-      key: 'closingDate',
-      header: 'Deadline',
-      render: (t) => {
-        const info = getDaysRemainingInfo(t.closingDate);
-        return (
-          <div>
-            <span className="font-mono text-xs text-slate-900 block">{t.closingDate}</span>
-            {info.isClosingSoon && (
-              <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-1 py-0.2 rounded border border-amber-200 inline-block mt-0.5">
-                {info.label}
-              </span>
-            )}
-          </div>
-        );
-      },
-    },
-    {
-      key: 'matchScore',
-      header: 'BTI Match',
-      align: 'center',
-      render: (t) => {
-        const match = matchMap.get(t.id);
-        if (!match) return <span className="text-xs text-slate-400">—</span>;
-        return (
-          <TenderMatchBadge
-            score={match.score}
-            tier={match.tier}
-            size="sm"
-          />
-        );
-      },
-    },
-    {
-      key: 'actions',
-      header: '',
-      align: 'right',
-      render: (t) => (
-        <Button
-          variant="outline"
-          size="sm"
-          icon={ChevronRight}
-          iconPosition="right"
-          className="text-xs py-1 px-2.5 font-bold"
-          onClick={() => onNavigate(`/agency/tenders/${t.id}`)}
-        >
-          View
-        </Button>
-      ),
-    },
-  ];
-
   return (
     <VerificationGate
       onNavigate={onNavigate}
@@ -429,7 +318,7 @@ export const LiveTendersPage: React.FC<{ onNavigate: (path: string) => void }> =
       <div className="space-y-6 max-w-7xl mx-auto pb-12">
         <SyntheticDataNotice variant="banner" />
 
-        {/* Page Header */}
+        {/* Header */}
         <PageHeader
           title="Tender Opportunities"
           subtitle="Discover government tenders relevant to your organization's capabilities."
@@ -441,7 +330,7 @@ export const LiveTendersPage: React.FC<{ onNavigate: (path: string) => void }> =
           }
         />
 
-        {/* Discovery Tab Navigation & View Mode Switcher */}
+        {/* Discovery Tab Navigation & View Switcher */}
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-2">
           <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-1">
             <button
@@ -488,36 +377,6 @@ export const LiveTendersPage: React.FC<{ onNavigate: (path: string) => void }> =
           </div>
 
           <div className="flex items-center gap-2">
-            {/* View Mode Toggle (Grid/Cards vs Table) */}
-            <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200">
-              <button
-                type="button"
-                onClick={() => setViewMode('cards')}
-                className={`p-1.5 rounded-md text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors ${
-                  viewMode === 'cards'
-                    ? 'bg-white text-[#002B49] shadow-xs'
-                    : 'text-slate-500 hover:text-slate-800'
-                }`}
-                title="Cards View"
-              >
-                <LayoutGrid className="w-4 h-4" />
-                <span className="hidden sm:inline">Cards</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode('table')}
-                className={`p-1.5 rounded-md text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors ${
-                  viewMode === 'table'
-                    ? 'bg-white text-[#002B49] shadow-xs'
-                    : 'text-slate-500 hover:text-slate-800'
-                }`}
-                title="Table View"
-              >
-                <TableIcon className="w-4 h-4" />
-                <span className="hidden sm:inline">Table</span>
-              </button>
-            </div>
-
             <Button
               variant="outline"
               size="sm"
@@ -535,15 +394,16 @@ export const LiveTendersPage: React.FC<{ onNavigate: (path: string) => void }> =
           </div>
         </div>
 
-        {/* Search Bar & Sorters */}
+        {/* Search Bar & Quick Sorters */}
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+          {/* Search Box */}
           <div className="relative flex-1">
             <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search by tender number, scope of work, sector, state, district, or authority..."
+              placeholder="Search by tender ID, title, category, district, authority..."
               className="w-full pl-10 pr-10 py-2.5 bg-white border border-slate-300 rounded-xl text-xs sm:text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#002B49] focus:border-transparent transition-all shadow-2xs"
             />
             {searchQuery && (
@@ -557,17 +417,18 @@ export const LiveTendersPage: React.FC<{ onNavigate: (path: string) => void }> =
             )}
           </div>
 
+          {/* Sort Dropdown */}
           <div className="flex items-center gap-2 shrink-0">
-            <label htmlFor="agency-sort-select" className="text-xs font-semibold text-slate-500 whitespace-nowrap hidden sm:inline">
-              Sort:
+            <label htmlFor="sort-tenders" className="text-xs font-semibold text-slate-500 whitespace-nowrap hidden sm:inline">
+              Sort by:
             </label>
             <select
-              id="agency-sort-select"
+              id="sort-tenders"
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value as SortOption)}
               className="text-xs py-2.5 px-3 bg-white border border-slate-300 rounded-xl text-slate-800 font-semibold focus:outline-none focus:ring-2 focus:ring-[#002B49] cursor-pointer shadow-2xs"
             >
-              <option value="recommended">Recommended (BTI Match Score)</option>
+              <option value="recommended">Recommended (Match Score)</option>
               <option value="newest">Newest Published</option>
               <option value="closing_soon">Closing Soonest</option>
               <option value="highest_value">Sanctioned Value: High to Low</option>
@@ -576,13 +437,13 @@ export const LiveTendersPage: React.FC<{ onNavigate: (path: string) => void }> =
           </div>
         </div>
 
-        {/* Collapsible Filters Drawer */}
+        {/* Collapsible Detailed Filter Drawer */}
         {showFilterDrawer && (
           <Card className="p-4 sm:p-5 border-slate-300 bg-slate-50/70 space-y-4 animate-fadeIn">
             <div className="flex items-center justify-between pb-3 border-b border-slate-200">
               <div className="flex items-center gap-2">
                 <Filter className="w-4 h-4 text-[#002B49]" />
-                <h4 className="text-xs sm:text-sm font-bold text-slate-900">Procurement Sector & Regional Filters</h4>
+                <h4 className="text-xs sm:text-sm font-bold text-slate-900">Advanced Procurement Filters</h4>
               </div>
               {activeFilterCount > 0 && (
                 <button
@@ -597,6 +458,7 @@ export const LiveTendersPage: React.FC<{ onNavigate: (path: string) => void }> =
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+              {/* Category */}
               <div>
                 <label className="block text-[11px] font-bold text-slate-700 mb-1">
                   Procurement Sector
@@ -615,9 +477,10 @@ export const LiveTendersPage: React.FC<{ onNavigate: (path: string) => void }> =
                 </select>
               </div>
 
+              {/* SubCategory */}
               <div>
                 <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                  Subcategory
+                  Subcategory / Specialization
                 </label>
                 <select
                   value={selectedSubCategory}
@@ -634,6 +497,7 @@ export const LiveTendersPage: React.FC<{ onNavigate: (path: string) => void }> =
                 </select>
               </div>
 
+              {/* State */}
               <div>
                 <label className="block text-[11px] font-bold text-slate-700 mb-1">
                   State / Territory
@@ -652,9 +516,10 @@ export const LiveTendersPage: React.FC<{ onNavigate: (path: string) => void }> =
                 </select>
               </div>
 
+              {/* District */}
               <div>
                 <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                  District
+                  Project District
                 </label>
                 <select
                   value={selectedDistrict}
@@ -671,6 +536,7 @@ export const LiveTendersPage: React.FC<{ onNavigate: (path: string) => void }> =
                 </select>
               </div>
 
+              {/* Min Amount */}
               <div>
                 <label className="block text-[11px] font-bold text-slate-700 mb-1">
                   Min Sanctioned Value (₹)
@@ -684,6 +550,7 @@ export const LiveTendersPage: React.FC<{ onNavigate: (path: string) => void }> =
                 />
               </div>
 
+              {/* Max Amount */}
               <div>
                 <label className="block text-[11px] font-bold text-slate-700 mb-1">
                   Max Sanctioned Value (₹)
@@ -697,6 +564,7 @@ export const LiveTendersPage: React.FC<{ onNavigate: (path: string) => void }> =
                 />
               </div>
 
+              {/* Closing Soon Toggle */}
               <div className="sm:col-span-2 flex items-center gap-3 pt-4 sm:pt-6">
                 <label className="flex items-center gap-2 cursor-pointer select-none">
                   <input
@@ -770,7 +638,7 @@ export const LiveTendersPage: React.FC<{ onNavigate: (path: string) => void }> =
           </Card>
         )}
 
-        {/* Empty State */}
+        {/* Empty State: No tenders match current search or filters */}
         {!loading && !error && filteredTenders.length === 0 && (
           <Card className="p-10 border-slate-200 bg-white text-center space-y-4 shadow-xs">
             <div className="w-14 h-14 rounded-2xl bg-slate-100 border border-slate-200 flex items-center justify-center mx-auto text-slate-500">
@@ -802,8 +670,8 @@ export const LiveTendersPage: React.FC<{ onNavigate: (path: string) => void }> =
           </Card>
         )}
 
-        {/* Content: Cards View */}
-        {!loading && !error && filteredTenders.length > 0 && viewMode === 'cards' && (
+        {/* Opportunity Card List */}
+        {!loading && !error && filteredTenders.length > 0 && (
           <div className="space-y-4">
             {filteredTenders.map((tender) => {
               const match = matchMap.get(tender.id);
@@ -818,18 +686,6 @@ export const LiveTendersPage: React.FC<{ onNavigate: (path: string) => void }> =
               );
             })}
           </div>
-        )}
-
-        {/* Content: Alternate Table View */}
-        {!loading && !error && filteredTenders.length > 0 && viewMode === 'table' && (
-          <Card className="border-slate-200 bg-white overflow-hidden shadow-xs">
-            <Table
-              data={filteredTenders}
-              columns={tableColumns}
-              keyExtractor={(t) => t.id}
-              emptyText="No tenders found matching current criteria."
-            />
-          </Card>
         )}
       </div>
     </VerificationGate>

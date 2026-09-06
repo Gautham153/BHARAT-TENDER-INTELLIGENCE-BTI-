@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* Ensure dark: variants only trigger on explicit .dark class ancestor (never triggered in BTI fixed light mode) */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* Hide visual scrollbar while preserving scroll functionality */
 .no-scrollbar {
   -ms-overflow-style: none; /* Internet Explorer and Edge */

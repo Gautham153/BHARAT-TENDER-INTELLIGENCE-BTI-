@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   FileSpreadsheet,
   Building2,
@@ -21,69 +21,162 @@ import { Table, Column } from '../../components/ui/Table';
 import { StatusBadge } from '../../components/ui/StatusBadge';
 import { ProgressBar } from '../../components/ui/ProgressBar';
 import { SyntheticDataNotice } from '../../components/common/SyntheticDataNotice';
-import { mockTenders, mockProjects, mockProposals } from '../../data/mockData';
-import { Tender, Project } from '../../types';
+import { TenderMatchBadge } from '../../components/tenders/TenderMatchBadge';
+import { formatCurrencyINR, getDaysRemainingInfo } from '../../components/tenders/TenderOpportunityCard';
+import { mockProjects, mockProposals } from '../../data/mockData';
+import { TenderService } from '../../services/firebase/tenders';
+import { OrganizationService } from '../../services/firebase/organizations';
+import { TenderMatchingService } from '../../services/matching/tenderMatchingService';
+import { Tender, TenderMatchResult } from '../../types/tender';
+import { Organization } from '../../types/organization';
 import { useAuth } from '../../context/AuthContext';
 
 export const AgencyDashboard: React.FC<{ onNavigate: (path: string) => void }> = ({ onNavigate }) => {
   const { user } = useAuth();
-  const wonProjects = mockProjects.filter((p) => p.executingAgencyName.includes('Vikramaditya'));
+  const [liveTenders, setLiveTenders] = useState<Tender[]>([]);
+  const [organization, setOrganization] = useState<Organization | null>(null);
+  const [loadingTenders, setLoadingTenders] = useState<boolean>(true);
 
-  const agencyDisplayName = user?.agencyName || user?.name || 'Registered Agency Workspace';
-  const agencyGstin = user?.gstin ? `GSTIN: ${user.gstin}` : 'GSTIN Registered';
+  useEffect(() => {
+    let isMounted = true;
+    async function fetchData() {
+      try {
+        const [tenders, orgs] = await Promise.all([
+          TenderService.getTenders('agency'),
+          OrganizationService.getAllOrganizations(),
+        ]);
+        if (!isMounted) return;
+        setLiveTenders(tenders);
+
+        const userOrg = orgs.find(
+          (o) => o.primaryUserId === user?.id || (user?.gstin && o.gstin === user.gstin) || (user?.organizationId && o.organizationId === user.organizationId)
+        );
+        if (userOrg) setOrganization(userOrg);
+      } catch (err) {
+        console.warn('[BTI AgencyDashboard] Error fetching live tenders:', err);
+      } finally {
+        if (isMounted) setLoadingTenders(false);
+      }
+    }
+    fetchData();
+    return () => {
+      isMounted = false;
+    };
+  }, [user]);
+
+  const matchMap = useMemo<Map<string, TenderMatchResult>>(() => {
+    return TenderMatchingService.batchMatch(liveTenders, organization);
+  }, [liveTenders, organization]);
+
+  // Sort by match score then publication date
+  const recommendedTenders = useMemo(() => {
+    const list = [...liveTenders];
+    list.sort((a, b) => {
+      const matchA = matchMap.get(a.id)?.score || 0;
+      const matchB = matchMap.get(b.id)?.score || 0;
+      if (matchB !== matchA) return matchB - matchA;
+      return new Date(b.createdAt || '').getTime() - new Date(a.createdAt || '').getTime();
+    });
+    return list.slice(0, 4);
+  }, [liveTenders, matchMap]);
+
+  const agencyDisplayName = user?.agencyName || organization?.legalName || user?.name || 'Registered Agency Workspace';
+  const agencyGstin = user?.gstin || organization?.gstin ? `GSTIN: ${user?.gstin || organization?.gstin}` : 'GSTIN Registered';
   const verificationText = user?.verified ? 'Tier-1 Verified Contractor' : 'Registration & Verification in Progress';
 
   const tenderColumns: Column<Tender>[] = [
     {
       key: 'tenderNumber',
       header: 'Tender ID',
-      width: '140px',
-      render: (t) => <span className="font-mono text-xs font-bold text-slate-900">{t.tenderNumber}</span>,
+      width: '150px',
+      render: (t) => (
+        <span
+          onClick={() => onNavigate(`/agency/tenders/${t.id}`)}
+          className="font-mono text-xs font-bold text-[#002B49] hover:underline cursor-pointer"
+        >
+          {t.tenderNumber}
+        </span>
+      ),
     },
     {
       key: 'title',
       header: 'Scope of Work',
       render: (t) => (
         <div>
-          <div className="font-semibold text-slate-900 line-clamp-1">{t.title}</div>
-          <div className="text-[11px] text-slate-500">{t.constituency}, {t.state}</div>
+          <div
+            onClick={() => onNavigate(`/agency/tenders/${t.id}`)}
+            className="font-semibold text-slate-900 line-clamp-1 hover:text-[#002B49] cursor-pointer text-xs"
+          >
+            {t.title}
+          </div>
+          <div className="text-[11px] text-slate-500">
+            {t.constituency}, {t.state} • {t.category}
+          </div>
         </div>
       ),
     },
     {
-      key: 'estimatedCost',
+      key: 'sanctionedAmount',
       header: 'Sanctioned Cost',
       align: 'right',
       render: (t) => (
-        <span className="font-bold text-slate-900">
-          ₹ {(t.estimatedCost / 10000000).toFixed(2)} Cr
+        <span className="font-bold text-slate-900 text-xs">
+          {formatCurrencyINR(t.sanctionedAmount || t.estimatedValue || t.estimatedCost)}
         </span>
       ),
     },
     {
+      key: 'matchScore',
+      header: 'BTI Match',
+      align: 'center',
+      render: (t) => {
+        const match = matchMap.get(t.id);
+        if (!match) return <span className="text-xs text-slate-400">—</span>;
+        return (
+          <TenderMatchBadge
+            score={match.score}
+            tier={match.tier}
+            size="sm"
+          />
+        );
+      },
+    },
+    {
       key: 'closingDate',
-      header: 'Bidding Closes',
-      render: (t) => <span className="text-xs font-mono text-slate-600">{t.closingDate}</span>,
+      header: 'Deadline',
+      render: (t) => {
+        const closingInfo = getDaysRemainingInfo(t.closingDate);
+        return (
+          <div>
+            <span className="text-xs font-mono text-slate-700 block">{t.closingDate}</span>
+            {closingInfo.isClosingSoon && (
+              <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-1 py-0.2 rounded border border-amber-200 inline-block mt-0.5">
+                {closingInfo.label}
+              </span>
+            )}
+          </div>
+        );
+      },
     },
     {
       key: 'actions',
-      header: 'Bidding',
+      header: '',
       align: 'right',
       render: (t) => (
         <Button
-          variant="gov"
+          variant="outline"
           size="sm"
-          onClick={() => onNavigate('/agency/tenders')}
-          className="text-xs px-2.5 py-1"
+          onClick={() => onNavigate(`/agency/tenders/${t.id}`)}
+          className="text-xs px-2.5 py-1 font-bold"
         >
-          Submit Bid
+          View Tender
         </Button>
       ),
     },
   ];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-w-7xl mx-auto pb-12">
       <SyntheticDataNotice variant="banner" />
 
       {/* Header */}
@@ -98,55 +191,38 @@ export const AgencyDashboard: React.FC<{ onNavigate: (path: string) => void }> =
             <span>{user?.verified ? 'GST & CVC Verified' : 'Scrutiny Pending'}</span>
           </span>
         }
-        actions={
-          <Button
-            variant="gov"
-            size="sm"
-            onClick={() => onNavigate('/agency/tenders')}
-            icon={FileSpreadsheet}
-          >
-            Browse Open Tenders
-          </Button>
-        }
       />
 
-      {/* Summary Cards */}
+      {/* KPI Stats */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
-          label="Active Contracts"
-          value="4 Works"
-          trend={{ value: '100% on schedule', isPositive: true }}
+          title="Live Compatible Tenders"
+          value={String(liveTenders.length)}
+          subtitle="Matching statutory capabilities"
+          icon={FileSpreadsheet}
+          trend={{ value: `${liveTenders.length} Open`, isPositive: true }}
+        />
+        <StatCard
+          title="Active Projects"
+          value={String(mockProjects.length)}
+          subtitle="Works underway"
           icon={FolderKanban}
-          iconColor="emerald"
-          indicatorColor="#046A38"
         />
         <StatCard
-          label="Total Sanctioned Value"
-          value="₹ 14.80 Cr"
-          trend={{ value: '₹ 8.2 Cr received', isPositive: true }}
-          icon={Coins}
-          iconColor="navy"
-          indicatorColor="#002B49"
+          title="Milestone Compliance"
+          value="92%"
+          subtitle="On-time site completion"
+          icon={CheckCircle2}
         />
         <StatCard
-          label="Live Bids Under Scoring"
-          value="2 Proposals"
-          trend={{ value: 'L1 in 1 tender', isPositive: true }}
-          icon={FileCheck2}
-          iconColor="blue"
-          indicatorColor="#2563EB"
-        />
-        <StatCard
-          label="Disbursement Claims Pending"
-          value="₹ 1.25 Cr"
-          trend={{ value: 'Under Nodal Audit', isPositive: true }}
+          title="Disbursed Funds"
+          value="₹ 1.82 Cr"
+          subtitle="PFMS verified releases"
           icon={Receipt}
-          iconColor="amber"
-          indicatorColor="#f59e0b"
         />
       </div>
 
-      {/* Active Assigned Works & Milestones */}
+      {/* Projects & Quality Scorecard */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <Card className="lg:col-span-7 space-y-4">
           <div className="flex items-center justify-between pb-3 border-b border-slate-100">
@@ -232,7 +308,7 @@ export const AgencyDashboard: React.FC<{ onNavigate: (path: string) => void }> =
             onClick={() => onNavigate('/agency/compliance')}
             className="w-full mt-4"
           >
-            Manage GST & Bank Account Details
+            Manage GST & Organization Profile
           </Button>
         </Card>
       </div>
@@ -241,8 +317,18 @@ export const AgencyDashboard: React.FC<{ onNavigate: (path: string) => void }> =
       <div>
         <div className="flex items-center justify-between mb-3">
           <div>
-            <h3 className="text-base font-bold text-slate-900 tracking-tight">Open MPLAD Tenders Matching Your Category</h3>
-            <p className="text-xs text-slate-500">Eligible e-procurement opportunities open for bidding</p>
+            <div className="flex items-center gap-2">
+              <h3 className="text-base font-bold text-slate-900 tracking-tight">
+                Recommended Live Tenders
+              </h3>
+              <span className="text-xs px-2 py-0.5 bg-blue-100 text-blue-800 rounded font-semibold flex items-center gap-1">
+                <ShieldCheck className="w-3 h-3 text-blue-600" />
+                <span>Deterministic BTI Match</span>
+              </span>
+            </div>
+            <p className="text-xs text-slate-500">
+              Live procurement opportunities aligned with {organization?.legalName || 'your registered organization'}
+            </p>
           </div>
           <Button
             variant="outline"
@@ -251,15 +337,27 @@ export const AgencyDashboard: React.FC<{ onNavigate: (path: string) => void }> =
             icon={ArrowRight}
             iconPosition="right"
           >
-            All Live Tenders
+            Explore All Live Tenders
           </Button>
         </div>
 
-        <Table
-          data={mockTenders.filter((t) => t.status === 'Open')}
-          columns={tenderColumns}
-          keyExtractor={(t) => t.id}
-        />
+        {loadingTenders ? (
+          <Card className="p-8 text-center text-xs text-slate-500 animate-pulse">
+            Loading tender opportunities...
+          </Card>
+        ) : recommendedTenders.length > 0 ? (
+          <Card className="border-slate-200 bg-white overflow-hidden shadow-xs">
+            <Table
+              data={recommendedTenders}
+              columns={tenderColumns}
+              keyExtractor={(t) => t.id}
+            />
+          </Card>
+        ) : (
+          <Card className="p-6 text-center text-xs text-slate-500">
+            No live tenders currently matching your exact criteria.
+          </Card>
+        )}
       </div>
     </div>
   );

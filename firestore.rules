@@ -50,6 +50,19 @@ service cloud.firestore {
         && data.verificationStatus in ['not_started', 'pending', 'verified', 'failed', 'requires_review'];
     }
 
+    // Authoritative tender status transition validator
+    // Enforces strict unidirectional and legal state transitions:
+    // DRAFT -> PUBLISHED/LIVE -> CLOSED -> UNDER_EVALUATION -> AWARDED -> ARCHIVED (with legal cancellation paths)
+    function isValidStatusTransition(prev, next) {
+      return prev == next
+        || (prev == 'DRAFT' && (next in ['DRAFT', 'PUBLISHED', 'LIVE', 'CANCELLED']))
+        || (prev in ['PUBLISHED', 'LIVE', 'Open'] && (next in ['LIVE', 'CLOSED', 'CANCELLED']))
+        || (prev == 'CLOSED' && (next in ['UNDER_EVALUATION', 'ARCHIVED']))
+        || (prev == 'UNDER_EVALUATION' && (next in ['AWARDED', 'CANCELLED']))
+        || (prev == 'AWARDED' && (next == 'ARCHIVED'))
+        || (prev == 'CANCELLED' && (next == 'ARCHIVED'));
+    }
+
     // 2. Users Collection Rules (/users/{uid})
     match /users/{uid} {
       // Individual document read allowed for the account owner or verified government personnel
@@ -190,6 +203,159 @@ service cloud.firestore {
         && (isAgencyEventValid() || isGovEventValid());
 
       // Audit logs are strictly immutable
+      allow update, delete: if false;
+    }
+
+    // 5. Tenders Collection Rules (/tenders/{tenderId})
+    match /tenders/{tenderId} {
+      // Helper to check active published status and non-expired deadline for agency discovery & detail access.
+      // Agency users are strictly restricted to active LIVE tenders whose closing deadline is strictly in the future.
+      // DRAFT, CLOSED, UNDER_EVALUATION, AWARDED, CANCELLED, ARCHIVED, or tenders where closingDate <= request.time are forbidden.
+      function isActiveAndNotExpired(data) {
+        return (data.status in ['PUBLISHED', 'LIVE', 'Open'])
+          && (data.closingDate is timestamp)
+          && (data.closingDate > request.time);
+      }
+
+      // Read single tender:
+      // Government users retain full lifecycle visibility across all statuses (including DRAFT, CLOSED, ARCHIVED, and expired).
+      // Agency and public users can only read active LIVE procurement notices whose deadline has not elapsed.
+      allow get: if isSignedIn() && isValidId(tenderId) && (
+        isGovernmentUser() || isActiveAndNotExpired(resource.data)
+      );
+
+      // List tenders:
+      // Government users can list all tenders across full lifecycle.
+      // Agency and public users can list only active LIVE procurement notices whose deadline has not elapsed.
+      allow list: if isSignedIn() && (
+        isGovernmentUser() || isActiveAndNotExpired(resource.data)
+      );
+
+      // Create tender:
+      // Restricted strictly to authenticated government personnel.
+      // Must set createdBy to the user's UID and status to DRAFT or PUBLISHED/LIVE.
+      // Must persist closingDate as a valid Firestore timestamp for database-level deadline enforcement.
+      allow create: if isGovernmentUser()
+        && isValidId(tenderId)
+        && incoming().createdBy == request.auth.uid
+        && incoming().title is string && incoming().title.size() > 0
+        && incoming().category is string
+        && (incoming().status in ['DRAFT', 'PUBLISHED', 'LIVE'])
+        && (incoming().closingDate is timestamp);
+
+      // Update tender:
+      // Restricted strictly to authorized government personnel.
+      // Prevents arbitrary jumps (e.g. DRAFT straight to AWARDED is strictly denied).
+      // If updating a DRAFT, allow field edits within legal draft transitions and maintain timestamp type.
+      // If updating a non-DRAFT tender, prevent modifications to fundamental procurement specs and closingDate.
+      allow update: if isGovernmentUser()
+        && isValidId(tenderId)
+        && incoming().createdBy == existing().createdBy
+        && incoming().tenderNumber == existing().tenderNumber
+        && isValidStatusTransition(existing().status, incoming().status)
+        && (
+          // Case 1: Editing a DRAFT tender (must remain DRAFT or legal first transition)
+          (
+            existing().status == 'DRAFT'
+            && incoming().status in ['DRAFT', 'PUBLISHED', 'LIVE', 'CANCELLED']
+            && (incoming().closingDate is timestamp)
+          )
+          ||
+          // Case 2: Controlled lifecycle transitions for PUBLISHED/LIVE/CLOSED tenders
+          (
+            existing().status != 'DRAFT'
+            && incoming().category == existing().category
+            && incoming().closingDate == existing().closingDate
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'publishedAt', 'closedAt', 'updatedAt', 'proposalsCount', 'anomaliesCount', 'riskScore', 'riskLevel', 'specialRequirements'
+            ])
+          )
+        );
+
+      // Tenders cannot be deleted directly from client; state transition to CANCELLED or ARCHIVED is enforced
+      allow delete: if false;
+    }
+
+    // 6. Tender Audit Events Collection Rules (/tenderEvents/{eventId})
+    match /tenderEvents/{eventId} {
+      // Reading tender events is permitted for authenticated government users
+      allow get, list: if isGovernmentUser() && isValidId(eventId);
+
+      // Helper to validate that action matches legal state transitions according to BTI lifecycle engine
+      function isValidTenderAuditEvent(event) {
+        return (
+          // CREATED: initial creation event; previousStatus absent or null; newStatus DRAFT or LIVE/PUBLISHED
+          (event.action == 'CREATED' &&
+           (!('previousStatus' in event) || event.previousStatus == null) &&
+           (event.newStatus in ['DRAFT', 'PUBLISHED', 'LIVE'])) ||
+
+          // UPDATED: allowed draft update operation; status must remain DRAFT
+          (event.action == 'UPDATED' &&
+           ('previousStatus' in event) && event.previousStatus == 'DRAFT' &&
+           event.newStatus == 'DRAFT') ||
+
+          // PUBLISHED: transition from DRAFT to LIVE or PUBLISHED
+          (event.action == 'PUBLISHED' &&
+           ('previousStatus' in event) && event.previousStatus == 'DRAFT' &&
+           (event.newStatus in ['PUBLISHED', 'LIVE'])) ||
+
+          // CLOSED: transition from active state (LIVE, PUBLISHED, Open) to CLOSED
+          (event.action == 'CLOSED' &&
+           ('previousStatus' in event) && (event.previousStatus in ['PUBLISHED', 'LIVE', 'Open']) &&
+           event.newStatus == 'CLOSED') ||
+
+          // CANCELLED: transition from valid cancellable state to CANCELLED
+          (event.action == 'CANCELLED' &&
+           ('previousStatus' in event) && (event.previousStatus in ['DRAFT', 'PUBLISHED', 'LIVE', 'Open', 'UNDER_EVALUATION']) &&
+           event.newStatus == 'CANCELLED') ||
+
+          // ARCHIVED: transition from valid archivable state to ARCHIVED
+          (event.action == 'ARCHIVED' &&
+           ('previousStatus' in event) && (event.previousStatus in ['CLOSED', 'AWARDED', 'CANCELLED']) &&
+           event.newStatus == 'ARCHIVED')
+        );
+      }
+
+      // Creation of tender audit events:
+      // - Must be authenticated government user matching request.auth.uid
+      // - Event ID must match document ID
+      // - Action must be in canonical action set
+      // - Status values must be valid and conform to lifecycle transition rules
+      // - Consistency validation against authoritative tender document:
+      //   * The tender must exist after the atomic batch commit
+      //   * The event's newStatus must strictly match the tender's status after commit
+      //   * For initial CREATED event: tender must not have existed prior to batch
+      //   * For transitions (UPDATED, PUBLISHED, etc.): tender must have existed prior to batch
+      //     and its previous state must match previousStatus
+      allow create: if isGovernmentUser()
+        && isValidId(eventId)
+        && incoming().eventId == eventId
+        && incoming().actorId == request.auth.uid
+        && incoming().actorRole == 'government'
+        && incoming().action in ['CREATED', 'UPDATED', 'PUBLISHED', 'CLOSED', 'CANCELLED', 'ARCHIVED']
+        && (incoming().tenderId is string && isValidId(incoming().tenderId))
+        && (incoming().timestamp is string && incoming().timestamp.size() > 0)
+        && (incoming().newStatus in ['DRAFT', 'PUBLISHED', 'LIVE', 'CLOSED', 'UNDER_EVALUATION', 'AWARDED', 'CANCELLED', 'ARCHIVED'])
+        && isValidTenderAuditEvent(incoming())
+        && existsAfter(/databases/$(database)/documents/tenders/$(incoming().tenderId))
+        && getAfter(/databases/$(database)/documents/tenders/$(incoming().tenderId)).data.status == incoming().newStatus
+        && (
+          // Case 1: Initial creation event
+          (
+            incoming().action == 'CREATED'
+            && !exists(/databases/$(database)/documents/tenders/$(incoming().tenderId))
+          )
+          ||
+          // Case 2: State transition event on an existing tender
+          (
+            incoming().action != 'CREATED'
+            && exists(/databases/$(database)/documents/tenders/$(incoming().tenderId))
+            && get(/databases/$(database)/documents/tenders/$(incoming().tenderId)).data.status == incoming().previousStatus
+            && isValidStatusTransition(incoming().previousStatus, incoming().newStatus)
+          )
+        );
+
+      // Tender audit events are strictly append-only and immutable
       allow update, delete: if false;
     }
   }

@@ -22,7 +22,10 @@ import { DemoSwitcher } from './components/common/DemoSwitcher';
 // Government Portal Pages
 import { GovDashboard } from './pages/government/GovDashboard';
 import { GovernmentVerificationReviewPage } from './pages/government/GovernmentVerificationReviewPage';
-import { TenderManagement } from './pages/government/TenderManagement';
+import { GovernmentTenderListPage } from './pages/government/GovernmentTenderListPage';
+import { GovernmentTenderCreatePage } from './pages/government/GovernmentTenderCreatePage';
+import { GovernmentTenderDetailPage } from './pages/government/GovernmentTenderDetailPage';
+import { GovernmentTenderEditPage } from './pages/government/GovernmentTenderEditPage';
 import { ProposalReview } from './pages/government/ProposalReview';
 import { RiskAlerts } from './pages/government/RiskAlerts';
 import { FraudInvestigations } from './pages/government/FraudInvestigations';
@@ -35,6 +38,7 @@ import { SettingsSecurityPage } from './pages/government/SettingsSecurityPage';
 import { AgencyDashboard } from './pages/agency/AgencyDashboard';
 import { AgencyVerificationStatusPage } from './pages/agency/AgencyVerificationStatusPage';
 import { LiveTendersPage } from './pages/agency/LiveTendersPage';
+import { AgencyTenderDetailPage } from './pages/agency/AgencyTenderDetailPage';
 import { SubmittedProposalsPage } from './pages/agency/SubmittedProposalsPage';
 import { ProjectMilestonesPage } from './pages/agency/ProjectMilestonesPage';
 import { DisbursementsPage } from './pages/agency/DisbursementsPage';
@@ -79,7 +83,9 @@ function AppContent() {
           case '/government/verification-review':
             return <GovernmentVerificationReviewPage onNavigate={navigate} />;
           case '/government/tenders':
-            return <TenderManagement onNavigate={navigate} onSelectTender={setSelectedTender} />;
+            return <GovernmentTenderListPage onNavigate={navigate} />;
+          case '/government/tenders/create':
+            return <GovernmentTenderCreatePage onNavigate={navigate} />;
 
           case '/government/proposals':
             return <ProposalReview onNavigate={navigate} />;
@@ -97,8 +103,18 @@ function AppContent() {
             return <AnalyticsReportsPage onNavigate={navigate} />;
           case '/government/settings':
             return <SettingsSecurityPage onNavigate={navigate} />;
-          default:
+          default: {
+            if (currentPath.startsWith('/government/tenders/')) {
+              const subPath = currentPath.substring('/government/tenders/'.length);
+              if (subPath.endsWith('/edit')) {
+                const tenderId = subPath.replace('/edit', '');
+                return <GovernmentTenderEditPage tenderId={tenderId} onNavigate={navigate} />;
+              } else if (subPath.length > 0) {
+                return <GovernmentTenderDetailPage tenderId={subPath} onNavigate={navigate} />;
+              }
+            }
             return <GovDashboard onNavigate={navigate} onSelectTender={setSelectedTender} />;
+          }
         }
       };
 
@@ -138,8 +154,15 @@ function AppContent() {
             return <DisbursementsPage onNavigate={navigate} />;
           case '/agency/compliance':
             return <ComplianceProfilePage onNavigate={navigate} />;
-          default:
+          default: {
+            if (currentPath.startsWith('/agency/tenders/')) {
+              const tenderId = currentPath.substring('/agency/tenders/'.length);
+              if (tenderId.length > 0) {
+                return <AgencyTenderDetailPage tenderId={tenderId} onNavigate={navigate} />;
+              }
+            }
             return <AgencyDashboard onNavigate={navigate} />;
+          }
         }
       };
 

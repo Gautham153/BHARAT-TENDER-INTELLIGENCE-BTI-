@@ -138,7 +138,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <nav className="p-2.5 space-y-1 overflow-y-auto max-h-[calc(100vh-200px)] no-scrollbar">
           {navItems.map((item) => {
             const Icon = item.icon;
-            const isActive = currentPath === item.path;
+            const isActive =
+              currentPath === item.path ||
+              (item.path !== '/government/dashboard' &&
+                item.path !== '/agency/dashboard' &&
+                currentPath.startsWith(item.path + '/'));
 
             return (
               <button
