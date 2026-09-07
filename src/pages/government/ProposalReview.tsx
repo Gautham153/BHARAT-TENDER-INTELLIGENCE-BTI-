@@ -5,6 +5,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   FileCheck2,
   AlertTriangle,
+  AlertCircle,
   CheckCircle2,
   Award,
   Building2,
@@ -64,6 +65,7 @@ export const ProposalReview: React.FC<ProposalReviewProps> = ({
   const [auditProposal, setAuditProposal] = useState<Proposal | null>(null);
   const [auditEvents, setAuditEvents] = useState<ProposalAuditEvent[]>([]);
   const [auditLoading, setAuditLoading] = useState<boolean>(false);
+  const [auditError, setAuditError] = useState<string | null>(null);
 
   // Adjudication Modal State
   const [actionModalType, setActionModalType] = useState<'REJECT' | 'AWARD' | null>(null);
@@ -158,12 +160,14 @@ export const ProposalReview: React.FC<ProposalReviewProps> = ({
   const handleOpenAudit = async (proposal: Proposal) => {
     setAuditProposal(proposal);
     setAuditLoading(true);
+    setAuditError(null);
     try {
       const events = await ProposalService.getProposalAuditEvents(proposal.id);
       setAuditEvents(events);
     } catch (err) {
       console.error('Error fetching audit trail:', err);
       setAuditEvents([]);
+      setAuditError(err instanceof Error ? err.message : 'Unable to retrieve the authoritative audit trail.');
     } finally {
       setAuditLoading(false);
     }
@@ -711,7 +715,10 @@ export const ProposalReview: React.FC<ProposalReviewProps> = ({
       {/* AUDIT TRAIL MODAL */}
       <Modal
         isOpen={Boolean(auditProposal)}
-        onClose={() => setAuditProposal(null)}
+        onClose={() => {
+          setAuditProposal(null);
+          setAuditError(null);
+        }}
         title={
           <div className="flex items-center gap-2">
             <History className="w-5 h-5 text-[#002B49]" />
@@ -726,15 +733,25 @@ export const ProposalReview: React.FC<ProposalReviewProps> = ({
             <div className="py-8 text-center text-slate-500 animate-pulse">
               Retrieving immutable audit events...
             </div>
+          ) : auditError ? (
+            <div className="p-4 bg-rose-50 rounded-lg border border-rose-200 text-rose-800 space-y-1">
+              <div className="flex items-center gap-2 font-bold text-rose-900">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>Unable to retrieve the authoritative audit trail.</span>
+              </div>
+              <p className="text-[11px] text-rose-700 pl-6">
+                {auditError}
+              </p>
+            </div>
           ) : auditEvents.length === 0 ? (
             <div className="p-4 bg-slate-50 rounded-lg border border-slate-200 text-slate-600 text-center">
-              Initial submission event recorded at creation.
+              No audit events are recorded for this proposal.
             </div>
           ) : (
             <div className="space-y-3">
               {auditEvents.map((evt, idx) => (
                 <div
-                  key={evt.id || idx}
+                  key={evt.eventId || idx}
                   className="p-3.5 rounded-lg border border-slate-200 bg-slate-50 space-y-1.5"
                 >
                   <div className="flex items-center justify-between gap-2">
@@ -754,13 +771,13 @@ export const ProposalReview: React.FC<ProposalReviewProps> = ({
                   <div className="flex items-center gap-2 text-[11px] text-slate-600">
                     <User className="w-3 h-3 text-slate-400" />
                     <span>
-                      Actor: <strong>{evt.performedByName || evt.performedBy}</strong> ({evt.performedByRole})
+                      Actor: <strong>{evt.actorName || evt.actorEmail || evt.actorId}</strong> ({evt.actorRole})
                     </span>
                   </div>
 
-                  {evt.reason && (
+                  {evt.notes && (
                     <div className="text-[11px] text-slate-700 bg-white p-2 rounded border border-slate-200/70 mt-1">
-                      <strong>Notes:</strong> {evt.reason}
+                      <strong>Notes:</strong> {evt.notes}
                     </div>
                   )}
                 </div>
@@ -769,7 +786,14 @@ export const ProposalReview: React.FC<ProposalReviewProps> = ({
           )}
 
           <div className="pt-3 border-t border-slate-200 flex justify-end">
-            <Button variant="outline" size="sm" onClick={() => setAuditProposal(null)}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setAuditProposal(null);
+                setAuditError(null);
+              }}
+            >
               Close Audit Trail
             </Button>
           </div>

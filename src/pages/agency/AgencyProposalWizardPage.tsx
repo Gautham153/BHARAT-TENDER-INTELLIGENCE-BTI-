@@ -120,7 +120,7 @@ export const AgencyProposalWizardPage: React.FC<AgencyProposalWizardPageProps> =
       setOrganization(org);
 
       // 3. Find or create draft proposal
-      const existing = await ProposalService.getActiveProposalForTenderAndOrg(
+      const existing = await ProposalService.getLatestProposalForTenderAndOrg(
         t.id,
         org.organizationId
       );
@@ -374,6 +374,7 @@ export const AgencyProposalWizardPage: React.FC<AgencyProposalWizardPageProps> =
         proposalId: proposal.id,
         tender,
         user,
+        latestData: proposal,
       });
       setProposal(submitted);
       setShowSubmitModal(false);

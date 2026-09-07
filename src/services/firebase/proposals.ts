@@ -410,6 +410,60 @@ export class ProposalService {
     );
   }
 
+  /**
+   * Retrieves the authoritative existing/latest proposal for a tender and organization.
+   * Used by the Proposal Wizard and UI to locate existing bids (including sealed/reviewed proposals).
+   * Returns any non-withdrawn proposal (DRAFT, SUBMITTED, UNDER_REVIEW, SHORTLISTED, REJECTED, AWARDED).
+   * Returns null if no proposal exists or if only WITHDRAWN proposals exist.
+   */
+  static async getLatestProposalForTenderAndOrg(
+    tenderId: string,
+    organizationId: string
+  ): Promise<Proposal | null> {
+    if (!tenderId || !organizationId) return null;
+
+    if (isLiveFirestoreSession() && db) {
+      const ref = collection(db, PROPOSALS_COLLECTION);
+      const q = query(
+        ref,
+        where('tenderId', '==', tenderId),
+        where('organizationId', '==', organizationId)
+      );
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        const proposals: Proposal[] = [];
+        snap.forEach((d) => proposals.push({ id: d.id, ...d.data() } as Proposal));
+        
+        // Sort descending by date (submittedAt, updatedAt, createdAt)
+        proposals.sort((a, b) => {
+          const timeA = new Date(a.submittedAt || a.updatedAt || a.createdAt || 0).getTime();
+          const timeB = new Date(b.submittedAt || b.updatedAt || b.createdAt || 0).getTime();
+          return timeB - timeA;
+        });
+
+        const nonWithdrawn = proposals.find((p) => p.status !== 'WITHDRAWN');
+        if (nonWithdrawn) return nonWithdrawn;
+      }
+      return null;
+    }
+
+    const local = getLocalProposals();
+    const matches = local
+      .filter(
+        (p) =>
+          p.tenderId === tenderId &&
+          p.organizationId === organizationId &&
+          p.status !== 'WITHDRAWN'
+      )
+      .sort((a, b) => {
+        const timeA = new Date(a.submittedAt || a.updatedAt || a.createdAt || 0).getTime();
+        const timeB = new Date(b.submittedAt || b.updatedAt || b.createdAt || 0).getTime();
+        return timeB - timeA;
+      });
+
+    return matches[0] || null;
+  }
+
   // In-flight concurrency lock to guarantee atomic creation per (tenderId, organizationId)
   private static inFlightCreationLocks = new Map<string, Promise<Proposal>>();
 
@@ -705,13 +759,15 @@ export class ProposalService {
    * Submits a completed proposal.
    * Performs rigorous deadline, completeness, and eligibility checks.
    * Locks the proposal upon transition to 'SUBMITTED'.
+   * Merges latest wizard state (if provided) before validating and persisting atomically.
    */
   static async submitProposal(params: {
     proposalId: string;
     tender: Tender;
     user: AuthUser;
+    latestData?: Partial<Proposal>;
   }): Promise<Proposal> {
-    const { proposalId, tender, user } = params;
+    const { proposalId, tender, user, latestData } = params;
 
     const existing = await this.getProposalById(proposalId);
     if (!existing) {
@@ -721,6 +777,17 @@ export class ProposalService {
     if (existing.status !== 'DRAFT') {
       throw new Error(`This proposal cannot be submitted because it is currently in '${existing.status}' status.`);
     }
+
+    // Merge latest wizard state (if provided) into the draft before validation and submission
+    const draft: Proposal = {
+      ...existing,
+      ...(latestData || {}),
+      id: existing.id,
+      proposalNumber: existing.proposalNumber,
+      tenderId: existing.tenderId,
+      organizationId: existing.organizationId,
+      submittedBy: existing.submittedBy,
+    };
 
     // 1. Tender Status Enforcement
     const effectiveStatus = getEffectiveTenderStatus(tender);
@@ -741,19 +808,19 @@ export class ProposalService {
     }
 
     // 3. Validation: Financial Proposal
-    const financial = existing.financialProposal;
+    const financial = draft.financialProposal;
     if (!financial || !financial.baseAmount || financial.baseAmount <= 0) {
       throw new Error('Submission blocked: A valid quoted financial amount greater than ₹0 is required.');
     }
 
     // 4. Validation: Technical Proposal
-    const tech = existing.technicalProposal;
+    const tech = draft.technicalProposal;
     if (!tech || !tech.technicalApproach?.trim() || !tech.proposedSolution?.trim()) {
       throw new Error('Submission blocked: Mandatory Technical Approach and Proposed Solution must be completed.');
     }
 
     // 5. Validation: Compliance Declarations
-    const compliance = existing.complianceDeclarations;
+    const compliance = draft.complianceDeclarations;
     if (
       !compliance ||
       !compliance.accuracyConfirmed ||
@@ -767,7 +834,7 @@ export class ProposalService {
     const nowIso = new Date().toISOString();
     const userUid = user.uid || user.id;
     const submittedProposal: Proposal = {
-      ...existing,
+      ...draft,
       status: 'SUBMITTED',
       submittedAt: nowIso,
       updatedAt: nowIso,
@@ -811,6 +878,12 @@ export class ProposalService {
         quotedAmount: financial.baseAmount,
         submissionDate: nowIso.split('T')[0],
         complianceDeclarations: submittedProposal.complianceDeclarations,
+        technicalProposal: submittedProposal.technicalProposal,
+        implementationPlan: submittedProposal.implementationPlan,
+        financialProposal: submittedProposal.financialProposal,
+        timeline: submittedProposal.timeline,
+        experience: submittedProposal.experience,
+        supportingDocuments: submittedProposal.supportingDocuments,
       };
 
       batch.update(propRef, sanitizeFirestorePayload(submitPayload));
@@ -954,11 +1027,26 @@ export class ProposalService {
 
     if (isLiveFirestoreSession() && db) {
       const ref = collection(db, PROPOSAL_EVENTS_COLLECTION);
-      const q = query(ref, where('proposalId', '==', proposalId), orderBy('timestamp', 'asc'));
-      const snap = await getDocs(q);
-      const events: ProposalAuditEvent[] = [];
-      snap.forEach((d) => events.push(d.data() as ProposalAuditEvent));
-      return events;
+      try {
+        const q = query(ref, where('proposalId', '==', proposalId), orderBy('timestamp', 'asc'));
+        const snap = await getDocs(q);
+        const events: ProposalAuditEvent[] = [];
+        snap.forEach((d) => {
+          const data = d.data() as ProposalAuditEvent;
+          events.push({ ...data, eventId: data.eventId || d.id });
+        });
+        return events;
+      } catch (queryErr) {
+        console.warn('[BTI] Primary indexed query failed, falling back to equality query with in-memory sort:', queryErr);
+        const fallbackQ = query(ref, where('proposalId', '==', proposalId));
+        const snap = await getDocs(fallbackQ);
+        const events: ProposalAuditEvent[] = [];
+        snap.forEach((d) => {
+          const data = d.data() as ProposalAuditEvent;
+          events.push({ ...data, eventId: data.eventId || d.id });
+        });
+        return events.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      }
     }
 
     const local = getLocalEvents();

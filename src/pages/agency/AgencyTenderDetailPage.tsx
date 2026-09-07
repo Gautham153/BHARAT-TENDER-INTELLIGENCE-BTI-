@@ -83,10 +83,10 @@ export const AgencyTenderDetailPage: React.FC<AgencyTenderDetailPageProps> = ({
       const match = TenderMatchingService.calculateMatch(fetchedTender, org);
       setMatchResult(match);
 
-      // 4. Fetch Existing Proposal (Draft or Submitted)
+      // 4. Fetch Existing Proposal (Draft, Submitted, or Under Review)
       if (org) {
         try {
-          const prop = await ProposalService.getActiveProposalForTenderAndOrg(
+          const prop = await ProposalService.getLatestProposalForTenderAndOrg(
             fetchedTender.id,
             org.organizationId
           );
