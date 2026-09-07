@@ -38,6 +38,7 @@ import { AgencyDashboard } from './pages/agency/AgencyDashboard';
 import { AgencyVerificationStatusPage } from './pages/agency/AgencyVerificationStatusPage';
 import { LiveTendersPage } from './pages/agency/LiveTendersPage';
 import { AgencyTenderDetailPage } from './pages/agency/AgencyTenderDetailPage';
+import { AgencyProposalWizardPage } from './pages/agency/AgencyProposalWizardPage';
 import { SubmittedProposalsPage } from './pages/agency/SubmittedProposalsPage';
 import { ProjectMilestonesPage } from './pages/agency/ProjectMilestonesPage';
 import { DisbursementsPage } from './pages/agency/DisbursementsPage';
@@ -86,8 +87,10 @@ function AppContent() {
           case '/government/tenders/create':
             return <GovernmentTenderCreatePage onNavigate={navigate} />;
 
-          case '/government/proposals':
-            return <ProposalReview onNavigate={navigate} />;
+          case '/government/proposals': {
+            const queryTenderId = new URLSearchParams(window.location.search).get('tenderId') || undefined;
+            return <ProposalReview onNavigate={navigate} initialTenderId={queryTenderId} />;
+          }
           case '/government/risk-alerts':
             return <RiskAlerts onNavigate={navigate} />;
           case '/government/investigations':
@@ -109,6 +112,9 @@ function AppContent() {
               if (cleanSubPath.endsWith('/edit')) {
                 const tenderId = cleanSubPath.replace('/edit', '').replace(/\/+$/, '');
                 return <GovernmentTenderCreatePage tenderId={tenderId} onNavigate={navigate} />;
+              } else if (cleanSubPath.endsWith('/proposals')) {
+                const tenderId = cleanSubPath.replace('/proposals', '').replace(/\/+$/, '');
+                return <ProposalReview onNavigate={navigate} initialTenderId={tenderId} />;
               } else if (cleanSubPath.length > 0) {
                 return <GovernmentTenderDetailPage tenderId={cleanSubPath} onNavigate={navigate} />;
               }
@@ -156,9 +162,12 @@ function AppContent() {
             return <ComplianceProfilePage onNavigate={navigate} />;
           default: {
             if (currentPath.startsWith('/agency/tenders/')) {
-              const tenderId = currentPath.substring('/agency/tenders/'.length);
-              if (tenderId.length > 0) {
-                return <AgencyTenderDetailPage tenderId={tenderId} onNavigate={navigate} />;
+              const subPath = currentPath.substring('/agency/tenders/'.length);
+              if (subPath.endsWith('/proposal')) {
+                const tenderId = subPath.replace('/proposal', '').replace(/\/+$/, '');
+                return <AgencyProposalWizardPage tenderId={tenderId} onNavigate={navigate} />;
+              } else if (subPath.length > 0) {
+                return <AgencyTenderDetailPage tenderId={subPath} onNavigate={navigate} />;
               }
             }
             return <AgencyDashboard onNavigate={navigate} />;

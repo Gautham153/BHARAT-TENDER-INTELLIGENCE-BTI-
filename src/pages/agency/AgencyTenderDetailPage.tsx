@@ -20,6 +20,7 @@ import {
   ChevronRight,
   ShieldCheck,
   CheckCircle2,
+  Eye,
 } from 'lucide-react';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
@@ -31,10 +32,12 @@ import { TenderMatchExplanation } from '../../components/tenders/TenderMatchExpl
 import { formatCurrencyINR, getDaysRemainingInfo } from '../../components/tenders/TenderOpportunityCard';
 import { TenderService } from '../../services/firebase/tenders';
 import { OrganizationService } from '../../services/firebase/organizations';
+import { ProposalService } from '../../services/firebase/proposals';
 import { TenderMatchingService } from '../../services/matching/tenderMatchingService';
 import { useAuth } from '../../context/AuthContext';
 import { Tender, TenderMatchResult } from '../../types/tender';
 import { Organization } from '../../types/organization';
+import { Proposal } from '../../types/proposal';
 
 export interface AgencyTenderDetailPageProps {
   tenderId: string;
@@ -48,6 +51,7 @@ export const AgencyTenderDetailPage: React.FC<AgencyTenderDetailPageProps> = ({
   const { user } = useAuth();
   const [tender, setTender] = useState<Tender | null>(null);
   const [organization, setOrganization] = useState<Organization | null>(null);
+  const [existingProposal, setExistingProposal] = useState<Proposal | null>(null);
   const [matchResult, setMatchResult] = useState<TenderMatchResult | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -78,6 +82,19 @@ export const AgencyTenderDetailPage: React.FC<AgencyTenderDetailPageProps> = ({
       // 3. Compute Deterministic Compatibility Score
       const match = TenderMatchingService.calculateMatch(fetchedTender, org);
       setMatchResult(match);
+
+      // 4. Fetch Existing Proposal (Draft or Submitted)
+      if (org) {
+        try {
+          const prop = await ProposalService.getActiveProposalForTenderAndOrg(
+            fetchedTender.id,
+            org.organizationId
+          );
+          setExistingProposal(prop);
+        } catch (pErr) {
+          console.warn('[BTI Agency] Could not load active proposal:', pErr);
+        }
+      }
     } catch (err: unknown) {
       console.error('[BTI Agency] Error fetching tender details:', err);
       setError(err instanceof Error ? err.message : 'Error loading tender details.');
@@ -358,42 +375,189 @@ export const AgencyTenderDetailPage: React.FC<AgencyTenderDetailPageProps> = ({
           </Card>
         )}
 
-        {/* Proposal Submission Window Notice (Phase 4 Placeholder) */}
-        <Card className="p-6 sm:p-8 border-blue-200 bg-gradient-to-r from-blue-50/50 to-slate-50 space-y-4 shadow-xs">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <Clock className="w-5 h-5 text-[#002B49]" />
-                <h3 className="text-base font-bold text-slate-900">
-                  Electronic Proposal Submission Window
-                </h3>
+        {/* Phase 4: Electronic Proposal Submission Module */}
+        {(() => {
+          const isTenderLive = tender.status === 'LIVE' || tender.status === 'PUBLISHED' || tender.status === 'Open';
+          const isExpired = closingInfo.isClosed;
+          const isSubmitted = existingProposal && existingProposal.status !== 'DRAFT';
+          const isDraft = existingProposal && existingProposal.status === 'DRAFT';
+
+          if (isSubmitted) {
+            return (
+              <Card className="p-6 sm:p-8 border-emerald-300 bg-gradient-to-r from-emerald-50/70 to-slate-50 space-y-4 shadow-xs">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="w-5 h-5 text-emerald-700" />
+                      <h3 className="text-base font-bold text-emerald-950">
+                        Proposal Submitted & Sealed
+                      </h3>
+                      <span className="text-xs font-mono font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded">
+                        {existingProposal.proposalNumber}
+                      </span>
+                    </div>
+                    <p className="text-xs text-emerald-900 max-w-xl leading-relaxed">
+                      Your bid for this tender was officially sealed on{' '}
+                      <strong>
+                        {existingProposal.submittedAt
+                          ? new Date(existingProposal.submittedAt).toLocaleDateString('en-IN', {
+                              day: 'numeric',
+                              month: 'short',
+                              year: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })
+                          : 'Record'}
+                      </strong>
+                      . Under Indian Public Procurement GFR Rules, submitted tenders cannot be modified.
+                    </p>
+                  </div>
+
+                  <div className="shrink-0 w-full sm:w-auto">
+                    <Button
+                      variant="primary"
+                      size="md"
+                      onClick={() => onNavigate(`/agency/tenders/${tender.id}/proposal`)}
+                      icon={Eye}
+                      className="w-full sm:w-auto"
+                    >
+                      View Sealed Proposal
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-emerald-200/60 text-[11px] text-emerald-800 flex items-center justify-between flex-wrap gap-2">
+                  <span className="flex items-center gap-1.5">
+                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Statutory Status: <strong>{existingProposal.status}</strong> • Queued in Government Review Inbox</span>
+                  </span>
+                  <span className="font-mono font-bold">
+                    Quoted Bid: {formatCurrencyINR(existingProposal.financialBidAmount || existingProposal.quotedAmount || 0)}
+                  </span>
+                </div>
+              </Card>
+            );
+          }
+
+          if (isDraft) {
+            return (
+              <Card className="p-6 sm:p-8 border-amber-300 bg-gradient-to-r from-amber-50/70 to-slate-50 space-y-4 shadow-xs">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <Clock className="w-5 h-5 text-amber-700" />
+                      <h3 className="text-base font-bold text-amber-950">
+                        Proposal Draft in Progress
+                      </h3>
+                      <span className="text-xs font-mono font-bold bg-amber-100 text-amber-800 px-2 py-0.5 rounded">
+                        {existingProposal.proposalNumber}
+                      </span>
+                    </div>
+                    <p className="text-xs text-amber-900 max-w-xl leading-relaxed">
+                      You have an unsealed draft proposal saved. Complete all technical and financial sections, accept statutory undertakings, and submit before the bidding deadline.
+                    </p>
+                  </div>
+
+                  <div className="shrink-0 w-full sm:w-auto">
+                    <Button
+                      variant="gov"
+                      size="md"
+                      onClick={() => onNavigate(`/agency/tenders/${tender.id}/proposal`)}
+                      icon={ChevronRight}
+                      className="w-full sm:w-auto"
+                    >
+                      Resume Proposal Draft
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-amber-200/60 text-[11px] text-amber-800 flex items-center justify-between flex-wrap gap-2">
+                  <span className="flex items-center gap-1.5">
+                    <Info className="w-3.5 h-3.5 text-amber-600" />
+                    <span>Deadline: {tender.closingDate || 'Open'} ({closingInfo.label})</span>
+                  </span>
+                  <span className="font-medium">Draft changes are saved securely to your agency profile</span>
+                </div>
+              </Card>
+            );
+          }
+
+          // No proposal yet
+          if (!isTenderLive || isExpired) {
+            return (
+              <Card className="p-6 sm:p-8 border-slate-200 bg-slate-50 space-y-4 shadow-xs">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <Lock className="w-5 h-5 text-slate-500" />
+                      <h3 className="text-base font-bold text-slate-900">
+                        Bidding Window Closed
+                      </h3>
+                    </div>
+                    <p className="text-xs text-slate-600 max-w-xl leading-relaxed">
+                      The official submission window for this tender closed on{' '}
+                      <strong>{tender.closingDate || 'the published date'}</strong>. No further proposal submissions or modifications can be accepted.
+                    </p>
+                  </div>
+
+                  <div className="shrink-0 w-full sm:w-auto">
+                    <button
+                      type="button"
+                      disabled
+                      className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-slate-200 text-slate-500 font-bold text-xs cursor-not-allowed flex items-center justify-center gap-2 border border-slate-300"
+                    >
+                      <Lock className="w-3.5 h-3.5" />
+                      <span>Bidding Closed</span>
+                    </button>
+                  </div>
+                </div>
+              </Card>
+            );
+          }
+
+          // Tender is live and open for proposal preparation
+          return (
+            <Card className="p-6 sm:p-8 border-[#002B49]/20 bg-gradient-to-r from-blue-50/50 to-slate-50 space-y-4 shadow-xs">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <Clock className="w-5 h-5 text-[#002B49]" />
+                    <h3 className="text-base font-bold text-slate-900">
+                      Electronic Proposal Submission Window is Open
+                    </h3>
+                  </div>
+                  <p className="text-xs text-slate-600 max-w-xl leading-relaxed">
+                    Prepare your structured technical methodology, physical milestones breakdown, financial cost proposal, and statutory compliance declarations for evaluation by the issuing authority.
+                  </p>
+                </div>
+
+                <div className="shrink-0 w-full sm:w-auto">
+                  <Button
+                    variant="gov"
+                    size="md"
+                    onClick={() => onNavigate(`/agency/tenders/${tender.id}/proposal`)}
+                    icon={ChevronRight}
+                    className="w-full sm:w-auto px-6"
+                  >
+                    Prepare Proposal
+                  </Button>
+                </div>
               </div>
-              <p className="text-xs text-slate-600 max-w-xl leading-relaxed">
-                Proposal submission will be available in a future phase. Prepare your technical credentials and statutory documents in your organization compliance profile.
-              </p>
-            </div>
 
-            {/* Informative Controlled Action */}
-            <div className="shrink-0 w-full sm:w-auto">
-              <button
-                type="button"
-                disabled
-                className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-slate-200 text-slate-500 font-bold text-xs cursor-not-allowed flex items-center justify-center gap-2 border border-slate-300"
-                title="Proposal submission module will be enabled in Phase 4"
-              >
-                <Lock className="w-3.5 h-3.5" />
-                <span>Submit Proposal (Coming Soon in Phase 4)</span>
-              </button>
-            </div>
-          </div>
-
-          <div className="pt-2 border-t border-blue-100 text-[11px] text-slate-500 flex items-center gap-2">
-            <Info className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-            <span>
-              BTI enforces strict General Financial Rules (GFR) compliance. Submissions will require e-Sign verification upon activation.
-            </span>
-          </div>
-        </Card>
+              <div className="pt-2 border-t border-blue-100 text-[11px] text-slate-500 flex items-center justify-between flex-wrap gap-2">
+                <span className="flex items-center gap-1.5">
+                  <Info className="w-3.5 h-3.5 text-slate-400" />
+                  <span>
+                    BTI enforces strict General Financial Rules (GFR 2017) compliance. Drafts can be saved before final seal.
+                  </span>
+                </span>
+                <span className="font-semibold text-slate-700">
+                  Closing: {tender.closingDate || 'Open'} ({closingInfo.label})
+                </span>
+              </div>
+            </Card>
+          );
+        })()}
       </div>
     </VerificationGate>
   );

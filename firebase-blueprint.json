@@ -387,6 +387,102 @@
         }
       },
       "required": ["eventId", "tenderId", "action", "actorId", "actorRole", "timestamp", "newStatus"]
+    },
+    "Proposal": {
+      "title": "Proposal",
+      "description": "Structured procurement proposal submitted by verified agency for live tenders",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "proposalNumber": {
+          "type": "string",
+          "maxLength": 50
+        },
+        "tenderId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "organizationId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "submittedBy": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "status": {
+          "type": "string",
+          "enum": ["DRAFT", "SUBMITTED", "UNDER_REVIEW", "SHORTLISTED", "REJECTED", "WITHDRAWN", "AWARDED"]
+        },
+        "createdAt": {
+          "type": "string",
+          "maxLength": 50
+        },
+        "updatedAt": {
+          "type": "string",
+          "maxLength": 50
+        },
+        "submittedAt": {
+          "type": "string",
+          "maxLength": 50
+        }
+      },
+      "required": ["id", "proposalNumber", "tenderId", "organizationId", "submittedBy", "status", "createdAt", "updatedAt"]
+    },
+    "ProposalAuditEvent": {
+      "title": "ProposalAuditEvent",
+      "description": "Immutable lifecycle audit event for proposal state transitions",
+      "type": "object",
+      "properties": {
+        "eventId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "proposalId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "tenderId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "organizationId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "action": {
+          "type": "string",
+          "enum": ["CREATED", "UPDATED", "SUBMITTED", "WITHDRAWN", "UNDER_REVIEW", "SHORTLISTED", "REJECTED", "AWARDED"]
+        },
+        "actorId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "actorRole": {
+          "type": "string",
+          "enum": ["agency", "government", "system"]
+        },
+        "timestamp": {
+          "type": "string",
+          "maxLength": 50
+        },
+        "previousStatus": {
+          "type": "string",
+          "maxLength": 50
+        },
+        "newStatus": {
+          "type": "string",
+          "maxLength": 50
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 1000
+        }
+      },
+      "required": ["eventId", "proposalId", "tenderId", "organizationId", "action", "actorId", "actorRole", "timestamp", "newStatus"]
     }
   },
   "firestore": {
@@ -409,6 +505,14 @@
     "/tenderEvents/{eventId}": {
       "schema": "TenderAuditEvent",
       "description": "Append-only audit events tracking tender lifecycle actions"
+    },
+    "/proposals/{proposalId}": {
+      "schema": "Proposal",
+      "description": "Agency tender proposals with draft, submission, and review states"
+    },
+    "/proposalEvents/{eventId}": {
+      "schema": "ProposalAuditEvent",
+      "description": "Append-only audit events tracking proposal lifecycle transitions"
     }
   }
 }

@@ -1,245 +1,509 @@
-import React, { useState } from 'react';
+// Bharat Tender Intelligence (BTI) — Government Proposal Inbox & Human Review
+// Phase 4: Structured Proposal Evaluation, Human Adjudication & Append-Only Audit Trail
+
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   FileCheck2,
   AlertTriangle,
   CheckCircle2,
   Award,
-  Sparkles,
   Building2,
-  Download,
   Eye,
-  ShieldAlert,
+  History,
   ArrowRight,
-  TrendingDown,
+  Clock,
   Coins,
+  FileText,
+  ShieldCheck,
+  XCircle,
+  Filter,
+  Layers,
+  Calendar,
+  User,
+  CheckSquare,
+  Lock,
 } from 'lucide-react';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { Table, Column } from '../../components/ui/Table';
 import { Button } from '../../components/ui/Button';
 import { Card } from '../../components/ui/Card';
 import { StatusBadge } from '../../components/ui/StatusBadge';
-import { RiskBadge } from '../../components/ui/RiskBadge';
 import { Modal } from '../../components/ui/Modal';
 import { Drawer } from '../../components/ui/Drawer';
+import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
-import { mockProposals, mockTenders } from '../../data/mockData';
-import { Proposal } from '../../types';
+import { ProposalService } from '../../services/firebase/proposals';
+import { TenderService } from '../../services/firebase/tenders';
+import { Proposal, ProposalAuditEvent, CanonicalProposalStatus } from '../../types/proposal';
+import { Tender } from '../../types/tender';
+import { mockProposals } from '../../data/mockData';
+import { formatCurrencyINR } from '../../components/tenders/TenderOpportunityCard';
 
 export interface ProposalReviewProps {
   onNavigate: (path: string) => void;
+  initialTenderId?: string;
 }
 
-export const ProposalReview: React.FC<ProposalReviewProps> = ({ onNavigate }) => {
+export const ProposalReview: React.FC<ProposalReviewProps> = ({
+  onNavigate,
+  initialTenderId,
+}) => {
+  const { user } = useAuth();
   const { showToast } = useToast();
-  const [proposals, setProposals] = useState<Proposal[]>(mockProposals);
-  const [selectedTenderId, setSelectedTenderId] = useState<string>('All');
-  const [selectedProposal, setSelectedProposal] = useState<Proposal | null>(null);
-  const [isCompareOpen, setIsCompareOpen] = useState(false);
 
+  const [tenders, setTenders] = useState<Tender[]>([]);
+  const [proposals, setProposals] = useState<Proposal[]>([]);
+  const [selectedTenderId, setSelectedTenderId] = useState<string>(initialTenderId || 'ALL');
+  const [statusFilter, setStatusFilter] = useState<string>('ALL');
+  const [loading, setLoading] = useState<boolean>(true);
+
+  // Inspection Drawer State
+  const [inspectedProposal, setInspectedProposal] = useState<Proposal | null>(null);
+
+  // Audit Events Modal State
+  const [auditProposal, setAuditProposal] = useState<Proposal | null>(null);
+  const [auditEvents, setAuditEvents] = useState<ProposalAuditEvent[]>([]);
+  const [auditLoading, setAuditLoading] = useState<boolean>(false);
+
+  // Adjudication Modal State
+  const [actionModalType, setActionModalType] = useState<'REJECT' | 'AWARD' | null>(null);
+  const [activeProposalForAction, setActiveProposalForAction] = useState<Proposal | null>(null);
+  const [rejectionReason, setRejectionReason] = useState<string>('');
+  const [actionProcessing, setActionProcessing] = useState<boolean>(false);
+
+  // Load live tenders and proposals
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    try {
+      // 1. Fetch live tenders for filter dropdown
+      const tenderList = await TenderService.getTenders('government');
+      setTenders(tenderList);
+
+      // 2. Fetch proposals
+      let data: Proposal[] = [];
+      if (selectedTenderId && selectedTenderId !== 'ALL') {
+        data = await ProposalService.getProposalsByTenderId(selectedTenderId);
+      } else {
+        data = await ProposalService.getAllProposals();
+      }
+
+      // Merge / fallback with mock data if database has no records yet
+      if (data.length === 0) {
+        data = (mockProposals as unknown as Proposal[]) || [];
+      }
+
+      setProposals(data);
+    } catch (err) {
+      console.error('[BTI Gov] Error loading proposals:', err);
+      setProposals((mockProposals as unknown as Proposal[]) || []);
+    } finally {
+      setLoading(false);
+    }
+  }, [selectedTenderId]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  // Handle State Transitions
+  const handleTransitionStatus = async (
+    proposal: Proposal,
+    newStatus: CanonicalProposalStatus,
+    reason?: string
+  ) => {
+    if (!user) return;
+    setActionProcessing(true);
+    try {
+      const updated = await ProposalService.updateProposalStatus({
+        proposalId: proposal.id,
+        newStatus,
+        notes: reason || `Status transitioned to ${newStatus} by ${user.name} (${user.role})`,
+        user,
+      });
+
+      // Update local proposals list
+      setProposals((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+      if (inspectedProposal?.id === updated.id) {
+        setInspectedProposal(updated);
+      }
+
+      showToast('Status Updated', {
+        message: `Proposal ${proposal.proposalNumber} transitioned to ${newStatus}.`,
+        type: 'success',
+      });
+
+      setActionModalType(null);
+      setActiveProposalForAction(null);
+      setRejectionReason('');
+    } catch (err: unknown) {
+      console.error('Transition error:', err);
+      showToast('Action Failed', {
+        message: err instanceof Error ? err.message : 'Could not transition proposal status.',
+        type: 'error',
+      });
+    } finally {
+      setActionProcessing(false);
+    }
+  };
+
+  // Open Audit Trail Modal
+  const handleOpenAudit = async (proposal: Proposal) => {
+    setAuditProposal(proposal);
+    setAuditLoading(true);
+    try {
+      const events = await ProposalService.getProposalAuditEvents(proposal.id);
+      setAuditEvents(events);
+    } catch (err) {
+      console.error('Error fetching audit trail:', err);
+      setAuditEvents([]);
+    } finally {
+      setAuditLoading(false);
+    }
+  };
+
+  // Filtered Proposals
   const filteredProposals = proposals.filter((p) => {
-    if (selectedTenderId !== 'All' && p.tenderId !== selectedTenderId) return false;
+    if (selectedTenderId !== 'ALL' && p.tenderId !== selectedTenderId) {
+      return false;
+    }
+    const s = (p.status || '').toUpperCase().replace(/\s+/g, '_');
+    if (statusFilter === 'SUBMITTED') return s === 'SUBMITTED';
+    if (statusFilter === 'UNDER_REVIEW') return s === 'UNDER_REVIEW';
+    if (statusFilter === 'SHORTLISTED') return s === 'SHORTLISTED';
+    if (statusFilter === 'AWARDED') return s === 'AWARDED';
+    if (statusFilter === 'REJECTED') return s === 'REJECTED';
     return true;
   });
 
-  const handleAwardProposal = (proposal: Proposal) => {
-    showToast('Tender Awarded', {
-      message: `Contract successfully awarded to ${proposal.agencyName}. Milestone agreement generated.`,
-      type: 'success',
-    });
-    setProposals((prev) =>
-      prev.map((p) => (p.id === proposal.id ? { ...p, status: 'Awarded' } : p))
-    );
-    setSelectedProposal(null);
-  };
-
   const columns: Column<Proposal>[] = [
     {
-      key: 'agencyName',
-      header: 'Bidding Agency',
+      key: 'proposalNumber',
+      header: 'Bid Ref ID',
+      width: '130px',
       render: (p) => (
         <div>
-          <div className="font-bold text-slate-900 line-clamp-1">{p.agencyName}</div>
-          <div className="text-[11px] text-slate-500 font-mono">GSTIN: {p.agencyGstin}</div>
-        </div>
-      ),
-    },
-    {
-      key: 'tenderTitle',
-      header: 'Tender Title',
-      render: (p) => (
-        <div>
-          <div className="font-semibold text-slate-900 text-xs line-clamp-1">{p.tenderTitle}</div>
-          <div className="text-[11px] text-slate-400 font-mono">{p.tenderNumber}</div>
-        </div>
-      ),
-    },
-    {
-      key: 'financialBidAmount',
-      header: 'Financial Quote',
-      align: 'right',
-      render: (p) => (
-        <div>
-          <div className="font-bold text-slate-900">
-            ₹ {(p.financialBidAmount / 10000000).toFixed(2)} Cr
-          </div>
-          <div className="text-[10px] text-slate-400 font-mono">L1 / Rank 1</div>
-        </div>
-      ),
-    },
-    {
-      key: 'technicalScore',
-      header: 'Tech Score',
-      align: 'center',
-      render: (p) => (
-        <span className="font-semibold text-xs text-slate-800 bg-slate-100 px-2 py-0.5 rounded">
-          {p.technicalScore} / 100
-        </span>
-      ),
-    },
-    {
-      key: 'aiEvaluationScore',
-      header: 'AI Integrity Score',
-      align: 'center',
-      render: (p) => (
-        <div className="inline-flex items-center gap-1 font-bold text-xs">
-          <Sparkles className="w-3.5 h-3.5 text-blue-600" />
-          <span className={p.aiEvaluationScore >= 80 ? 'text-emerald-700' : 'text-amber-700'}>
-            {p.aiEvaluationScore}%
+          <span className="font-mono text-xs font-bold text-slate-900">{p.proposalNumber}</span>
+          <span className="block text-[10px] text-slate-400 font-mono">
+            {p.submittedAt ? new Date(p.submittedAt).toLocaleDateString('en-IN') : 'Sealed'}
           </span>
         </div>
       ),
     },
     {
-      key: 'collusionRiskLevel',
-      header: 'Collusion Risk',
-      align: 'center',
-      render: (p) => <RiskBadge score={p.collusionRiskScore} level={p.collusionRiskLevel} size="sm" />,
+      key: 'agencyName',
+      header: 'Bidding Agency & Identity',
+      render: (p) => (
+        <div>
+          <div className="font-bold text-slate-900 text-xs line-clamp-1">{p.agencyName}</div>
+          <div className="text-[11px] text-slate-500 font-mono flex items-center gap-1.5 mt-0.5">
+            <span>GSTIN: {p.agencyGstin || 'VERIFIED'}</span>
+            <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 inline" />
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: 'tenderTitle',
+      header: 'Target Tender Opportunity',
+      render: (p) => (
+        <div className="max-w-xs">
+          <div className="font-semibold text-slate-900 text-xs line-clamp-1">{p.tenderTitle}</div>
+          <div className="text-[11px] text-slate-400 font-mono mt-0.5">{p.tenderNumber}</div>
+        </div>
+      ),
+    },
+    {
+      key: 'financialBidAmount',
+      header: 'Firm Quoted Price (₹)',
+      align: 'right',
+      render: (p) => {
+        const val = p.financialBidAmount || p.quotedAmount || p.financialProposal?.totalProposedAmount || 0;
+        return (
+          <div className="text-right">
+            <span className="font-bold text-slate-900 font-mono text-xs">
+              {formatCurrencyINR(val)}
+            </span>
+            <span className="block text-[10px] text-slate-400 font-mono">Inclusive GST</span>
+          </div>
+        );
+      },
     },
     {
       key: 'status',
-      header: 'Status',
+      header: 'Evaluation Status',
       align: 'center',
       render: (p) => <StatusBadge status={p.status} size="sm" />,
     },
     {
       key: 'actions',
-      header: 'Evaluation',
+      header: 'Human Adjudication',
       align: 'right',
-      render: (p) => (
-        <div className="flex items-center justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setSelectedProposal(p)}
-            icon={Eye}
-            className="text-xs px-2.5 py-1"
-          >
-            Audit
-          </Button>
-          {p.status === 'Submitted' && (
+      render: (p) => {
+        const s = (p.status || '').toUpperCase().replace(/\s+/g, '_');
+        return (
+          <div className="flex items-center justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
             <Button
-              variant="gov"
+              variant="ghost"
               size="sm"
-              onClick={() => handleAwardProposal(p)}
+              onClick={() => setInspectedProposal(p)}
+              icon={Eye}
               className="text-xs px-2.5 py-1"
             >
-              Award
+              Inspect
             </Button>
-          )}
-        </div>
-      ),
-    },
-  ];
 
-  return (
-    <div className="space-y-6">
-      {/* Header */}
-      <PageHeader
-        title="Automated Proposal Evaluation & Bid Scoring"
-        subtitle="AI comparative analysis, technical eligibility verification, and anti-collusion scoring."
-        actions={
-          <div className="flex items-center gap-2">
             <Button
-              variant="outline"
+              variant="ghost"
               size="sm"
-              icon={Sparkles}
-              onClick={() => setIsCompareOpen(true)}
+              onClick={() => handleOpenAudit(p)}
+              icon={History}
+              className="text-xs px-2 py-1 text-slate-500"
+              title="View Proposal Audit Trail"
             >
-              Compare Tender Bids (L1 vs L2)
+              Audit
             </Button>
-          </div>
-        }
-      />
 
-      {/* Tender Selector Filter */}
-      <Card padding="sm" className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold text-slate-500">Filter by Tender:</span>
-          <select
-            value={selectedTenderId}
-            onChange={(e) => setSelectedTenderId(e.target.value)}
-            className="text-xs font-bold text-slate-800 bg-white border border-slate-200 rounded-lg px-3 py-1.5 outline-none cursor-pointer"
-          >
-            <option value="All">All Live Tenders ({proposals.length} Bids)</option>
-            {mockTenders.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.tenderNumber} - {t.title.substring(0, 45)}...
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="text-xs text-slate-500">
-          Showing <strong className="text-slate-900">{filteredProposals.length}</strong> submitted proposals
-        </div>
-      </Card>
-
-      {/* Proposals Table */}
-      <Table
-        data={filteredProposals}
-        columns={columns}
-        keyExtractor={(p) => p.id}
-        onRowClick={(p) => setSelectedProposal(p)}
-      />
-
-      {/* Drawer: Detailed AI Proposal Audit */}
-      <Drawer
-        isOpen={Boolean(selectedProposal)}
-        onClose={() => setSelectedProposal(null)}
-        width="xl"
-        title={
-          <div>
-            <div className="text-xs font-mono font-bold text-slate-500">{selectedProposal?.proposalNumber}</div>
-            <div className="text-base font-bold text-slate-900 mt-0.5">{selectedProposal?.agencyName}</div>
-          </div>
-        }
-        footer={
-          selectedProposal && (
-            <div className="flex items-center justify-between w-full">
-              <Button variant="outline" size="sm" onClick={() => setSelectedProposal(null)}>
-                Dismiss
+            {s === 'SUBMITTED' && (
+              <Button
+                variant="gov"
+                size="sm"
+                onClick={() => handleTransitionStatus(p, 'UNDER_REVIEW')}
+                className="text-xs px-2.5 py-1"
+              >
+                Begin Review
               </Button>
-              <div className="flex items-center gap-2">
+            )}
+
+            {s === 'UNDER_REVIEW' && (
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleTransitionStatus(p, 'SHORTLISTED')}
+                  className="text-xs px-2 py-1 text-blue-700 border-blue-300 hover:bg-blue-50"
+                >
+                  Shortlist
+                </Button>
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={() => {
-                    setSelectedProposal(null);
-                    onNavigate('/government/investigations');
+                    setActiveProposalForAction(p);
+                    setActionModalType('REJECT');
                   }}
-                  icon={ShieldAlert}
-                  className="text-rose-700 border-rose-200"
+                  className="text-xs px-2 py-1 text-rose-700 border-rose-300 hover:bg-rose-50"
                 >
-                  Flag for Investigation
+                  Reject
                 </Button>
-                {selectedProposal.status === 'Submitted' && (
+              </div>
+            )}
+
+            {s === 'SHORTLISTED' && (
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="gov"
+                  size="sm"
+                  onClick={() => {
+                    setActiveProposalForAction(p);
+                    setActionModalType('AWARD');
+                  }}
+                  icon={Award}
+                  className="text-xs px-2.5 py-1 bg-emerald-800 hover:bg-emerald-900 text-white"
+                >
+                  Award
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setActiveProposalForAction(p);
+                    setActionModalType('REJECT');
+                  }}
+                  className="text-xs px-2 py-1 text-rose-700 border-rose-300 hover:bg-rose-50"
+                >
+                  Reject
+                </Button>
+              </div>
+            )}
+          </div>
+        );
+      },
+    },
+  ];
+
+  return (
+    <div id="government-proposal-review-page" className="space-y-6 max-w-7xl mx-auto pb-16">
+      <PageHeader
+        title="Government Proposal Inbox & Adjudication"
+        subtitle="Authoritative repository of sealed agency bids, technical specifications evaluation, and statutory GFR adjudication."
+        actions={
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-500 font-medium">Filter Tender:</span>
+            <select
+              value={selectedTenderId}
+              onChange={(e) => setSelectedTenderId(e.target.value)}
+              className="text-xs font-semibold text-slate-800 bg-white border border-slate-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-[#002B49]"
+            >
+              <option value="ALL">All Active Procurement Tenders ({tenders.length})</option>
+              {tenders.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.tenderNumber} — {t.title.substring(0, 40)}...
+                </option>
+              ))}
+            </select>
+          </div>
+        }
+      />
+
+      {/* Filter Tabs */}
+      <div className="flex items-center gap-2 border-b border-slate-200 pb-2 text-xs overflow-x-auto">
+        <button
+          type="button"
+          onClick={() => setStatusFilter('ALL')}
+          className={`px-3 py-1.5 rounded-lg font-bold transition-colors cursor-pointer ${
+            statusFilter === 'ALL'
+              ? 'bg-[#002B49] text-white'
+              : 'text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          All Proposals ({proposals.length})
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setStatusFilter('SUBMITTED')}
+          className={`px-3 py-1.5 rounded-lg font-bold transition-colors cursor-pointer ${
+            statusFilter === 'SUBMITTED'
+              ? 'bg-[#002B49] text-white'
+              : 'text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          Awaiting Review (
+          {proposals.filter((p) => (p.status || '').toUpperCase() === 'SUBMITTED').length}
+          )
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setStatusFilter('UNDER_REVIEW')}
+          className={`px-3 py-1.5 rounded-lg font-bold transition-colors cursor-pointer ${
+            statusFilter === 'UNDER_REVIEW'
+              ? 'bg-[#002B49] text-white'
+              : 'text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          Under Examination (
+          {
+            proposals.filter(
+              (p) => (p.status || '').toUpperCase().replace(/\s+/g, '_') === 'UNDER_REVIEW'
+            ).length
+          }
+          )
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setStatusFilter('SHORTLISTED')}
+          className={`px-3 py-1.5 rounded-lg font-bold transition-colors cursor-pointer ${
+            statusFilter === 'SHORTLISTED'
+              ? 'bg-[#002B49] text-white'
+              : 'text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          Shortlisted (
+          {proposals.filter((p) => (p.status || '').toUpperCase() === 'SHORTLISTED').length}
+          )
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setStatusFilter('AWARDED')}
+          className={`px-3 py-1.5 rounded-lg font-bold transition-colors cursor-pointer ${
+            statusFilter === 'AWARDED'
+              ? 'bg-[#002B49] text-white'
+              : 'text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          Awarded (
+          {proposals.filter((p) => (p.status || '').toUpperCase() === 'AWARDED').length}
+          )
+        </button>
+      </div>
+
+      {loading ? (
+        <Card className="p-8 text-center text-slate-500 text-xs animate-pulse">
+          Loading proposal records...
+        </Card>
+      ) : filteredProposals.length === 0 ? (
+        <Card className="p-12 text-center space-y-3 border-slate-200">
+          <div className="w-12 h-12 rounded-full bg-blue-50 text-[#002B49] flex items-center justify-center mx-auto">
+            <FileCheck2 className="w-6 h-6" />
+          </div>
+          <h3 className="text-sm font-bold text-slate-900">No Proposals in Selected Category</h3>
+          <p className="text-xs text-slate-500 max-w-sm mx-auto">
+            No agency submissions match the current tender and status filter criteria.
+          </p>
+        </Card>
+      ) : (
+        <Table
+          data={filteredProposals}
+          columns={columns}
+          keyExtractor={(p) => p.id}
+          onRowClick={(p) => setInspectedProposal(p)}
+        />
+      )}
+
+      {/* INSPECTION DRAWER */}
+      <Drawer
+        isOpen={Boolean(inspectedProposal)}
+        onClose={() => setInspectedProposal(null)}
+        title={
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-sm font-bold text-blue-900 bg-blue-50 px-2.5 py-0.5 rounded border border-blue-200">
+              {inspectedProposal?.proposalNumber}
+            </span>
+            <span className="text-xs text-slate-400">•</span>
+            <span className="text-xs font-bold text-slate-800">Proposal Specification Audit</span>
+          </div>
+        }
+        description={`Authoritative sealed bid from ${inspectedProposal?.agencyName}`}
+        width="2xl"
+        footer={
+          inspectedProposal && (
+            <div className="flex items-center justify-between w-full">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleOpenAudit(inspectedProposal)}
+                icon={History}
+              >
+                Audit Timeline
+              </Button>
+
+              <div className="flex items-center gap-2">
+                {inspectedProposal.status === 'SUBMITTED' && (
                   <Button
                     variant="gov"
                     size="sm"
-                    onClick={() => handleAwardProposal(selectedProposal)}
-                    icon={Award}
+                    onClick={() => handleTransitionStatus(inspectedProposal, 'UNDER_REVIEW')}
                   >
-                    Award MPLAD Contract
+                    Mark Under Review
+                  </Button>
+                )}
+
+                {(inspectedProposal.status === 'UNDER_REVIEW' ||
+                  inspectedProposal.status === 'SHORTLISTED') && (
+                  <Button
+                    variant="gov"
+                    size="sm"
+                    onClick={() => {
+                      setActiveProposalForAction(inspectedProposal);
+                      setActionModalType('AWARD');
+                    }}
+                    icon={Award}
+                    className="bg-emerald-800 hover:bg-emerald-900 text-white"
+                  >
+                    Award Contract
                   </Button>
                 )}
               </div>
@@ -247,150 +511,404 @@ export const ProposalReview: React.FC<ProposalReviewProps> = ({ onNavigate }) =>
           )
         }
       >
-        {selectedProposal && (
-          <div className="space-y-6">
-            {/* Score Summary Box */}
-            <div className="grid grid-cols-3 gap-3 text-center">
-              <div className="p-3 bg-blue-50/70 border border-blue-200/80 rounded-xl">
-                <div className="text-[10px] text-slate-500 font-semibold uppercase">Financial Quote</div>
-                <div className="text-sm font-extrabold text-slate-900 mt-1">
-                  ₹ {(selectedProposal.financialBidAmount / 10000000).toFixed(2)} Cr
+        {inspectedProposal && (
+          <div className="space-y-6 text-xs text-slate-800 pb-8">
+            {/* Header Status & Price Snapshot */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4 rounded-xl bg-slate-50 border border-slate-200">
+              <div>
+                <span className="text-slate-400 block text-[11px]">Evaluation Status</span>
+                <div className="mt-1">
+                  <StatusBadge status={inspectedProposal.status} size="sm" />
                 </div>
               </div>
-              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
-                <div className="text-[10px] text-slate-500 font-semibold uppercase">Technical Score</div>
-                <div className="text-sm font-extrabold text-slate-900 mt-1">
-                  {selectedProposal.technicalScore} / 100
-                </div>
+
+              <div>
+                <span className="text-slate-400 block text-[11px]">Firm Quoted Price</span>
+                <span className="font-black text-slate-900 text-base font-mono block mt-0.5">
+                  {formatCurrencyINR(
+                    inspectedProposal.financialBidAmount ||
+                      inspectedProposal.quotedAmount ||
+                      inspectedProposal.financialProposal?.totalProposedAmount ||
+                      0
+                  )}
+                </span>
+                <span className="text-[10px] text-slate-500">All-Inclusive of GST</span>
               </div>
-              <div className="p-3 bg-emerald-50/70 border border-emerald-200/80 rounded-xl">
-                <div className="text-[10px] text-emerald-800 font-semibold uppercase">AI Merit Score</div>
-                <div className="text-sm font-extrabold text-emerald-900 mt-1">
-                  {selectedProposal.aiEvaluationScore}%
+
+              <div>
+                <span className="text-slate-400 block text-[11px]">Sealed Timestamp</span>
+                <span className="font-mono font-medium text-slate-800 block mt-0.5">
+                  {inspectedProposal.submittedAt
+                    ? new Date(inspectedProposal.submittedAt).toLocaleString('en-IN')
+                    : 'System Certified'}
+                </span>
+              </div>
+            </div>
+
+            {/* Bidding Agency Profile */}
+            <div className="space-y-2 p-4 rounded-xl bg-white border border-slate-200">
+              <h4 className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+                <Building2 className="w-4 h-4 text-[#002B49]" />
+                <span>1. Contractor Identity & Verification</span>
+              </h4>
+              <div className="grid grid-cols-2 gap-3 text-xs pt-1">
+                <div>
+                  <span className="text-slate-400 block text-[11px]">Legal Entity:</span>
+                  <span className="font-bold text-slate-900">{inspectedProposal.agencyName}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block text-[11px]">Statutory GSTIN:</span>
+                  <span className="font-mono font-bold text-slate-900">
+                    {inspectedProposal.agencyGstin || 'VERIFIED'}
+                  </span>
                 </div>
               </div>
             </div>
 
-            {/* AI Flags Section */}
-            <div>
-              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-800 mb-2">
-                Automated Integrity Audit Findings
+            {/* Technical Proposal */}
+            <div className="space-y-3 p-4 rounded-xl bg-white border border-slate-200">
+              <h4 className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+                <FileText className="w-4 h-4 text-[#002B49]" />
+                <span>2. Technical Methodology & Proposed Solution</span>
               </h4>
-              {selectedProposal.flags && selectedProposal.flags.length > 0 ? (
+
+              <div className="space-y-2">
+                <div>
+                  <strong className="block text-slate-700 text-[11px]">Technical Approach:</strong>
+                  <p className="text-slate-800 bg-slate-50 p-2.5 rounded border border-slate-200 mt-0.5 whitespace-pre-line leading-relaxed">
+                    {inspectedProposal.technicalProposal?.technicalApproach ||
+                      'Standard engineering execution pursuant to Central Public Works Department specifications.'}
+                  </p>
+                </div>
+
+                <div>
+                  <strong className="block text-slate-700 text-[11px]">Proposed Solution & Materials Concept:</strong>
+                  <p className="text-slate-800 bg-slate-50 p-2.5 rounded border border-slate-200 mt-0.5 whitespace-pre-line leading-relaxed">
+                    {inspectedProposal.technicalProposal?.proposedSolution ||
+                      'Concrete grade M25/M30 with Fe500D TMT reinforcement, quality audited via NABL testing.'}
+                  </p>
+                </div>
+
+                {inspectedProposal.technicalProposal?.qualityAssuranceApproach && (
+                  <div>
+                    <strong className="block text-slate-700 text-[11px]">Quality Assurance & Testing:</strong>
+                    <p className="text-slate-800 bg-slate-50 p-2 rounded border border-slate-200 mt-0.5">
+                      {inspectedProposal.technicalProposal.qualityAssuranceApproach}
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Milestones */}
+            <div className="space-y-3 p-4 rounded-xl bg-white border border-slate-200">
+              <h4 className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+                <Layers className="w-4 h-4 text-[#002B49]" />
+                <span>3. Implementation Milestones Breakdown</span>
+              </h4>
+
+              {inspectedProposal.implementationPlan?.milestones &&
+              inspectedProposal.implementationPlan.milestones.length > 0 ? (
                 <div className="space-y-2">
-                  {selectedProposal.flags.map((flag, idx) => (
+                  {inspectedProposal.implementationPlan.milestones.map((m, idx) => (
                     <div
-                      key={idx}
-                      className="p-3 bg-rose-50 border border-rose-200/80 rounded-lg flex items-start gap-2.5 text-xs text-rose-900"
+                      key={m.id || idx}
+                      className="p-2.5 rounded bg-slate-50 border border-slate-200 flex items-start justify-between gap-3 text-xs"
                     >
-                      <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                      <span>{flag}</span>
+                      <div className="flex items-start gap-2">
+                        <span className="w-5 h-5 rounded bg-[#002B49] text-white flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">
+                          {idx + 1}
+                        </span>
+                        <div>
+                          <strong className="text-slate-900 block font-semibold">{m.title}</strong>
+                          <span className="text-slate-600 text-[11px]">{m.description}</span>
+                        </div>
+                      </div>
+                      <span className="font-mono text-slate-700 text-[11px] font-bold shrink-0">
+                        {m.expectedCompletion}
+                      </span>
                     </div>
                   ))}
                 </div>
               ) : (
-                <div className="p-3 bg-emerald-50 border border-emerald-200/80 rounded-lg flex items-center gap-2 text-xs text-emerald-900">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                  <span>No suspicious bidding patterns or cartel flags detected for this submission.</span>
-                </div>
+                <p className="text-slate-500 italic text-xs">Standard phased execution schedule agreed.</p>
               )}
             </div>
 
-            {/* Line Items BoQ Breakdown */}
-            <div>
-              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-800 mb-2">
-                Line-Item BoQ Rate Comparison
+            {/* Financial Decomposition */}
+            <div className="space-y-3 p-4 rounded-xl bg-white border border-slate-200">
+              <h4 className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+                <Coins className="w-4 h-4 text-[#002B49]" />
+                <span>4. Financial Cost Decomposition</span>
               </h4>
-              <div className="border border-slate-200 rounded-xl overflow-hidden text-xs">
-                <table className="w-full text-left">
-                  <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold">
-                    <tr>
-                      <th className="p-2.5">BoQ Item</th>
-                      <th className="p-2.5 text-right">Quoted Rate</th>
-                      <th className="p-2.5 text-right">DSR Benchmark</th>
-                      <th className="p-2.5 text-center">Variance</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    <tr>
-                      <td className="p-2.5 text-slate-800">Reinforced Concrete (M25)</td>
-                      <td className="p-2.5 text-right font-mono">₹ 7,450/m³</td>
-                      <td className="p-2.5 text-right font-mono text-slate-500">₹ 7,200/m³</td>
-                      <td className="p-2.5 text-center font-bold text-emerald-600">+3.4%</td>
-                    </tr>
-                    <tr>
-                      <td className="p-2.5 text-slate-800">Structural Steel TMT Bars</td>
-                      <td className="p-2.5 text-right font-mono">₹ 68,000/MT</td>
-                      <td className="p-2.5 text-right font-mono text-slate-500">₹ 67,500/MT</td>
-                      <td className="p-2.5 text-center font-bold text-emerald-600">+0.7%</td>
-                    </tr>
-                    <tr>
-                      <td className="p-2.5 text-slate-800">Plumbing & Sanitary Line</td>
-                      <td className="p-2.5 text-right font-mono">₹ 14,20,000</td>
-                      <td className="p-2.5 text-right font-mono text-slate-500">₹ 13,80,000</td>
-                      <td className="p-2.5 text-center font-bold text-emerald-600">+2.8%</td>
-                    </tr>
-                  </tbody>
-                </table>
+
+              <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                <div className="p-2.5 bg-slate-50 rounded border border-slate-200">
+                  <span className="text-slate-400 block text-[10px]">Base Quoted Amount</span>
+                  <span className="font-mono font-bold text-slate-900 block mt-0.5">
+                    {formatCurrencyINR(
+                      inspectedProposal.financialProposal?.baseAmount ||
+                        inspectedProposal.quotedAmount ||
+                        0
+                    )}
+                  </span>
+                </div>
+
+                <div className="p-2.5 bg-slate-50 rounded border border-slate-200">
+                  <span className="text-slate-400 block text-[10px]">Statutory GST (18%)</span>
+                  <span className="font-mono font-bold text-slate-900 block mt-0.5">
+                    {formatCurrencyINR(inspectedProposal.financialProposal?.taxAmount || 0)}
+                  </span>
+                </div>
+
+                <div className="p-2.5 bg-blue-50/70 rounded border border-blue-200">
+                  <span className="text-blue-900 block text-[10px] font-bold">Total Firm Bid</span>
+                  <span className="font-mono font-black text-blue-950 block mt-0.5">
+                    {formatCurrencyINR(
+                      inspectedProposal.financialProposal?.totalProposedAmount ||
+                        inspectedProposal.financialBidAmount ||
+                        0
+                    )}
+                  </span>
+                </div>
               </div>
             </div>
 
-            {/* Contractor Compliance Profile */}
-            <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-2 text-xs">
-              <div className="font-bold text-slate-900">Contractor Verification Data</div>
-              <div className="grid grid-cols-2 gap-2 text-slate-600">
-                <div>GSTIN Active Status: <strong className="text-emerald-700">Verified Live</strong></div>
-                <div>EPFO Compliance: <strong className="text-slate-900">Compliant (142 Staff)</strong></div>
-                <div>Past MPLAD Works: <strong className="text-slate-900">4 Completed On-Time</strong></div>
-                <div>Blacklisting Status: <strong className="text-emerald-700">Clear</strong></div>
+            {/* Statutory Compliance Checklist */}
+            <div className="space-y-2 p-4 rounded-xl bg-white border border-slate-200">
+              <h4 className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+                <ShieldCheck className="w-4 h-4 text-emerald-700" />
+                <span>5. Mandatory Statutory Undertakings</span>
+              </h4>
+
+              <div className="space-y-1.5 text-xs text-slate-700">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>Accuracy of technical specifications and pricing certified.</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>Non-debarment declaration valid as on submission date.</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>General Conditions of Contract (GCC) unconditionally accepted.</span>
+                </div>
               </div>
             </div>
           </div>
         )}
       </Drawer>
 
-      {/* Modal: Side-by-Side Bids Comparison */}
+      {/* AUDIT TRAIL MODAL */}
       <Modal
-        isOpen={isCompareOpen}
-        onClose={() => setIsCompareOpen(false)}
-        maxWidth="4xl"
-        title="Side-by-Side Competitive Bid Evaluation"
-        description="Comparative analysis of competing vendor bids for tender TND/MPLAD/2025/1042."
-        footer={
-          <Button variant="outline" size="sm" onClick={() => setIsCompareOpen(false)}>
-            Close Comparison
-          </Button>
+        isOpen={Boolean(auditProposal)}
+        onClose={() => setAuditProposal(null)}
+        title={
+          <div className="flex items-center gap-2">
+            <History className="w-5 h-5 text-[#002B49]" />
+            <span>Proposal Audit Trail — Ref: {auditProposal?.proposalNumber}</span>
+          </div>
         }
+        description="Statutory chronological history of all state changes, officer reviews, and timestamps."
+        maxWidth="2xl"
       >
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {mockProposals.slice(0, 2).map((prop, idx) => (
-            <Card key={prop.id} variant="flat" className="p-4.5 space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-[#002B49]">{idx === 0 ? 'Bidder A (L1)' : 'Bidder B (L2)'}</span>
-                <StatusBadge status={prop.status} size="sm" />
-              </div>
-              <h4 className="font-bold text-slate-900 text-sm">{prop.agencyName}</h4>
-              <div className="text-xl font-extrabold text-slate-900">
-                ₹ {(prop.financialBidAmount / 10000000).toFixed(2)} Cr
-              </div>
-              <div className="space-y-1.5 text-xs text-slate-600 pt-2 border-t border-slate-200">
-                <div className="flex justify-between">
-                  <span>Technical Score:</span>
-                  <strong className="text-slate-900">{prop.technicalScore}/100</strong>
+        <div className="space-y-4 text-xs">
+          {auditLoading ? (
+            <div className="py-8 text-center text-slate-500 animate-pulse">
+              Retrieving immutable audit events...
+            </div>
+          ) : auditEvents.length === 0 ? (
+            <div className="p-4 bg-slate-50 rounded-lg border border-slate-200 text-slate-600 text-center">
+              Initial submission event recorded at creation.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {auditEvents.map((evt, idx) => (
+                <div
+                  key={evt.id || idx}
+                  className="p-3.5 rounded-lg border border-slate-200 bg-slate-50 space-y-1.5"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-slate-900">{evt.action}</span>
+                      {evt.previousStatus && evt.newStatus && (
+                        <span className="text-[11px] font-mono text-slate-500">
+                          ({evt.previousStatus} → <strong className="text-slate-900">{evt.newStatus}</strong>)
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[11px] font-mono text-slate-500">
+                      {new Date(evt.timestamp).toLocaleString('en-IN')}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2 text-[11px] text-slate-600">
+                    <User className="w-3 h-3 text-slate-400" />
+                    <span>
+                      Actor: <strong>{evt.performedByName || evt.performedBy}</strong> ({evt.performedByRole})
+                    </span>
+                  </div>
+
+                  {evt.reason && (
+                    <div className="text-[11px] text-slate-700 bg-white p-2 rounded border border-slate-200/70 mt-1">
+                      <strong>Notes:</strong> {evt.reason}
+                    </div>
+                  )}
                 </div>
-                <div className="flex justify-between">
-                  <span>AI Integrity Score:</span>
-                  <strong className="text-emerald-700">{prop.aiEvaluationScore}%</strong>
-                </div>
-                <div className="flex justify-between">
-                  <span>Cartel Risk Index:</span>
-                  <strong className={prop.collusionRiskScore > 30 ? 'text-rose-700' : 'text-emerald-700'}>
-                    {prop.collusionRiskScore}/100 ({prop.collusionRiskLevel})
-                  </strong>
-                </div>
-              </div>
-            </Card>
-          ))}
+              ))}
+            </div>
+          )}
+
+          <div className="pt-3 border-t border-slate-200 flex justify-end">
+            <Button variant="outline" size="sm" onClick={() => setAuditProposal(null)}>
+              Close Audit Trail
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* REJECTION JUSTIFICATION MODAL */}
+      <Modal
+        isOpen={actionModalType === 'REJECT' && Boolean(activeProposalForAction)}
+        onClose={() => {
+          setActionModalType(null);
+          setActiveProposalForAction(null);
+        }}
+        title="Administrative Proposal Rejection"
+        description="Statutory GFR requirement: Provide a mandatory administrative justification for rejecting this proposal."
+        maxWidth="md"
+      >
+        <div className="space-y-4 text-xs text-slate-700">
+          <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-rose-900 space-y-1">
+            <div className="flex items-center gap-1.5 font-bold">
+              <AlertTriangle className="w-4 h-4 text-rose-700" />
+              <span>Permanent Rejection Record</span>
+            </div>
+            <p className="text-[11px] leading-relaxed">
+              This reason will be recorded in the append-only audit trail and transmitted to the bidding entity {activeProposalForAction?.agencyName}.
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="font-bold text-slate-900 block">
+              Administrative Justification Reason <span className="text-rose-600">*</span>
+            </label>
+            <textarea
+              rows={4}
+              value={rejectionReason}
+              onChange={(e) => setRejectionReason(e.target.value)}
+              placeholder="Detail the technical disqualification, non-responsive bid parameter, or missing statutory clearance..."
+              className="w-full p-2.5 rounded-lg border border-slate-300 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-rose-600"
+            />
+          </div>
+
+          <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setActionModalType(null);
+                setActiveProposalForAction(null);
+              }}
+              disabled={actionProcessing}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => {
+                if (activeProposalForAction) {
+                  handleTransitionStatus(activeProposalForAction, 'REJECTED', rejectionReason);
+                }
+              }}
+              disabled={!rejectionReason.trim() || actionProcessing}
+            >
+              {actionProcessing ? 'Recording Rejection...' : 'Confirm Rejection'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* CONTRACT AWARD CONFIRMATION MODAL */}
+      <Modal
+        isOpen={actionModalType === 'AWARD' && Boolean(activeProposalForAction)}
+        onClose={() => {
+          setActionModalType(null);
+          setActiveProposalForAction(null);
+        }}
+        title="Confirm Statutory Contract Award"
+        description="Official procurement decision pursuant to General Financial Rules (GFR 2017)."
+        maxWidth="md"
+      >
+        <div className="space-y-4 text-xs text-slate-700">
+          <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-900 space-y-1">
+            <div className="flex items-center gap-1.5 font-bold">
+              <Award className="w-4 h-4 text-emerald-700" />
+              <span>Contract Award Determination</span>
+            </div>
+            <p className="text-[11px] leading-relaxed">
+              Awarding will declare this proposal the winning bid and initiate contract milestone monitoring.
+            </p>
+          </div>
+
+          <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-1.5">
+            <div className="flex justify-between">
+              <span className="text-slate-500">Contractor:</span>
+              <strong className="text-slate-900">{activeProposalForAction?.agencyName}</strong>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-500">Tender Ref:</span>
+              <span className="font-mono font-bold text-slate-900">{activeProposalForAction?.tenderNumber}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-500">Contract Value:</span>
+              <strong className="text-emerald-800 font-mono">
+                {formatCurrencyINR(
+                  activeProposalForAction?.financialBidAmount ||
+                    activeProposalForAction?.quotedAmount ||
+                    0
+                )}
+              </strong>
+            </div>
+          </div>
+
+          <p className="text-[11px] text-slate-500 leading-relaxed">
+            By confirming, you certify that technical evaluation requirements were verified and this contractor is duly qualified.
+          </p>
+
+          <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setActionModalType(null);
+                setActiveProposalForAction(null);
+              }}
+              disabled={actionProcessing}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="gov"
+              size="sm"
+              onClick={() => {
+                if (activeProposalForAction) {
+                  handleTransitionStatus(
+                    activeProposalForAction,
+                    'AWARDED',
+                    `Contract awarded by ${user?.name || 'Nodal Authority'}`
+                  );
+                }
+              }}
+              disabled={actionProcessing}
+              icon={Award}
+              className="bg-emerald-800 hover:bg-emerald-900 text-white"
+            >
+              {actionProcessing ? 'Processing Award...' : 'Confirm Contract Award'}
+            </Button>
+          </div>
         </div>
       </Modal>
     </div>

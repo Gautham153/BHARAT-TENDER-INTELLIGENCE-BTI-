@@ -176,6 +176,14 @@ export const GovernmentTenderDetailPage: React.FC<GovernmentTenderDetailPageProp
 
         {/* Lifecycle Action Buttons */}
         <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <button
+            onClick={() => onNavigate(`/government/tenders/${tender.id}/proposals`)}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg border border-[#002B49] text-[#002B49] bg-blue-50/70 hover:bg-blue-100 transition-colors shadow-xs cursor-pointer"
+          >
+            <FileText className="w-4 h-4 text-[#002B49]" />
+            <span>Proposal Inbox</span>
+          </button>
+
           {isDraft && (
             <>
               <button

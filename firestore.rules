@@ -45,6 +45,27 @@ service cloud.firestore {
       );
     }
 
+    function isVerifiedAgency() {
+      return isAgencyUser() && (
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.verificationStatus == 'verified'
+      );
+    }
+
+    function getUserOrgId() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.organizationId
+        : '';
+    }
+
+    function isValidProposalStatusTransition(prev, next) {
+      return prev == next
+        || (prev == 'DRAFT' && next == 'SUBMITTED')
+        || (prev == 'SUBMITTED' && (next in ['UNDER_REVIEW', 'WITHDRAWN']))
+        || (prev == 'UNDER_REVIEW' && (next in ['SHORTLISTED', 'REJECTED']))
+        || (prev == 'SHORTLISTED' && (next in ['AWARDED', 'REJECTED']));
+    }
+
     function isValidUser(data) {
       return data.uid is string && data.uid.size() <= 128
         && data.email is string && data.email.size() <= 200
@@ -366,6 +387,116 @@ service cloud.firestore {
         );
 
       // Tender audit events are strictly append-only and immutable
+      allow update, delete: if false;
+    }
+
+    // 6. Proposals Collection Rules (/proposals/{proposalId})
+    match /proposals/{proposalId} {
+      // Read allowed for government users or agency belonging to the proposal's organization or submitter
+      allow get: if isSignedIn() && (
+        isGovernmentUser() ||
+        (isAgencyUser() && (
+          resource.data.organizationId == getUserOrgId() ||
+          resource.data.submittedBy == request.auth.uid
+        ))
+      );
+
+      // List allowed:
+      // Government users can query proposals across tenders.
+      // Agency users can query proposals for their organization or their own UID.
+      allow list: if isSignedIn() && (
+        isGovernmentUser() ||
+        (isAgencyUser() && (
+          resource.data.organizationId == getUserOrgId() ||
+          resource.data.submittedBy == request.auth.uid
+        ))
+      );
+
+      // Create: Only verified agency can create a DRAFT proposal for a LIVE non-expired tender
+      allow create: if isSignedIn()
+        && isAgencyUser()
+        && isVerifiedAgency()
+        && isValidId(proposalId)
+        && incoming().id == proposalId
+        && incoming().submittedBy == request.auth.uid
+        && incoming().status == 'DRAFT'
+        && incoming().tenderId is string
+        && exists(/databases/$(database)/documents/tenders/$(incoming().tenderId))
+        && get(/databases/$(database)/documents/tenders/$(incoming().tenderId)).data.status in ['PUBLISHED', 'LIVE', 'Open']
+        && (
+          !('closingDate' in get(/databases/$(database)/documents/tenders/$(incoming().tenderId)).data) ||
+          get(/databases/$(database)/documents/tenders/$(incoming().tenderId)).data.closingDate > request.time
+        );
+
+      // Update:
+      // Case 1: Agency updating own DRAFT (or submitting DRAFT -> SUBMITTED before deadline)
+      // Case 2: Agency withdrawing SUBMITTED -> WITHDRAWN
+      // Case 3: Government reviewing proposal (changing status, reviewer notes, without altering agency proposal content)
+      allow update: if isSignedIn() && (
+        // Case 1: Agency editing DRAFT
+        (
+          isAgencyUser()
+          && (existing().organizationId == getUserOrgId() || existing().submittedBy == request.auth.uid)
+          && existing().status == 'DRAFT'
+          && (
+            // Subcase 1a: Keeping as DRAFT
+            (incoming().status == 'DRAFT')
+            ||
+            // Subcase 1b: Submitting proposal before deadline on a LIVE tender
+            (
+              incoming().status == 'SUBMITTED'
+              && exists(/databases/$(database)/documents/tenders/$(existing().tenderId))
+              && get(/databases/$(database)/documents/tenders/$(existing().tenderId)).data.status in ['PUBLISHED', 'LIVE', 'Open']
+              && (
+                !('closingDate' in get(/databases/$(database)/documents/tenders/$(existing().tenderId)).data) ||
+                get(/databases/$(database)/documents/tenders/$(existing().tenderId)).data.closingDate > request.time
+              )
+            )
+          )
+        )
+        ||
+        // Case 2: Agency withdrawing SUBMITTED proposal
+        (
+          isAgencyUser()
+          && (existing().organizationId == getUserOrgId() || existing().submittedBy == request.auth.uid)
+          && existing().status == 'SUBMITTED'
+          && incoming().status == 'WITHDRAWN'
+        )
+        ||
+        // Case 3: Government user updating review status and notes without mutating agency content
+        (
+          isGovernmentUser()
+          && isValidProposalStatusTransition(existing().status, incoming().status)
+          && (!('technicalProposal' in existing()) || incoming().technicalProposal == existing().technicalProposal)
+          && (!('financialProposal' in existing()) || incoming().financialProposal == existing().financialProposal)
+          && (!('implementationPlan' in existing()) || incoming().implementationPlan == existing().implementationPlan)
+        )
+      );
+
+      // Proposals are permanent records, deletion forbidden
+      allow delete: if false;
+    }
+
+    // 7. Proposal Audit Events Collection Rules (/proposalEvents/{eventId})
+    match /proposalEvents/{eventId} {
+      // Read allowed for government users or agency belonging to the organization or actor
+      allow get, list: if isSignedIn() && (
+        isGovernmentUser() ||
+        (isAgencyUser() && (
+          resource.data.organizationId == getUserOrgId() ||
+          resource.data.actorId == request.auth.uid
+        ))
+      );
+
+      // Append-only creation of proposal audit events
+      allow create: if isSignedIn()
+        && isValidId(eventId)
+        && incoming().eventId == eventId
+        && incoming().actorId == request.auth.uid
+        && incoming().action in ['CREATED', 'UPDATED', 'SUBMITTED', 'WITHDRAWN', 'UNDER_REVIEW', 'SHORTLISTED', 'REJECTED', 'AWARDED']
+        && existsAfter(/databases/$(database)/documents/proposals/$(incoming().proposalId));
+
+      // Audit events are strictly immutable
       allow update, delete: if false;
     }
   }

@@ -6,6 +6,7 @@ import { Tender, TenderCategory, TenderStatus } from './tender';
 export * from './auth';
 export * from './organization';
 export * from './tender';
+export * from './proposal';
 
 export type UserRole = 'government' | 'agency' | 'public' | 'government_admin' | 'government_officer' | 'agency_user' | 'public_citizen';
 
@@ -21,44 +22,6 @@ export interface User {
   phone?: string;
   verified: boolean;
   createdAt: string;
-}
-
-export type ProposalStatus = 'Draft' | 'Submitted' | 'Under Review' | 'Under Evaluation' | 'Shortlisted' | 'Awarded' | 'Rejected';
-
-export interface Proposal {
-  id: string;
-  proposalNumber: string;
-  tenderId: string;
-  tenderNumber: string;
-  tenderTitle: string;
-  agencyId: string;
-  agencyName: string;
-  agencyGstin: string;
-  agencyGst?: string;
-  agencyRating?: number;
-  financialBidAmount: number;
-  quotedAmount?: number;
-  technicalScore: number;
-  aiEvaluationScore: number;
-  collusionRiskScore: number;
-  collusionRiskLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' | 'Low' | 'Medium' | 'High' | 'Critical';
-  submissionDate: string;
-  status: ProposalStatus;
-  flags?: string[];
-  technicalApproach?: string;
-  implementationPlan?: string;
-  experienceSummary?: string;
-  aiAssessment?: {
-    matchScore: number;
-    riskScore: number;
-    priceDeviationPct: number;
-    financialFeasibility: 'Optimal' | 'Caution' | 'Anomalous';
-    experienceRelevance: 'High' | 'Moderate' | 'Low';
-    flaggedKeywords: string[];
-    summary: string;
-    verifiedGstActive: boolean;
-  };
-  documents?: Document[];
 }
 
 export type ProjectStatus = 'Planning' | 'In Progress' | 'Under Inspection' | 'Completed' | 'Delayed' | 'Halted';
