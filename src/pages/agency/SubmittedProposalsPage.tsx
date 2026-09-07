@@ -21,7 +21,8 @@ import { Button } from '../../components/ui/Button';
 import { StatusBadge } from '../../components/ui/StatusBadge';
 import { Card } from '../../components/ui/Card';
 import { useAuth } from '../../context/AuthContext';
-import { ProposalService } from '../../services/firebase/proposals';
+import { useToast } from '../../context/ToastContext';
+import { ProposalService, isLiveFirestoreSession } from '../../services/firebase/proposals';
 import { OrganizationService } from '../../services/firebase/organizations';
 import { Proposal } from '../../types/proposal';
 import { mockProposals } from '../../data/mockData';
@@ -33,6 +34,7 @@ export interface SubmittedProposalsPageProps {
 
 export const SubmittedProposalsPage: React.FC<SubmittedProposalsPageProps> = ({ onNavigate }) => {
   const { user } = useAuth();
+  const { showToast } = useToast();
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'DRAFT' | 'SUBMITTED' | 'DECIDED'>('ALL');
@@ -52,19 +54,27 @@ export const SubmittedProposalsPage: React.FC<SubmittedProposalsPageProps> = ({ 
         data = await ProposalService.getProposalsByOrganizationId(orgId);
       }
 
-      // If no live proposals in store yet, merge/fallback with mockProposals so demo is never blank
-      if (data.length === 0) {
+      // In demo/offline mode only, if no records exist yet, fall back to mock data
+      if (!isLiveFirestoreSession() && data.length === 0) {
         data = (mockProposals as unknown as Proposal[]) || [];
       }
 
       setProposals(data);
     } catch (err) {
       console.error('[BTI Agency] Error fetching proposals:', err);
-      setProposals((mockProposals as unknown as Proposal[]) || []);
+      if (!isLiveFirestoreSession()) {
+        setProposals((mockProposals as unknown as Proposal[]) || []);
+      } else {
+        setProposals([]);
+        showToast('Failed to Load Proposals', {
+          message: err instanceof Error ? err.message : 'Could not fetch authoritative proposals from Firestore.',
+          type: 'error',
+        });
+      }
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [user, showToast]);
 
   useEffect(() => {
     loadProposals();

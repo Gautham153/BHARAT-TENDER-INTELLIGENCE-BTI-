@@ -32,7 +32,7 @@ import { Modal } from '../../components/ui/Modal';
 import { Drawer } from '../../components/ui/Drawer';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
-import { ProposalService } from '../../services/firebase/proposals';
+import { ProposalService, isLiveFirestoreSession } from '../../services/firebase/proposals';
 import { TenderService } from '../../services/firebase/tenders';
 import { Proposal, ProposalAuditEvent, CanonicalProposalStatus } from '../../types/proposal';
 import { Tender } from '../../types/tender';
@@ -87,19 +87,27 @@ export const ProposalReview: React.FC<ProposalReviewProps> = ({
         data = await ProposalService.getAllProposals();
       }
 
-      // Merge / fallback with mock data if database has no records yet
-      if (data.length === 0) {
+      // In demo/offline mode only, if no records exist yet, fall back to mock data
+      if (!isLiveFirestoreSession() && data.length === 0) {
         data = (mockProposals as unknown as Proposal[]) || [];
       }
 
       setProposals(data);
     } catch (err) {
       console.error('[BTI Gov] Error loading proposals:', err);
-      setProposals((mockProposals as unknown as Proposal[]) || []);
+      if (!isLiveFirestoreSession()) {
+        setProposals((mockProposals as unknown as Proposal[]) || []);
+      } else {
+        setProposals([]);
+        showToast('Failed to Load Proposals', {
+          message: err instanceof Error ? err.message : 'Could not fetch authoritative proposals from Firestore.',
+          type: 'error',
+        });
+      }
     } finally {
       setLoading(false);
     }
-  }, [selectedTenderId]);
+  }, [selectedTenderId, showToast]);
 
   useEffect(() => {
     loadData();

@@ -42,11 +42,23 @@ const LOCAL_STORAGE_EVENTS_KEY = 'bti_proposal_events_cache_v1';
 /**
  * Generates an authoritative unique Proposal Number.
  * Format: BTI/PROP/{YEAR}/{SEQUENCE}
+ * Produces a collision-resistant sequence derived from unique entropy or authoritative identifier.
  */
-export function generateProposalNumber(): string {
+export function generateProposalNumber(authoritativeSeed?: string): string {
   const year = new Date().getFullYear();
-  const randomSuffix = Math.floor(1000 + Math.random() * 9000);
-  return `BTI/PROP/${year}/${randomSuffix}`;
+  if (authoritativeSeed) {
+    const clean = authoritativeSeed.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+    const suffix = clean.length >= 6 ? clean.slice(-6) : clean.padStart(6, '0');
+    return `BTI/PROP/${year}/${suffix}`;
+  }
+
+  let entropy = '';
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    entropy = crypto.randomUUID().replace(/-/g, '').slice(0, 6).toUpperCase();
+  } else {
+    entropy = Math.random().toString(36).substring(2, 8).toUpperCase();
+  }
+  return `BTI/PROP/${year}/${entropy}`;
 }
 
 /**
@@ -218,6 +230,52 @@ function getLocalEvents(): ProposalAuditEvent[] {
   }
 }
 
+const DEMO_STORAGE_KEY = 'bti_demo_session_v1';
+
+export function isDemoSession(): boolean {
+  try {
+    return localStorage.getItem(DEMO_STORAGE_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+export function isLiveFirestoreSession(): boolean {
+  return Boolean(isFirebaseConfigured && !isDemoSession() && db);
+}
+
+/**
+ * Recursively removes undefined keys from objects or arrays to prevent Firestore batch rejections.
+ */
+export function sanitizeFirestorePayload<T extends Record<string, any>>(obj: T): Record<string, any> {
+  const result: Record<string, any> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value === undefined) {
+      continue;
+    }
+    if (
+      value !== null &&
+      typeof value === 'object' &&
+      !(value instanceof Timestamp) &&
+      !(value instanceof Date) &&
+      !Array.isArray(value)
+    ) {
+      result[key] = sanitizeFirestorePayload(value);
+    } else if (Array.isArray(value)) {
+      result[key] = value
+        .filter((item) => item !== undefined)
+        .map((item) =>
+          item !== null && typeof item === 'object' && !(item instanceof Timestamp) && !(item instanceof Date)
+            ? sanitizeFirestorePayload(item)
+            : item
+        );
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
 function saveLocalEvents(events: ProposalAuditEvent[]): void {
   try {
     localStorage.setItem(LOCAL_STORAGE_EVENTS_KEY, JSON.stringify(events));
@@ -233,16 +291,13 @@ export class ProposalService {
   static async getProposalById(proposalId: string): Promise<Proposal | null> {
     if (!proposalId) return null;
 
-    if (isFirebaseConfigured && db) {
-      try {
-        const ref = doc(db, PROPOSALS_COLLECTION, proposalId);
-        const snap = await getDoc(ref);
-        if (snap.exists()) {
-          return { id: snap.id, ...snap.data() } as Proposal;
-        }
-      } catch (err) {
-        console.warn('Firestore getProposalById failed, checking local cache:', err);
+    if (isLiveFirestoreSession() && db) {
+      const ref = doc(db, PROPOSALS_COLLECTION, proposalId);
+      const snap = await getDoc(ref);
+      if (snap.exists()) {
+        return { id: snap.id, ...snap.data() } as Proposal;
       }
+      return null;
     }
 
     const local = getLocalProposals();
@@ -255,21 +310,15 @@ export class ProposalService {
   static async getProposalsByTenderId(tenderId: string): Promise<Proposal[]> {
     if (!tenderId) return [];
 
-    if (isFirebaseConfigured && db) {
-      try {
-        const ref = collection(db, PROPOSALS_COLLECTION);
-        const q = query(ref, where('tenderId', '==', tenderId));
-        const snap = await getDocs(q);
-        if (!snap.empty) {
-          const list: Proposal[] = [];
-          snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Proposal));
-          return list.sort(
-            (a, b) => new Date(b.createdAt || '').getTime() - new Date(a.createdAt || '').getTime()
-          );
-        }
-      } catch (err) {
-        console.warn('Firestore getProposalsByTenderId failed, falling back to local cache:', err);
-      }
+    if (isLiveFirestoreSession() && db) {
+      const ref = collection(db, PROPOSALS_COLLECTION);
+      const q = query(ref, where('tenderId', '==', tenderId));
+      const snap = await getDocs(q);
+      const list: Proposal[] = [];
+      snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Proposal));
+      return list.sort(
+        (a, b) => new Date(b.createdAt || '').getTime() - new Date(a.createdAt || '').getTime()
+      );
     }
 
     const local = getLocalProposals();
@@ -284,21 +333,15 @@ export class ProposalService {
   static async getProposalsByOrganizationId(organizationId: string): Promise<Proposal[]> {
     if (!organizationId) return [];
 
-    if (isFirebaseConfigured && db) {
-      try {
-        const ref = collection(db, PROPOSALS_COLLECTION);
-        const q = query(ref, where('organizationId', '==', organizationId));
-        const snap = await getDocs(q);
-        if (!snap.empty) {
-          const list: Proposal[] = [];
-          snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Proposal));
-          return list.sort(
-            (a, b) => new Date(b.createdAt || '').getTime() - new Date(a.createdAt || '').getTime()
-          );
-        }
-      } catch (err) {
-        console.warn('Firestore getProposalsByOrganizationId failed, falling back to local cache:', err);
-      }
+    if (isLiveFirestoreSession() && db) {
+      const ref = collection(db, PROPOSALS_COLLECTION);
+      const q = query(ref, where('organizationId', '==', organizationId));
+      const snap = await getDocs(q);
+      const list: Proposal[] = [];
+      snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Proposal));
+      return list.sort(
+        (a, b) => new Date(b.createdAt || '').getTime() - new Date(a.createdAt || '').getTime()
+      );
     }
 
     const local = getLocalProposals();
@@ -311,20 +354,14 @@ export class ProposalService {
    * Retrieves all proposals (Government Review Portal).
    */
   static async getAllProposals(): Promise<Proposal[]> {
-    if (isFirebaseConfigured && db) {
-      try {
-        const ref = collection(db, PROPOSALS_COLLECTION);
-        const snap = await getDocs(ref);
-        if (!snap.empty) {
-          const list: Proposal[] = [];
-          snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Proposal));
-          return list.sort(
-            (a, b) => new Date(b.createdAt || '').getTime() - new Date(a.createdAt || '').getTime()
-          );
-        }
-      } catch (err) {
-        console.warn('Firestore getAllProposals failed, falling back to local cache:', err);
-      }
+    if (isLiveFirestoreSession() && db) {
+      const ref = collection(db, PROPOSALS_COLLECTION);
+      const snap = await getDocs(ref);
+      const list: Proposal[] = [];
+      snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Proposal));
+      return list.sort(
+        (a, b) => new Date(b.createdAt || '').getTime() - new Date(a.createdAt || '').getTime()
+      );
     }
 
     const local = getLocalProposals();
@@ -336,6 +373,7 @@ export class ProposalService {
   /**
    * Checks for an active proposal for a given tender and organization (Duplicate Prevention).
    * Returns the active proposal (DRAFT or SUBMITTED) if one exists.
+   * WITHDRAWN, REJECTED, SHORTLISTED, and AWARDED do not block new proposals.
    */
   static async getActiveProposalForTenderAndOrg(
     tenderId: string,
@@ -343,40 +381,70 @@ export class ProposalService {
   ): Promise<Proposal | null> {
     if (!tenderId || !organizationId) return null;
 
-    if (isFirebaseConfigured && db) {
-      try {
-        const ref = collection(db, PROPOSALS_COLLECTION);
-        const q = query(
-          ref,
-          where('tenderId', '==', tenderId),
-          where('organizationId', '==', organizationId)
-        );
-        const snap = await getDocs(q);
-        if (!snap.empty) {
-          const proposals: Proposal[] = [];
-          snap.forEach((d) => proposals.push({ id: d.id, ...d.data() } as Proposal));
-          // Return non-withdrawn proposal
-          const active = proposals.find((p) => p.status !== 'WITHDRAWN');
-          if (active) return active;
-        }
-      } catch (err) {
-        console.warn('Firestore getActiveProposalForTenderAndOrg error, checking local:', err);
+    if (isLiveFirestoreSession() && db) {
+      const ref = collection(db, PROPOSALS_COLLECTION);
+      const q = query(
+        ref,
+        where('tenderId', '==', tenderId),
+        where('organizationId', '==', organizationId)
+      );
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        const proposals: Proposal[] = [];
+        snap.forEach((d) => proposals.push({ id: d.id, ...d.data() } as Proposal));
+        // A proposal is considered active for duplicate prevention ONLY when DRAFT or SUBMITTED
+        const active = proposals.find((p) => p.status === 'DRAFT' || p.status === 'SUBMITTED');
+        if (active) return active;
       }
+      return null;
     }
 
     const local = getLocalProposals();
     return (
       local.find(
-        (p) => p.tenderId === tenderId && p.organizationId === organizationId && p.status !== 'WITHDRAWN'
+        (p) =>
+          p.tenderId === tenderId &&
+          p.organizationId === organizationId &&
+          (p.status === 'DRAFT' || p.status === 'SUBMITTED')
       ) || null
     );
   }
 
+  // In-flight concurrency lock to guarantee atomic creation per (tenderId, organizationId)
+  private static inFlightCreationLocks = new Map<string, Promise<Proposal>>();
+
   /**
    * Creates an initial DRAFT proposal for a verified agency on a LIVE tender.
    * Enforces verification requirements, tender status, and deadline.
+   * Atomically guards against duplicate active (DRAFT/SUBMITTED) proposal creation.
    */
   static async createDraftProposal(params: {
+    tender: Tender;
+    organization: Organization;
+    user: AuthUser;
+    initialData?: Partial<Proposal>;
+  }): Promise<Proposal> {
+    const { tender, organization } = params;
+    const lockKey = `${tender.id}__${organization.organizationId}`;
+
+    const inFlight = this.inFlightCreationLocks.get(lockKey);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const creationPromise = (async () => {
+      try {
+        return await this._executeCreateDraftProposal(params);
+      } finally {
+        this.inFlightCreationLocks.delete(lockKey);
+      }
+    })();
+
+    this.inFlightCreationLocks.set(lockKey, creationPromise);
+    return creationPromise;
+  }
+
+  private static async _executeCreateDraftProposal(params: {
     tender: Tender;
     organization: Organization;
     user: AuthUser;
@@ -409,14 +477,17 @@ export class ProposalService {
       }
     }
 
-    // 4. Duplicate Check: Ensure no active draft or submission already exists
+    // 4. Duplicate Check: Ensure no active draft or submission already exists (WITHDRAWN does not block)
     const existingActive = await this.getActiveProposalForTenderAndOrg(tender.id, organization.organizationId);
     if (existingActive) {
       return existingActive;
     }
 
-    const proposalId = `prop-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-    const proposalNumber = generateProposalNumber();
+    const uniqueSuffix = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID().replace(/-/g, '').substring(0, 12)
+      : Math.random().toString(36).substring(2, 10);
+    const proposalId = `prop-${Date.now()}-${uniqueSuffix}`;
+    const proposalNumber = generateProposalNumber(proposalId);
     const nowIso = new Date().toISOString();
     const userUid = user.uid || user.id;
 
@@ -489,7 +560,7 @@ export class ProposalService {
       updatedAt: nowIso,
     };
 
-    const auditEventId = `ev-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const auditEventId = `ev-${Date.now()}-${uniqueSuffix}`;
     const auditEvent: ProposalAuditEvent = {
       eventId: auditEventId,
       proposalId,
@@ -505,22 +576,30 @@ export class ProposalService {
       notes: `Draft proposal initialized for tender ${tender.tenderNumber}`,
     };
 
-    if (isFirebaseConfigured && db) {
-      try {
-        const batch = writeBatch(db);
-        const propRef = doc(db, PROPOSALS_COLLECTION, proposalId);
-        const eventRef = doc(db, PROPOSAL_EVENTS_COLLECTION, auditEventId);
+    if (isLiveFirestoreSession() && db) {
+      const batch = writeBatch(db);
+      const propRef = doc(db, PROPOSALS_COLLECTION, proposalId);
+      const eventRef = doc(db, PROPOSAL_EVENTS_COLLECTION, auditEventId);
 
-        batch.set(propRef, newProposal);
-        batch.set(eventRef, auditEvent);
-        await batch.commit();
-      } catch (err) {
-        console.warn('Firestore createDraftProposal failed, saving to local cache:', err);
-      }
+      batch.set(propRef, sanitizeFirestorePayload(newProposal));
+      batch.set(eventRef, sanitizeFirestorePayload(auditEvent));
+      await batch.commit();
+
+      return newProposal;
     }
 
-    // Update local cache
+    // Demo / offline fallback only when Firebase is genuinely not configured or in demo mode
     const local = getLocalProposals();
+    const existingLocalIdx = local.findIndex(
+      (p) =>
+        p.tenderId === tender.id &&
+        p.organizationId === organization.organizationId &&
+        (p.status === 'DRAFT' || p.status === 'SUBMITTED')
+    );
+    if (existingLocalIdx !== -1) {
+      return local[existingLocalIdx];
+    }
+
     local.push(newProposal);
     saveLocalProposals(local);
 
@@ -582,20 +661,30 @@ export class ProposalService {
       notes: 'Draft proposal sections updated and persisted.',
     };
 
-    if (isFirebaseConfigured && db) {
-      try {
-        const batch = writeBatch(db);
-        const propRef = doc(db, PROPOSALS_COLLECTION, proposalId);
-        const eventRef = doc(db, PROPOSAL_EVENTS_COLLECTION, auditEventId);
+    if (isLiveFirestoreSession() && db) {
+      const batch = writeBatch(db);
+      const propRef = doc(db, PROPOSALS_COLLECTION, proposalId);
+      const eventRef = doc(db, PROPOSAL_EVENTS_COLLECTION, auditEventId);
 
-        batch.set(propRef, updatedProposal, { merge: true });
-        batch.set(eventRef, auditEvent);
-        await batch.commit();
-      } catch (err) {
-        console.warn('Firestore updateDraftProposal failed, updating local cache:', err);
-      }
+      const draftUpdatePayload: Partial<Proposal> = {
+        technicalProposal: updatedProposal.technicalProposal,
+        implementationPlan: updatedProposal.implementationPlan,
+        financialProposal: updatedProposal.financialProposal,
+        timeline: updatedProposal.timeline,
+        experience: updatedProposal.experience,
+        complianceDeclarations: updatedProposal.complianceDeclarations,
+        supportingDocuments: updatedProposal.supportingDocuments,
+        updatedAt: nowIso,
+      };
+
+      batch.update(propRef, sanitizeFirestorePayload(draftUpdatePayload));
+      batch.set(eventRef, sanitizeFirestorePayload(auditEvent));
+      await batch.commit();
+
+      return updatedProposal;
     }
 
+    // Demo / offline fallback only
     const local = getLocalProposals();
     const idx = local.findIndex((p) => p.id === proposalId);
     if (idx !== -1) {
@@ -709,29 +798,29 @@ export class ProposalService {
       notes: `Proposal officially submitted and locked. Quoted Amount: ₹ ${financial.baseAmount.toLocaleString('en-IN')}`,
     };
 
-    if (isFirebaseConfigured && db) {
-      try {
-        const batch = writeBatch(db);
-        const propRef = doc(db, PROPOSALS_COLLECTION, proposalId);
-        const eventRef = doc(db, PROPOSAL_EVENTS_COLLECTION, auditEventId);
+    if (isLiveFirestoreSession() && db) {
+      const batch = writeBatch(db);
+      const propRef = doc(db, PROPOSALS_COLLECTION, proposalId);
+      const eventRef = doc(db, PROPOSAL_EVENTS_COLLECTION, auditEventId);
 
-        batch.update(propRef, {
-          status: 'SUBMITTED',
-          submittedAt: nowIso,
-          updatedAt: nowIso,
-          financialBidAmount: financial.totalProposedAmount || financial.baseAmount,
-          quotedAmount: financial.baseAmount,
-          submissionDate: nowIso.split('T')[0],
-          complianceDeclarations: submittedProposal.complianceDeclarations,
-        });
+      const submitPayload = {
+        status: 'SUBMITTED',
+        submittedAt: nowIso,
+        updatedAt: nowIso,
+        financialBidAmount: financial.totalProposedAmount || financial.baseAmount,
+        quotedAmount: financial.baseAmount,
+        submissionDate: nowIso.split('T')[0],
+        complianceDeclarations: submittedProposal.complianceDeclarations,
+      };
 
-        batch.set(eventRef, auditEvent);
-        await batch.commit();
-      } catch (err) {
-        console.warn('Firestore submitProposal failed, updating local cache:', err);
-      }
+      batch.update(propRef, sanitizeFirestorePayload(submitPayload));
+      batch.set(eventRef, sanitizeFirestorePayload(auditEvent));
+      await batch.commit();
+
+      return submittedProposal;
     }
 
+    // Demo / offline fallback only
     const local = getLocalProposals();
     const idx = local.findIndex((p) => p.id === proposalId);
     if (idx !== -1) {
@@ -818,29 +907,29 @@ export class ProposalService {
       notes: notes || `Status changed from ${existing.status} to ${newStatus}`,
     };
 
-    if (isFirebaseConfigured && db) {
-      try {
-        const batch = writeBatch(db);
-        const propRef = doc(db, PROPOSALS_COLLECTION, proposalId);
-        const eventRef = doc(db, PROPOSAL_EVENTS_COLLECTION, auditEventId);
+    if (isLiveFirestoreSession() && db) {
+      const batch = writeBatch(db);
+      const propRef = doc(db, PROPOSALS_COLLECTION, proposalId);
+      const eventRef = doc(db, PROPOSAL_EVENTS_COLLECTION, auditEventId);
 
-        batch.update(propRef, {
-          status: newStatus,
-          updatedAt: nowIso,
-          reviewStatus: newStatus,
-          reviewerNotes: notes || existing.reviewerNotes || '',
-          reviewedBy: userUid,
-          reviewedByName: user.name || user.email || 'Government Officer',
-          reviewedAt: nowIso,
-        });
+      const reviewPayload = {
+        status: newStatus,
+        updatedAt: nowIso,
+        reviewStatus: newStatus,
+        reviewerNotes: notes || existing.reviewerNotes || '',
+        reviewedBy: userUid,
+        reviewedByName: user.name || user.email || 'Government Officer',
+        reviewedAt: nowIso,
+      };
 
-        batch.set(eventRef, auditEvent);
-        await batch.commit();
-      } catch (err) {
-        console.warn('Firestore updateProposalStatus failed, updating local cache:', err);
-      }
+      batch.update(propRef, sanitizeFirestorePayload(reviewPayload));
+      batch.set(eventRef, sanitizeFirestorePayload(auditEvent));
+      await batch.commit();
+
+      return updatedProposal;
     }
 
+    // Demo / offline fallback only
     const local = getLocalProposals();
     const idx = local.findIndex((p) => p.id === proposalId);
     if (idx !== -1) {
@@ -863,19 +952,13 @@ export class ProposalService {
   static async getProposalAuditEvents(proposalId: string): Promise<ProposalAuditEvent[]> {
     if (!proposalId) return [];
 
-    if (isFirebaseConfigured && db) {
-      try {
-        const ref = collection(db, PROPOSAL_EVENTS_COLLECTION);
-        const q = query(ref, where('proposalId', '==', proposalId), orderBy('timestamp', 'asc'));
-        const snap = await getDocs(q);
-        if (!snap.empty) {
-          const events: ProposalAuditEvent[] = [];
-          snap.forEach((d) => events.push(d.data() as ProposalAuditEvent));
-          return events;
-        }
-      } catch (err) {
-        console.warn('Firestore getProposalAuditEvents query failed, using local events:', err);
-      }
+    if (isLiveFirestoreSession() && db) {
+      const ref = collection(db, PROPOSAL_EVENTS_COLLECTION);
+      const q = query(ref, where('proposalId', '==', proposalId), orderBy('timestamp', 'asc'));
+      const snap = await getDocs(q);
+      const events: ProposalAuditEvent[] = [];
+      snap.forEach((d) => events.push(d.data() as ProposalAuditEvent));
+      return events;
     }
 
     const local = getLocalEvents();

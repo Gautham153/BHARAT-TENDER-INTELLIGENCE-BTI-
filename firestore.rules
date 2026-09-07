@@ -58,10 +58,10 @@ service cloud.firestore {
         : '';
     }
 
-    function isValidProposalStatusTransition(prev, next) {
-      return prev == next
-        || (prev == 'DRAFT' && next == 'SUBMITTED')
-        || (prev == 'SUBMITTED' && (next in ['UNDER_REVIEW', 'WITHDRAWN']))
+    // Authoritative Government proposal review transition validator:
+    // Strictly enforces legal unidirectional evaluation transitions. Prevents same-status mutations and prevents modifying DRAFTs.
+    function isValidGovernmentProposalTransition(prev, next) {
+      return (prev == 'SUBMITTED' && next == 'UNDER_REVIEW')
         || (prev == 'UNDER_REVIEW' && (next in ['SHORTLISTED', 'REJECTED']))
         || (prev == 'SHORTLISTED' && (next in ['AWARDED', 'REJECTED']));
     }
@@ -419,6 +419,7 @@ service cloud.firestore {
         && isValidId(proposalId)
         && incoming().id == proposalId
         && incoming().submittedBy == request.auth.uid
+        && incoming().organizationId == getUserOrgId()
         && incoming().status == 'DRAFT'
         && incoming().tenderId is string
         && exists(/databases/$(database)/documents/tenders/$(incoming().tenderId))
@@ -429,47 +430,135 @@ service cloud.firestore {
         );
 
       // Update:
-      // Case 1: Agency updating own DRAFT (or submitting DRAFT -> SUBMITTED before deadline)
-      // Case 2: Agency withdrawing SUBMITTED -> WITHDRAWN
-      // Case 3: Government reviewing proposal (changing status, reviewer notes, without altering agency proposal content)
+      // Case 1: Agency editing DRAFT content (proposal remains DRAFT, immutable identity/ownership/tender fields protected)
+      // Case 2: Agency submitting DRAFT -> SUBMITTED before deadline on a LIVE tender (locks submission, preserves immutable identity)
+      // Case 3: Agency withdrawing SUBMITTED -> WITHDRAWN
+      // Case 4: Government review transitions (may change only review/adjudication fields, all agency proposal content locked)
       allow update: if isSignedIn() && (
-        // Case 1: Agency editing DRAFT
+        // Case 1: Agency editing DRAFT content
         (
           isAgencyUser()
           && (existing().organizationId == getUserOrgId() || existing().submittedBy == request.auth.uid)
           && existing().status == 'DRAFT'
-          && (
-            // Subcase 1a: Keeping as DRAFT
-            (incoming().status == 'DRAFT')
-            ||
-            // Subcase 1b: Submitting proposal before deadline on a LIVE tender
-            (
-              incoming().status == 'SUBMITTED'
-              && exists(/databases/$(database)/documents/tenders/$(existing().tenderId))
-              && get(/databases/$(database)/documents/tenders/$(existing().tenderId)).data.status in ['PUBLISHED', 'LIVE', 'Open']
-              && (
-                !('closingDate' in get(/databases/$(database)/documents/tenders/$(existing().tenderId)).data) ||
-                get(/databases/$(database)/documents/tenders/$(existing().tenderId)).data.closingDate > request.time
-              )
-            )
-          )
+          && incoming().status == 'DRAFT'
+          && incoming().submittedBy == existing().submittedBy
+          && incoming().organizationId == existing().organizationId
+          && incoming().tenderId == existing().tenderId
+          && incoming().get('id', '') == existing().get('id', '')
+          && incoming().get('proposalNumber', '') == existing().get('proposalNumber', '')
+          && incoming().get('tenderNumber', '') == existing().get('tenderNumber', '')
+          && incoming().get('tenderTitle', '') == existing().get('tenderTitle', '')
+          && incoming().get('organizationName', '') == existing().get('organizationName', '')
+          && incoming().get('organizationGstin', '') == existing().get('organizationGstin', '')
+          && incoming().get('submittedByName', '') == existing().get('submittedByName', '')
+          && incoming().get('submittedByEmail', '') == existing().get('submittedByEmail', '')
+          && incoming().get('createdAt', '') == existing().get('createdAt', '')
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'technicalProposal',
+            'implementationPlan',
+            'financialProposal',
+            'timeline',
+            'experience',
+            'complianceDeclarations',
+            'supportingDocuments',
+            'updatedAt'
+          ])
         )
         ||
-        // Case 2: Agency withdrawing SUBMITTED proposal
+        // Case 2: Agency submitting DRAFT -> SUBMITTED before deadline on a LIVE tender
+        (
+          isAgencyUser()
+          && isVerifiedAgency()
+          && (existing().organizationId == getUserOrgId() || existing().submittedBy == request.auth.uid)
+          && existing().status == 'DRAFT'
+          && incoming().status == 'SUBMITTED'
+          && incoming().submittedBy == existing().submittedBy
+          && incoming().organizationId == existing().organizationId
+          && incoming().tenderId == existing().tenderId
+          && incoming().get('id', '') == existing().get('id', '')
+          && incoming().get('proposalNumber', '') == existing().get('proposalNumber', '')
+          && incoming().get('tenderNumber', '') == existing().get('tenderNumber', '')
+          && incoming().get('tenderTitle', '') == existing().get('tenderTitle', '')
+          && incoming().get('organizationName', '') == existing().get('organizationName', '')
+          && incoming().get('organizationGstin', '') == existing().get('organizationGstin', '')
+          && incoming().get('submittedByName', '') == existing().get('submittedByName', '')
+          && incoming().get('submittedByEmail', '') == existing().get('submittedByEmail', '')
+          && incoming().get('createdAt', '') == existing().get('createdAt', '')
+          && exists(/databases/$(database)/documents/tenders/$(existing().tenderId))
+          && get(/databases/$(database)/documents/tenders/$(existing().tenderId)).data.status in ['PUBLISHED', 'LIVE', 'Open']
+          && (
+            !('closingDate' in get(/databases/$(database)/documents/tenders/$(existing().tenderId)).data) ||
+            get(/databases/$(database)/documents/tenders/$(existing().tenderId)).data.closingDate > request.time
+          )
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'status',
+            'submittedAt',
+            'updatedAt',
+            'financialBidAmount',
+            'quotedAmount',
+            'submissionDate',
+            'complianceDeclarations',
+            'technicalProposal',
+            'implementationPlan',
+            'financialProposal',
+            'timeline',
+            'experience',
+            'supportingDocuments'
+          ])
+        )
+        ||
+        // Case 3: Agency withdrawing SUBMITTED proposal
         (
           isAgencyUser()
           && (existing().organizationId == getUserOrgId() || existing().submittedBy == request.auth.uid)
           && existing().status == 'SUBMITTED'
           && incoming().status == 'WITHDRAWN'
+          && incoming().submittedBy == existing().submittedBy
+          && incoming().organizationId == existing().organizationId
+          && incoming().tenderId == existing().tenderId
+          && incoming().get('id', '') == existing().get('id', '')
+          && incoming().get('proposalNumber', '') == existing().get('proposalNumber', '')
+          && incoming().get('tenderNumber', '') == existing().get('tenderNumber', '')
+          && incoming().get('tenderTitle', '') == existing().get('tenderTitle', '')
+          && incoming().get('organizationName', '') == existing().get('organizationName', '')
+          && incoming().get('organizationGstin', '') == existing().get('organizationGstin', '')
+          && incoming().get('submittedByName', '') == existing().get('submittedByName', '')
+          && incoming().get('submittedByEmail', '') == existing().get('submittedByEmail', '')
+          && incoming().get('createdAt', '') == existing().get('createdAt', '')
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'status',
+            'updatedAt',
+            'withdrawnAt',
+            'withdrawalReason'
+          ])
         )
         ||
-        // Case 3: Government user updating review status and notes without mutating agency content
+        // Case 4: Government review transitions (Government may change only review/adjudication fields on SUBMITTED, UNDER_REVIEW, SHORTLISTED)
         (
           isGovernmentUser()
-          && isValidProposalStatusTransition(existing().status, incoming().status)
-          && (!('technicalProposal' in existing()) || incoming().technicalProposal == existing().technicalProposal)
-          && (!('financialProposal' in existing()) || incoming().financialProposal == existing().financialProposal)
-          && (!('implementationPlan' in existing()) || incoming().implementationPlan == existing().implementationPlan)
+          && existing().status in ['SUBMITTED', 'UNDER_REVIEW', 'SHORTLISTED']
+          && isValidGovernmentProposalTransition(existing().status, incoming().status)
+          && incoming().submittedBy == existing().submittedBy
+          && incoming().organizationId == existing().organizationId
+          && incoming().tenderId == existing().tenderId
+          && incoming().get('id', '') == existing().get('id', '')
+          && incoming().get('proposalNumber', '') == existing().get('proposalNumber', '')
+          && incoming().get('tenderNumber', '') == existing().get('tenderNumber', '')
+          && incoming().get('tenderTitle', '') == existing().get('tenderTitle', '')
+          && incoming().get('organizationName', '') == existing().get('organizationName', '')
+          && incoming().get('organizationGstin', '') == existing().get('organizationGstin', '')
+          && incoming().get('submittedByName', '') == existing().get('submittedByName', '')
+          && incoming().get('submittedByEmail', '') == existing().get('submittedByEmail', '')
+          && incoming().get('createdAt', '') == existing().get('createdAt', '')
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'status',
+            'updatedAt',
+            'reviewStatus',
+            'reviewerNotes',
+            'reviewedBy',
+            'reviewedByName',
+            'reviewedAt'
+          ])
         )
       );
 
@@ -488,13 +577,48 @@ service cloud.firestore {
         ))
       );
 
-      // Append-only creation of proposal audit events
+      // Append-only creation of proposal audit events strictly bound to authoritative proposal state
       allow create: if isSignedIn()
         && isValidId(eventId)
         && incoming().eventId == eventId
         && incoming().actorId == request.auth.uid
-        && incoming().action in ['CREATED', 'UPDATED', 'SUBMITTED', 'WITHDRAWN', 'UNDER_REVIEW', 'SHORTLISTED', 'REJECTED', 'AWARDED']
-        && existsAfter(/databases/$(database)/documents/proposals/$(incoming().proposalId));
+        && incoming().proposalId is string
+        && existsAfter(/databases/$(database)/documents/proposals/$(incoming().proposalId))
+        && incoming().tenderId == getAfter(/databases/$(database)/documents/proposals/$(incoming().proposalId)).data.tenderId
+        && incoming().organizationId == getAfter(/databases/$(database)/documents/proposals/$(incoming().proposalId)).data.organizationId
+        && incoming().newStatus == getAfter(/databases/$(database)/documents/proposals/$(incoming().proposalId)).data.status
+        && (
+          // Case 1: Agency actions (CREATED, UPDATED, SUBMITTED, WITHDRAWN)
+          (
+            isAgencyUser()
+            && incoming().actorRole == 'agency'
+            && incoming().organizationId == getUserOrgId()
+            && incoming().action in ['CREATED', 'UPDATED', 'SUBMITTED', 'WITHDRAWN']
+            && (
+              (
+                incoming().action == 'CREATED'
+                && incoming().newStatus == 'DRAFT'
+                && !exists(/databases/$(database)/documents/proposals/$(incoming().proposalId))
+              )
+              ||
+              (
+                incoming().action in ['UPDATED', 'SUBMITTED', 'WITHDRAWN']
+                && exists(/databases/$(database)/documents/proposals/$(incoming().proposalId))
+                && incoming().get('previousStatus', '') == get(/databases/$(database)/documents/proposals/$(incoming().proposalId)).data.status
+              )
+            )
+          )
+          ||
+          // Case 2: Government evaluation & adjudication review actions
+          (
+            isGovernmentUser()
+            && incoming().actorRole == 'government'
+            && incoming().action in ['UNDER_REVIEW', 'SHORTLISTED', 'REJECTED', 'AWARDED']
+            && exists(/databases/$(database)/documents/proposals/$(incoming().proposalId))
+            && incoming().get('previousStatus', '') == get(/databases/$(database)/documents/proposals/$(incoming().proposalId)).data.status
+            && isValidGovernmentProposalTransition(get(/databases/$(database)/documents/proposals/$(incoming().proposalId)).data.status, incoming().newStatus)
+          )
+        );
 
       // Audit events are strictly immutable
       allow update, delete: if false;

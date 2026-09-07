@@ -1314,7 +1314,7 @@ export const AgencyProposalWizardPage: React.FC<AgencyProposalWizardPageProps> =
                 <span>Notice of Immutability</span>
               </div>
               <p className="text-[11px] leading-relaxed">
-                Once submitted, this proposal cannot be modified, edited, or retracted except through official withdrawal. Its contents will be cryptographically locked and made available to the Government Evaluation Committee.
+                Once submitted, this proposal is sealed and cannot be modified through the application. Its contents are protected by the authoritative Firestore security rules and append-only audit trail.
               </p>
             </div>
 
