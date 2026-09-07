@@ -228,9 +228,9 @@ service cloud.firestore {
 
       // List tenders:
       // Government users can list all tenders across full lifecycle.
-      // Authenticated agency users can list only active LIVE procurement notices whose deadline has not elapsed.
+      // Authenticated agency users can query active published procurement notices deterministically.
       allow list: if isSignedIn() && (
-        isGovernmentUser() || (isAgencyUser() && isActiveAndNotExpired(resource.data))
+        isGovernmentUser() || (isAgencyUser() && resource.data.status in ['PUBLISHED', 'LIVE', 'Open'])
       );
 
       // Create tender:

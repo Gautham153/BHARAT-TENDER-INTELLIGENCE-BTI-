@@ -720,11 +720,10 @@ export class TenderService {
         // Government and administrative users have full lifecycle visibility
         q = query(tendersRef, orderBy('createdAt', 'desc'));
       } else {
-        // Agency, public, and default discovery query only authoritative active statuses with future deadlines
+        // Agency, public, and discovery queries filter active published statuses deterministically
         q = query(
           tendersRef,
-          where('status', 'in', ['PUBLISHED', 'LIVE', 'Open']),
-          where('closingDate', '>', Timestamp.now())
+          where('status', 'in', ['PUBLISHED', 'LIVE', 'Open'])
         );
       }
       const snap = await getDocs(q);
