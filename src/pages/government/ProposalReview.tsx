@@ -23,6 +23,10 @@ import {
   User,
   CheckSquare,
   Lock,
+  Briefcase,
+  Paperclip,
+  Info,
+  ExternalLink,
 } from 'lucide-react';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { Table, Column } from '../../components/ui/Table';
@@ -538,9 +542,9 @@ export const ProposalReview: React.FC<ProposalReviewProps> = ({
                 <span className="text-slate-400 block text-[11px]">Firm Quoted Price</span>
                 <span className="font-black text-slate-900 text-base font-mono block mt-0.5">
                   {formatCurrencyINR(
-                    inspectedProposal.financialBidAmount ||
+                    inspectedProposal.financialProposal?.totalProposedAmount ||
+                      inspectedProposal.financialBidAmount ||
                       inspectedProposal.quotedAmount ||
-                      inspectedProposal.financialProposal?.totalProposedAmount ||
                       0
                   )}
                 </span>
@@ -552,161 +556,621 @@ export const ProposalReview: React.FC<ProposalReviewProps> = ({
                 <span className="font-mono font-medium text-slate-800 block mt-0.5">
                   {inspectedProposal.submittedAt
                     ? new Date(inspectedProposal.submittedAt).toLocaleString('en-IN')
-                    : 'System Certified'}
+                    : inspectedProposal.submissionDate || 'Sealed Record'}
                 </span>
               </div>
             </div>
 
-            {/* Bidding Agency Profile */}
-            <div className="space-y-2 p-4 rounded-xl bg-white border border-slate-200">
-              <h4 className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+            {/* 1. CONTRACTOR IDENTITY & VERIFICATION */}
+            <div className="space-y-3 p-4 rounded-xl bg-white border border-slate-200 shadow-xs">
+              <h4 className="font-bold text-slate-900 text-xs flex items-center gap-1.5 border-b border-slate-100 pb-2">
                 <Building2 className="w-4 h-4 text-[#002B49]" />
                 <span>1. Contractor Identity & Verification</span>
               </h4>
-              <div className="grid grid-cols-2 gap-3 text-xs pt-1">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs pt-1">
                 <div>
-                  <span className="text-slate-400 block text-[11px]">Legal Entity:</span>
-                  <span className="font-bold text-slate-900">{inspectedProposal.agencyName}</span>
+                  <span className="text-slate-400 block text-[11px]">Organization / Agency Name:</span>
+                  <span className="font-bold text-slate-900">
+                    {inspectedProposal.organizationName || inspectedProposal.agencyName || 'Not provided'}
+                  </span>
                 </div>
                 <div>
                   <span className="text-slate-400 block text-[11px]">Statutory GSTIN:</span>
                   <span className="font-mono font-bold text-slate-900">
-                    {inspectedProposal.agencyGstin || 'VERIFIED'}
+                    {inspectedProposal.organizationGstin ||
+                      inspectedProposal.agencyGstin ||
+                      inspectedProposal.agencyGst ||
+                      'Not provided'}
                   </span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block text-[11px]">Submitted By (Authorized Signatory):</span>
+                  <span className="text-slate-800 font-medium">
+                    {inspectedProposal.submittedByName
+                      ? `${inspectedProposal.submittedByName}${
+                          inspectedProposal.submittedByEmail ? ` (${inspectedProposal.submittedByEmail})` : ''
+                        }`
+                      : inspectedProposal.submittedByEmail ||
+                        inspectedProposal.submittedBy ||
+                        'Authorized Signatory'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block text-[11px]">Authoritative Proposal Reference:</span>
+                  <span className="font-mono font-bold text-[#002B49]">
+                    {inspectedProposal.proposalNumber}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block text-[11px]">Submission Timestamp:</span>
+                  <span className="font-mono text-slate-700">
+                    {inspectedProposal.submittedAt
+                      ? new Date(inspectedProposal.submittedAt).toLocaleString('en-IN')
+                      : inspectedProposal.submissionDate || 'Sealed'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block text-[11px]">Current Evaluation Status:</span>
+                  <div className="mt-0.5">
+                    <StatusBadge status={inspectedProposal.status} size="sm" />
+                  </div>
                 </div>
               </div>
             </div>
 
-            {/* Technical Proposal */}
-            <div className="space-y-3 p-4 rounded-xl bg-white border border-slate-200">
-              <h4 className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+            {/* 2. TECHNICAL PROPOSAL */}
+            <div className="space-y-3 p-4 rounded-xl bg-white border border-slate-200 shadow-xs">
+              <h4 className="font-bold text-slate-900 text-xs flex items-center gap-1.5 border-b border-slate-100 pb-2">
                 <FileText className="w-4 h-4 text-[#002B49]" />
-                <span>2. Technical Methodology & Proposed Solution</span>
+                <span>2. Technical Proposal</span>
               </h4>
 
-              <div className="space-y-2">
+              <div className="space-y-3 pt-1">
                 <div>
                   <strong className="block text-slate-700 text-[11px]">Technical Approach:</strong>
-                  <p className="text-slate-800 bg-slate-50 p-2.5 rounded border border-slate-200 mt-0.5 whitespace-pre-line leading-relaxed">
-                    {inspectedProposal.technicalProposal?.technicalApproach ||
-                      'Standard engineering execution pursuant to Central Public Works Department specifications.'}
+                  <p className="text-slate-800 bg-slate-50 p-2.5 rounded border border-slate-200 mt-1 whitespace-pre-line leading-relaxed">
+                    {inspectedProposal.technicalProposal?.technicalApproach || 'Not provided'}
                   </p>
                 </div>
 
                 <div>
                   <strong className="block text-slate-700 text-[11px]">Proposed Solution & Materials Concept:</strong>
-                  <p className="text-slate-800 bg-slate-50 p-2.5 rounded border border-slate-200 mt-0.5 whitespace-pre-line leading-relaxed">
-                    {inspectedProposal.technicalProposal?.proposedSolution ||
-                      'Concrete grade M25/M30 with Fe500D TMT reinforcement, quality audited via NABL testing.'}
+                  <p className="text-slate-800 bg-slate-50 p-2.5 rounded border border-slate-200 mt-1 whitespace-pre-line leading-relaxed">
+                    {inspectedProposal.technicalProposal?.proposedSolution || 'Not provided'}
                   </p>
                 </div>
 
-                {inspectedProposal.technicalProposal?.qualityAssuranceApproach && (
-                  <div>
-                    <strong className="block text-slate-700 text-[11px]">Quality Assurance & Testing:</strong>
-                    <p className="text-slate-800 bg-slate-50 p-2 rounded border border-slate-200 mt-0.5">
-                      {inspectedProposal.technicalProposal.qualityAssuranceApproach}
-                    </p>
-                  </div>
-                )}
+                <div>
+                  <strong className="block text-slate-700 text-[11px]">Understanding of Scope & Specifications:</strong>
+                  <p className="text-slate-800 bg-slate-50 p-2.5 rounded border border-slate-200 mt-1 whitespace-pre-line leading-relaxed">
+                    {inspectedProposal.technicalProposal?.scopeUnderstanding || 'Not provided'}
+                  </p>
+                </div>
+
+                <div>
+                  <strong className="block text-slate-700 text-[11px]">Technical Methodology & Standards:</strong>
+                  <p className="text-slate-800 bg-slate-50 p-2.5 rounded border border-slate-200 mt-1 whitespace-pre-line leading-relaxed">
+                    {inspectedProposal.technicalProposal?.technicalMethodology || 'Not provided'}
+                  </p>
+                </div>
+
+                <div>
+                  <strong className="block text-slate-700 text-[11px]">Key Deliverables & Acceptance Criteria:</strong>
+                  <p className="text-slate-800 bg-slate-50 p-2.5 rounded border border-slate-200 mt-1 whitespace-pre-line leading-relaxed">
+                    {inspectedProposal.technicalProposal?.keyDeliverables || 'Not provided'}
+                  </p>
+                </div>
+
+                <div>
+                  <strong className="block text-slate-700 text-[11px]">Quality Assurance & Testing Protocol:</strong>
+                  <p className="text-slate-800 bg-slate-50 p-2.5 rounded border border-slate-200 mt-1 whitespace-pre-line leading-relaxed">
+                    {inspectedProposal.technicalProposal?.qualityAssuranceApproach || 'Not provided'}
+                  </p>
+                </div>
+
+                <div>
+                  <strong className="block text-slate-700 text-[11px]">Technical Assumptions & Dependencies:</strong>
+                  <p className="text-slate-800 bg-slate-50 p-2.5 rounded border border-slate-200 mt-1 whitespace-pre-line leading-relaxed">
+                    {inspectedProposal.technicalProposal?.technicalAssumptions || 'Not provided'}
+                  </p>
+                </div>
               </div>
             </div>
 
-            {/* Milestones */}
-            <div className="space-y-3 p-4 rounded-xl bg-white border border-slate-200">
-              <h4 className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+            {/* 3. IMPLEMENTATION & EXECUTION PLAN */}
+            <div className="space-y-3 p-4 rounded-xl bg-white border border-slate-200 shadow-xs">
+              <h4 className="font-bold text-slate-900 text-xs flex items-center gap-1.5 border-b border-slate-100 pb-2">
                 <Layers className="w-4 h-4 text-[#002B49]" />
-                <span>3. Implementation Milestones Breakdown</span>
+                <span>3. Implementation & Execution Plan</span>
               </h4>
 
-              {inspectedProposal.implementationPlan?.milestones &&
-              inspectedProposal.implementationPlan.milestones.length > 0 ? (
-                <div className="space-y-2">
-                  {inspectedProposal.implementationPlan.milestones.map((m, idx) => (
-                    <div
-                      key={m.id || idx}
-                      className="p-2.5 rounded bg-slate-50 border border-slate-200 flex items-start justify-between gap-3 text-xs"
-                    >
-                      <div className="flex items-start gap-2">
-                        <span className="w-5 h-5 rounded bg-[#002B49] text-white flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">
-                          {idx + 1}
-                        </span>
-                        <div>
-                          <strong className="text-slate-900 block font-semibold">{m.title}</strong>
-                          <span className="text-slate-600 text-[11px]">{m.description}</span>
-                        </div>
-                      </div>
-                      <span className="font-mono text-slate-700 text-[11px] font-bold shrink-0">
-                        {m.expectedCompletion}
-                      </span>
-                    </div>
-                  ))}
+              <div className="space-y-3 pt-1">
+                <div>
+                  <strong className="block text-slate-700 text-[11px]">Implementation Approach:</strong>
+                  <p className="text-slate-800 bg-slate-50 p-2.5 rounded border border-slate-200 mt-1 whitespace-pre-line leading-relaxed">
+                    {inspectedProposal.implementationPlan?.implementationApproach || 'Not provided'}
+                  </p>
                 </div>
-              ) : (
-                <p className="text-slate-500 italic text-xs">Standard phased execution schedule agreed.</p>
-              )}
+
+                <div>
+                  <strong className="block text-slate-700 text-[11px]">Project Phases & Work Breakdown:</strong>
+                  <p className="text-slate-800 bg-slate-50 p-2.5 rounded border border-slate-200 mt-1 whitespace-pre-line leading-relaxed">
+                    {inspectedProposal.implementationPlan?.projectPhases || 'Not provided'}
+                  </p>
+                </div>
+
+                <div>
+                  <strong className="block text-slate-700 text-[11px] mb-1.5">Milestones Breakdown:</strong>
+                  {inspectedProposal.implementationPlan?.milestones &&
+                  inspectedProposal.implementationPlan.milestones.length > 0 ? (
+                    <div className="space-y-2">
+                      {inspectedProposal.implementationPlan.milestones.map((m, idx) => (
+                        <div
+                          key={m.id || idx}
+                          className="p-3 rounded-lg bg-slate-50 border border-slate-200 flex items-start justify-between gap-3 text-xs"
+                        >
+                          <div className="flex items-start gap-2.5">
+                            <span className="w-5 h-5 rounded bg-[#002B49] text-white flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">
+                              {idx + 1}
+                            </span>
+                            <div className="space-y-1">
+                              <strong className="text-slate-900 block font-semibold">{m.title}</strong>
+                              <p className="text-slate-600 text-[11px] leading-relaxed">{m.description}</p>
+                              {m.deliverables && (
+                                <p className="text-[11px] text-slate-500">
+                                  <span className="font-semibold text-slate-700">Deliverables:</span> {m.deliverables}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                          <span className="font-mono text-[#002B49] bg-blue-50/80 px-2 py-0.5 rounded border border-blue-200 text-[11px] font-bold shrink-0">
+                            {m.expectedCompletion}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-slate-500 italic text-xs bg-slate-50 p-2.5 rounded border border-slate-200">
+                      No milestones specified.
+                    </p>
+                  )}
+                </div>
+
+                <div>
+                  <strong className="block text-slate-700 text-[11px]">Resource Plan & Allocation:</strong>
+                  <p className="text-slate-800 bg-slate-50 p-2.5 rounded border border-slate-200 mt-1 whitespace-pre-line leading-relaxed">
+                    {inspectedProposal.implementationPlan?.resourcePlan || 'Not provided'}
+                  </p>
+                </div>
+
+                <div>
+                  <strong className="block text-slate-700 text-[11px]">Risk Considerations & Mitigation:</strong>
+                  <p className="text-slate-800 bg-slate-50 p-2.5 rounded border border-slate-200 mt-1 whitespace-pre-line leading-relaxed">
+                    {inspectedProposal.implementationPlan?.riskConsiderations || 'Not provided'}
+                  </p>
+                </div>
+
+                <div>
+                  <strong className="block text-slate-700 text-[11px]">Completion Strategy & Handover:</strong>
+                  <p className="text-slate-800 bg-slate-50 p-2.5 rounded border border-slate-200 mt-1 whitespace-pre-line leading-relaxed">
+                    {inspectedProposal.implementationPlan?.completionStrategy || 'Not provided'}
+                  </p>
+                </div>
+              </div>
             </div>
 
-            {/* Financial Decomposition */}
-            <div className="space-y-3 p-4 rounded-xl bg-white border border-slate-200">
-              <h4 className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
-                <Coins className="w-4 h-4 text-[#002B49]" />
-                <span>4. Financial Cost Decomposition</span>
+            {/* 4. PROPOSED TIMELINE */}
+            <div className="space-y-3 p-4 rounded-xl bg-white border border-slate-200 shadow-xs">
+              <h4 className="font-bold text-slate-900 text-xs flex items-center gap-1.5 border-b border-slate-100 pb-2">
+                <Calendar className="w-4 h-4 text-[#002B49]" />
+                <span>4. Proposed Timeline</span>
               </h4>
 
-              <div className="grid grid-cols-3 gap-2 text-center text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs pt-1">
+                <div className="p-2.5 bg-slate-50 rounded border border-slate-200">
+                  <span className="text-slate-400 block text-[10px]">Proposed Duration</span>
+                  <span className="font-mono font-bold text-slate-900 block mt-0.5">
+                    {inspectedProposal.timeline?.proposedDurationValue
+                      ? `${inspectedProposal.timeline.proposedDurationValue} ${
+                          inspectedProposal.timeline.proposedDurationUnit || 'days'
+                        }`
+                      : 'Not provided'}
+                  </span>
+                </div>
+
+                <div className="p-2.5 bg-slate-50 rounded border border-slate-200">
+                  <span className="text-slate-400 block text-[10px]">Proposed Start Date</span>
+                  <span className="font-mono font-bold text-slate-900 block mt-0.5">
+                    {inspectedProposal.timeline?.proposedStartDate || 'Not provided'}
+                  </span>
+                </div>
+
+                <div className="p-2.5 bg-slate-50 rounded border border-slate-200">
+                  <span className="text-slate-400 block text-[10px]">Proposed Completion Date</span>
+                  <span className="font-mono font-bold text-slate-900 block mt-0.5">
+                    {inspectedProposal.timeline?.proposedCompletionDate || 'Not provided'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* 5. FINANCIAL BID */}
+            <div className="space-y-3 p-4 rounded-xl bg-white border border-slate-200 shadow-xs">
+              <h4 className="font-bold text-slate-900 text-xs flex items-center gap-1.5 border-b border-slate-100 pb-2">
+                <Coins className="w-4 h-4 text-[#002B49]" />
+                <span>5. Financial Bid</span>
+              </h4>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-center text-xs pt-1">
                 <div className="p-2.5 bg-slate-50 rounded border border-slate-200">
                   <span className="text-slate-400 block text-[10px]">Base Quoted Amount</span>
                   <span className="font-mono font-bold text-slate-900 block mt-0.5">
                     {formatCurrencyINR(
-                      inspectedProposal.financialProposal?.baseAmount ||
-                        inspectedProposal.quotedAmount ||
+                      inspectedProposal.financialProposal?.baseAmount ??
+                        inspectedProposal.quotedAmount ??
                         0
                     )}
                   </span>
                 </div>
 
                 <div className="p-2.5 bg-slate-50 rounded border border-slate-200">
-                  <span className="text-slate-400 block text-[10px]">Statutory GST (18%)</span>
+                  <span className="text-slate-400 block text-[10px]">Statutory GST / Tax</span>
                   <span className="font-mono font-bold text-slate-900 block mt-0.5">
-                    {formatCurrencyINR(inspectedProposal.financialProposal?.taxAmount || 0)}
+                    {formatCurrencyINR(inspectedProposal.financialProposal?.taxAmount ?? 0)}
                   </span>
                 </div>
 
                 <div className="p-2.5 bg-blue-50/70 rounded border border-blue-200">
-                  <span className="text-blue-900 block text-[10px] font-bold">Total Firm Bid</span>
+                  <span className="text-blue-900 block text-[10px] font-bold">Total Firm Bid (All-Inclusive)</span>
                   <span className="font-mono font-black text-blue-950 block mt-0.5">
                     {formatCurrencyINR(
-                      inspectedProposal.financialProposal?.totalProposedAmount ||
-                        inspectedProposal.financialBidAmount ||
+                      inspectedProposal.financialProposal?.totalProposedAmount ??
+                        inspectedProposal.financialBidAmount ??
+                        inspectedProposal.quotedAmount ??
                         0
                     )}
                   </span>
                 </div>
               </div>
-            </div>
 
-            {/* Statutory Compliance Checklist */}
-            <div className="space-y-2 p-4 rounded-xl bg-white border border-slate-200">
-              <h4 className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
-                <ShieldCheck className="w-4 h-4 text-emerald-700" />
-                <span>5. Mandatory Statutory Undertakings</span>
-              </h4>
+              <div className="space-y-2 pt-2">
+                <div>
+                  <strong className="block text-slate-700 text-[11px]">Cost Breakdown / Line Items:</strong>
+                  <p className="text-slate-800 bg-slate-50 p-2.5 rounded border border-slate-200 mt-1 whitespace-pre-line leading-relaxed">
+                    {inspectedProposal.financialProposal?.costBreakdown || 'Not provided'}
+                  </p>
+                </div>
 
-              <div className="space-y-1.5 text-xs text-slate-700">
-                <div className="flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>Accuracy of technical specifications and pricing certified.</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>Non-debarment declaration valid as on submission date.</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>General Conditions of Contract (GCC) unconditionally accepted.</span>
+                <div>
+                  <strong className="block text-slate-700 text-[11px]">Payment Milestones & Commercial Terms:</strong>
+                  <p className="text-slate-800 bg-slate-50 p-2.5 rounded border border-slate-200 mt-1 whitespace-pre-line leading-relaxed">
+                    {inspectedProposal.financialProposal?.paymentMilestones || 'Not provided'}
+                  </p>
                 </div>
               </div>
+            </div>
+
+            {/* 6. EXPERIENCE & TRACK RECORD (PROMINENT) */}
+            <div className="space-y-3 p-4 rounded-xl bg-white border border-slate-200 shadow-xs">
+              <h4 className="font-bold text-slate-900 text-xs flex items-center gap-1.5 border-b border-slate-100 pb-2">
+                <Briefcase className="w-4 h-4 text-[#002B49]" />
+                <span>6. Experience & Track Record</span>
+              </h4>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs pt-1">
+                <div>
+                  <span className="text-slate-400 block text-[11px]">Total Public/Civil Experience:</span>
+                  <span className="font-bold text-slate-900 text-sm">
+                    {inspectedProposal.experience?.yearsOfExperience !== undefined
+                      ? `${inspectedProposal.experience.yearsOfExperience} Years`
+                      : 'Not provided'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block text-[11px]">Key Capabilities & Specializations:</span>
+                  <span className="text-slate-800 font-medium">
+                    {inspectedProposal.experience?.keyCapabilities || 'Not provided'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="space-y-2 pt-1">
+                <div>
+                  <strong className="block text-slate-700 text-[11px]">Relevant Experience Summary:</strong>
+                  <p className="text-slate-800 bg-slate-50 p-2.5 rounded border border-slate-200 mt-1 whitespace-pre-line leading-relaxed">
+                    {inspectedProposal.experience?.relevantExperienceSummary || 'Not provided'}
+                  </p>
+                </div>
+
+                <div>
+                  <strong className="block text-slate-700 text-[11px]">Available Resources & Plant/Machinery:</strong>
+                  <p className="text-slate-800 bg-slate-50 p-2.5 rounded border border-slate-200 mt-1 whitespace-pre-line leading-relaxed">
+                    {inspectedProposal.experience?.availableResources || 'Not provided'}
+                  </p>
+                </div>
+
+                <div>
+                  <strong className="block text-slate-700 text-[11px]">Technical Personnel & Dedicated Team:</strong>
+                  <p className="text-slate-800 bg-slate-50 p-2.5 rounded border border-slate-200 mt-1 whitespace-pre-line leading-relaxed">
+                    {inspectedProposal.experience?.technicalPersonnel || 'Not provided'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Past Projects List */}
+              <div className="pt-2">
+                <strong className="block text-slate-800 text-[11px] mb-2 font-bold flex items-center justify-between">
+                  <span>Executed Projects & Past Contracts</span>
+                  <span className="text-[10px] font-normal text-slate-500">
+                    {inspectedProposal.experience?.pastProjects?.length || 0} Project(s) on Record
+                  </span>
+                </strong>
+
+                {inspectedProposal.experience?.pastProjects &&
+                inspectedProposal.experience.pastProjects.length > 0 ? (
+                  <div className="space-y-2.5">
+                    {inspectedProposal.experience.pastProjects.map((p, pIdx) => (
+                      <div
+                        key={p.id || pIdx}
+                        className="p-3 rounded-lg bg-slate-50 border border-slate-200 space-y-1.5"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <span className="font-bold text-slate-900 block text-xs">{p.projectName}</span>
+                            <span className="text-slate-600 text-[11px]">
+                              Client Authority: <strong className="text-slate-800">{p.clientAuthority}</strong>
+                            </span>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <span className="font-mono font-bold text-slate-900 block text-xs">
+                              {formatCurrencyINR(p.value || 0)}
+                            </span>
+                            <span className="text-[10px] text-slate-500 font-mono">FY {p.year}</span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 pt-0.5">
+                          <span className="px-2 py-0.5 rounded bg-slate-200/80 text-slate-700 font-medium text-[10px]">
+                            {p.projectCategory}
+                          </span>
+                        </div>
+
+                        {p.description && (
+                          <p className="text-slate-600 text-[11px] leading-relaxed pt-1 border-t border-slate-200/60">
+                            {p.description}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-slate-500 italic text-xs bg-slate-50 p-2.5 rounded border border-slate-200">
+                    No past project records provided.
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* 7. STATUTORY COMPLIANCE DECLARATIONS */}
+            <div className="space-y-3 p-4 rounded-xl bg-white border border-slate-200 shadow-xs">
+              <h4 className="font-bold text-slate-900 text-xs flex items-center gap-1.5 border-b border-slate-100 pb-2">
+                <ShieldCheck className="w-4 h-4 text-emerald-700" />
+                <span>7. Statutory Compliance Declarations</span>
+              </h4>
+
+              <div className="space-y-2 pt-1 text-xs">
+                {/* 1. Accuracy of information */}
+                <div className="flex items-center justify-between gap-3 p-2.5 rounded-lg bg-slate-50 border border-slate-200">
+                  <span className="text-slate-800 font-medium">
+                    1. Accuracy of technical specifications and pricing certified
+                  </span>
+                  {inspectedProposal.complianceDeclarations?.accuracyConfirmed ? (
+                    <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 shrink-0">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> ACCEPTED
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 shrink-0">
+                      <XCircle className="w-3.5 h-3.5 text-amber-600" /> NOT ACCEPTED
+                    </span>
+                  )}
+                </div>
+
+                {/* 2. Eligibility */}
+                <div className="flex items-center justify-between gap-3 p-2.5 rounded-lg bg-slate-50 border border-slate-200">
+                  <span className="text-slate-800 font-medium">
+                    2. Mandatory eligibility & non-debarment criteria satisfied
+                  </span>
+                  {inspectedProposal.complianceDeclarations?.eligibilitySatisfied ? (
+                    <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 shrink-0">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> ACCEPTED
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 shrink-0">
+                      <XCircle className="w-3.5 h-3.5 text-amber-600" /> NOT ACCEPTED
+                    </span>
+                  )}
+                </div>
+
+                {/* 3. Supporting documents authentic */}
+                <div className="flex items-center justify-between gap-3 p-2.5 rounded-lg bg-slate-50 border border-slate-200">
+                  <span className="text-slate-800 font-medium">
+                    3. Supporting technical & financial documents declared authentic
+                  </span>
+                  {inspectedProposal.complianceDeclarations?.documentsAuthentic ? (
+                    <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 shrink-0">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> ACCEPTED
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 shrink-0">
+                      <XCircle className="w-3.5 h-3.5 text-amber-600" /> NOT ACCEPTED
+                    </span>
+                  )}
+                </div>
+
+                {/* 4. Terms and conditions */}
+                <div className="flex items-center justify-between gap-3 p-2.5 rounded-lg bg-slate-50 border border-slate-200">
+                  <span className="text-slate-800 font-medium">
+                    4. General Conditions of Contract (GCC) & tender terms unconditionally accepted
+                  </span>
+                  {inspectedProposal.complianceDeclarations?.termsAgreed ? (
+                    <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 shrink-0">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> ACCEPTED
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 shrink-0">
+                      <XCircle className="w-3.5 h-3.5 text-amber-600" /> NOT ACCEPTED
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Declaration Metadata */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs pt-2 border-t border-slate-100">
+                <div>
+                  <span className="text-slate-400 block text-[11px]">Declared By:</span>
+                  <span className="text-slate-800 font-medium">
+                    {inspectedProposal.complianceDeclarations?.declaredBy ||
+                      inspectedProposal.submittedByName ||
+                      inspectedProposal.submittedBy ||
+                      'Authorized Signatory'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block text-[11px]">Declaration Timestamp:</span>
+                  <span className="font-mono text-slate-700">
+                    {inspectedProposal.complianceDeclarations?.declaredAt
+                      ? new Date(inspectedProposal.complianceDeclarations.declaredAt).toLocaleString('en-IN')
+                      : inspectedProposal.submittedAt
+                      ? new Date(inspectedProposal.submittedAt).toLocaleString('en-IN')
+                      : 'At submission'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* 8. SUPPORTING DOCUMENTS */}
+            <div className="space-y-3 p-4 rounded-xl bg-white border border-slate-200 shadow-xs">
+              <h4 className="font-bold text-slate-900 text-xs flex items-center gap-1.5 border-b border-slate-100 pb-2">
+                <Paperclip className="w-4 h-4 text-[#002B49]" />
+                <span>8. Supporting Documents</span>
+              </h4>
+
+              {inspectedProposal.supportingDocuments && inspectedProposal.supportingDocuments.length > 0 ? (
+                <div className="space-y-2 pt-1">
+                  {inspectedProposal.supportingDocuments.map((doc, dIdx) => (
+                    <div
+                      key={doc.id || dIdx}
+                      className="p-3 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-between gap-3 text-xs"
+                    >
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-slate-900">{doc.fileName}</span>
+                          <span className="px-2 py-0.2 rounded bg-slate-200 text-slate-700 font-mono text-[10px]">
+                            {doc.documentType}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-slate-500 flex items-center gap-3">
+                          {doc.fileSize && <span>Size: {doc.fileSize}</span>}
+                          <span>
+                            Uploaded:{' '}
+                            {doc.uploadedAt ? new Date(doc.uploadedAt).toLocaleString('en-IN') : 'At submission'}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
+                            doc.verificationStatus === 'ACCEPTED'
+                              ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                              : doc.verificationStatus === 'REJECTED'
+                              ? 'bg-rose-50 text-rose-700 border-rose-200'
+                              : 'bg-slate-100 text-slate-700 border-slate-200'
+                          }`}
+                        >
+                          {doc.verificationStatus || 'NOT_REVIEWED'}
+                        </span>
+
+                        {doc.fileUrl && (
+                          <a
+                            href={doc.fileUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-1 rounded text-slate-500 hover:text-slate-800 hover:bg-slate-200 transition-colors"
+                            title="Open document"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5" />
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-slate-500 italic text-xs bg-slate-50 p-2.5 rounded border border-slate-200">
+                  No supporting documents uploaded.
+                </p>
+              )}
+            </div>
+
+            {/* 9. PROPOSAL / TENDER CONTEXT */}
+            <div className="space-y-3 p-4 rounded-xl bg-white border border-slate-200 shadow-xs">
+              <h4 className="font-bold text-slate-900 text-xs flex items-center gap-1.5 border-b border-slate-100 pb-2">
+                <Info className="w-4 h-4 text-[#002B49]" />
+                <span>9. Proposal & Tender Opportunity Context</span>
+              </h4>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs pt-1">
+                <div>
+                  <span className="text-slate-400 block text-[11px]">Tender Number:</span>
+                  <span className="font-mono font-bold text-slate-900">
+                    {inspectedProposal.tenderNumber || 'Not specified'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block text-[11px]">Tender Category:</span>
+                  <span className="text-slate-800 font-medium">
+                    {inspectedProposal.tenderCategory || 'Not specified'}
+                  </span>
+                </div>
+                <div className="sm:col-span-2">
+                  <span className="text-slate-400 block text-[11px]">Tender Title:</span>
+                  <span className="text-slate-900 font-medium">
+                    {inspectedProposal.tenderTitle || 'Not specified'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block text-[11px]">Tender Estimated Value:</span>
+                  <span className="font-mono font-bold text-slate-900">
+                    {inspectedProposal.tenderEstimatedValue
+                      ? formatCurrencyINR(inspectedProposal.tenderEstimatedValue)
+                      : 'Not specified'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block text-[11px]">Tender Closing Date:</span>
+                  <span className="font-mono text-slate-800">
+                    {inspectedProposal.tenderClosingDate
+                      ? new Date(inspectedProposal.tenderClosingDate).toLocaleDateString('en-IN')
+                      : 'Not specified'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Deterministic Match Information if available */}
+              {(inspectedProposal.matchScore !== undefined || inspectedProposal.matchGrade) && (
+                <div className="mt-2 p-3 bg-blue-50/60 rounded-lg border border-blue-200 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-blue-900 font-bold text-xs">
+                      Deterministic Capability Compatibility Match: Grade {inspectedProposal.matchGrade || 'N/A'} (
+                      {inspectedProposal.matchScore || 0}% Score)
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-blue-700">
+                    Deterministic criteria compatibility matching based on verified contractor capability profile — NOT AI evaluation.
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         )}
