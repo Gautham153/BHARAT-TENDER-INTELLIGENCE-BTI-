@@ -74,19 +74,23 @@ export const AgencyTenderListPage: React.FC<AgencyTenderListPageProps> = ({ onNa
       const liveTenders = await TenderService.getTenders('agency');
       setTenders(liveTenders);
 
-      // 2. Fetch current organization
-      if (user?.organizationId) {
-        const org = await OrganizationService.getOrganizationById(user.organizationId);
-        setOrganization(org);
-      } else if (user) {
-        // Fallback: search organization by user UID or GSTIN
-        const orgs = await OrganizationService.getAllOrganizations();
-        const userOrg = orgs.find(
-          (o) => o.primaryUserId === user.id || (user.gstin && o.gstin === user.gstin)
-        );
-        if (userOrg) {
-          setOrganization(userOrg);
+      // 2. Fetch current organization safely without violating security rules
+      try {
+        if (user?.organizationId) {
+          const org = await OrganizationService.getOrganizationById(user.organizationId);
+          if (org) setOrganization(org);
+        } else if (user?.id || user?.uid) {
+          const userId = user.id || user.uid || '';
+          let org = await OrganizationService.getOrganizationByUserId(userId);
+          if (!org && user.gstin) {
+            org = await OrganizationService.getOrganizationByGstin(user.gstin);
+          }
+          if (org) {
+            setOrganization(org);
+          }
         }
+      } catch (orgErr) {
+        console.warn('[BTI Agency] Non-fatal organization fetch error:', orgErr);
       }
     } catch (err: unknown) {
       console.error('[BTI Agency] Failed to fetch tenders:', err);

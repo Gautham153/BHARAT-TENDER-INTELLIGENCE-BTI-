@@ -654,11 +654,36 @@ export async function listOrganizationsForGovReview(
 }
 
 /**
+ * Fetch organization owned by primary user ID (compliant with agency read security rules)
+ */
+export async function fetchOrganizationByPrimaryUserId(primaryUserId: string): Promise<Organization | null> {
+  if (!primaryUserId) return null;
+  if (isFirebaseConfigured && db) {
+    try {
+      const q = query(collection(db, 'organizations'), where('primaryUserId', '==', primaryUserId));
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        return snap.docs[0].data() as Organization;
+      }
+      return null;
+    } catch (err) {
+      console.warn('[BTI Org] fetchOrganizationByPrimaryUserId error:', err);
+      return null;
+    }
+  }
+
+  const localRegistry = getLocalRegistry();
+  const org = Object.values(localRegistry).find((o) => o.primaryUserId === primaryUserId);
+  return org || null;
+}
+
+/**
  * Organization Service namespace for unified client access
  */
 export const OrganizationService = {
   getOrganizationById: fetchOrganizationById,
   getOrganizationByGstin: fetchOrganizationByGstin,
+  getOrganizationByUserId: fetchOrganizationByPrimaryUserId,
   getAllOrganizations: async (): Promise<Organization[]> => {
     return listOrganizationsForGovReview('all');
   },

@@ -41,17 +41,26 @@ export const AgencyDashboard: React.FC<{ onNavigate: (path: string) => void }> =
     let isMounted = true;
     async function fetchData() {
       try {
-        const [tenders, orgs] = await Promise.all([
-          TenderService.getTenders('agency'),
-          OrganizationService.getAllOrganizations(),
-        ]);
+        const tenders = await TenderService.getTenders('agency');
         if (!isMounted) return;
         setLiveTenders(tenders);
 
-        const userOrg = orgs.find(
-          (o) => o.primaryUserId === user?.id || (user?.gstin && o.gstin === user.gstin) || (user?.organizationId && o.organizationId === user.organizationId)
-        );
-        if (userOrg) setOrganization(userOrg);
+        // Fetch user organization safely
+        try {
+          if (user?.organizationId) {
+            const org = await OrganizationService.getOrganizationById(user.organizationId);
+            if (org && isMounted) setOrganization(org);
+          } else if (user?.id || user?.uid) {
+            const userId = user.id || user.uid || '';
+            let org = await OrganizationService.getOrganizationByUserId(userId);
+            if (!org && user.gstin) {
+              org = await OrganizationService.getOrganizationByGstin(user.gstin);
+            }
+            if (org && isMounted) setOrganization(org);
+          }
+        } catch (orgErr) {
+          console.warn('[BTI AgencyDashboard] Non-fatal org fetch error:', orgErr);
+        }
       } catch (err) {
         console.warn('[BTI AgencyDashboard] Error fetching live tenders:', err);
       } finally {

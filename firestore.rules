@@ -31,15 +31,17 @@ service cloud.firestore {
 
     function isGovernmentUser() {
       return isSignedIn() && (
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'government'
+        (request.auth.token.role == 'government') ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'government')
       );
     }
 
     function isAgencyUser() {
       return isSignedIn() && (
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'agency'
+        (request.auth.token.role == 'agency') ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'agency')
       );
     }
 
@@ -219,16 +221,16 @@ service cloud.firestore {
 
       // Read single tender:
       // Government users retain full lifecycle visibility across all statuses (including DRAFT, CLOSED, ARCHIVED, and expired).
-      // Agency and public users can only read active LIVE procurement notices whose deadline has not elapsed.
+      // Authenticated agency users can only read active LIVE procurement notices whose deadline has not elapsed.
       allow get: if isSignedIn() && isValidId(tenderId) && (
-        isGovernmentUser() || isActiveAndNotExpired(resource.data)
+        isGovernmentUser() || (isAgencyUser() && isActiveAndNotExpired(resource.data))
       );
 
       // List tenders:
       // Government users can list all tenders across full lifecycle.
-      // Agency and public users can list only active LIVE procurement notices whose deadline has not elapsed.
+      // Authenticated agency users can list only active LIVE procurement notices whose deadline has not elapsed.
       allow list: if isSignedIn() && (
-        isGovernmentUser() || isActiveAndNotExpired(resource.data)
+        isGovernmentUser() || (isAgencyUser() && isActiveAndNotExpired(resource.data))
       );
 
       // Create tender:

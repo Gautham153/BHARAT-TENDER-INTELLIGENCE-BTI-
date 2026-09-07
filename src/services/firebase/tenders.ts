@@ -697,21 +697,35 @@ export class TenderService {
     let rawList: Tender[] = [];
     const isLiveAuthSession = isFirebaseConfigured && !isDemoSession() && db && auth?.currentUser;
 
+    // Resolve effective user role
+    let effectiveRole = userRole;
+    if (!effectiveRole && typeof window !== 'undefined') {
+      try {
+        const cached = localStorage.getItem('bti_auth_user');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (parsed?.role) effectiveRole = parsed.role;
+        }
+      } catch {
+        // ignore
+      }
+    }
+
     if (isLiveAuthSession) {
       // In authenticated Firebase mode, Firestore is authoritative.
       // We do NOT silently fall back to synthetic local store upon errors or empty results.
       const tendersRef = collection(db, 'tenders');
       let q;
-      if (userRole === 'agency') {
-        // Query only authoritative active statuses with valid future deadline so the query satisfies Firestore security rules
+      if (effectiveRole === 'government') {
+        // Government and administrative users have full lifecycle visibility
+        q = query(tendersRef, orderBy('createdAt', 'desc'));
+      } else {
+        // Agency, public, and default discovery query only authoritative active statuses with future deadlines
         q = query(
           tendersRef,
           where('status', 'in', ['PUBLISHED', 'LIVE', 'Open']),
           where('closingDate', '>', Timestamp.now())
         );
-      } else {
-        // Government and administrative users have full lifecycle visibility
-        q = query(tendersRef, orderBy('createdAt', 'desc'));
       }
       const snap = await getDocs(q);
       rawList = snap.docs.map((d) => normalizeTenderFromFirestore(d.data()));
@@ -737,7 +751,7 @@ export class TenderService {
     // Agency users can ONLY access active tender opportunities whose deadline has not expired.
     // Explicitly reject: DRAFT, CLOSED, UNDER_EVALUATION, AWARDED, CANCELLED, ARCHIVED, or past closing date
     let filtered = normalized;
-    if (userRole === 'agency') {
+    if (effectiveRole === 'agency') {
       filtered = filtered.filter((t) => {
         const eff = getEffectiveTenderStatus(t);
         const isActive = eff === 'LIVE' || eff === 'PUBLISHED' || eff === 'Open';
@@ -750,7 +764,7 @@ export class TenderService {
         }
         return isActive && !isExpired;
       });
-    } else if (userRole === 'public') {
+    } else if (effectiveRole === 'public') {
       filtered = filtered.filter((t) => t.status !== 'DRAFT');
     }
 
