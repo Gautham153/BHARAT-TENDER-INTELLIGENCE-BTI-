@@ -27,6 +27,7 @@ import {
   Paperclip,
   Info,
   ExternalLink,
+  Sparkles,
 } from 'lucide-react';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { Table, Column } from '../../components/ui/Table';
@@ -39,10 +40,15 @@ import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { ProposalService, isLiveFirestoreSession } from '../../services/firebase/proposals';
 import { TenderService } from '../../services/firebase/tenders';
+import { fetchOrganizationById } from '../../services/firebase/organizations';
 import { Proposal, ProposalAuditEvent, CanonicalProposalStatus } from '../../types/proposal';
 import { Tender } from '../../types/tender';
+import { Organization } from '../../types/organization';
 import { mockProposals } from '../../data/mockData';
 import { formatCurrencyINR } from '../../components/tenders/TenderOpportunityCard';
+import { AiProposalIntelligence } from '../../components/government/AiProposalIntelligence';
+import { ProposalEvaluationService } from '../../services/ai/proposalEvaluationService';
+import { EvaluationResult } from '../../types/evaluation';
 
 export interface ProposalReviewProps {
   onNavigate: (path: string) => void;
@@ -58,12 +64,54 @@ export const ProposalReview: React.FC<ProposalReviewProps> = ({
 
   const [tenders, setTenders] = useState<Tender[]>([]);
   const [proposals, setProposals] = useState<Proposal[]>([]);
+  const [evaluationsMap, setEvaluationsMap] = useState<Record<string, EvaluationResult>>({});
   const [selectedTenderId, setSelectedTenderId] = useState<string>(initialTenderId || 'ALL');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [loading, setLoading] = useState<boolean>(true);
 
   // Inspection Drawer State
   const [inspectedProposal, setInspectedProposal] = useState<Proposal | null>(null);
+  const [inspectedOrg, setInspectedOrg] = useState<Organization | null>(null);
+  const [, setInspectedOrgLoading] = useState<boolean>(false);
+
+  // Fetch authoritative organization when inspected proposal changes
+  useEffect(() => {
+    if (!inspectedProposal) {
+      setInspectedOrg(null);
+      return;
+    }
+
+    const targetOrgId = inspectedProposal.organizationId || inspectedProposal.agencyId;
+    if (!targetOrgId) {
+      setInspectedOrg(null);
+      return;
+    }
+
+    let cancelled = false;
+    setInspectedOrgLoading(true);
+
+    fetchOrganizationById(targetOrgId)
+      .then((org) => {
+        if (!cancelled) {
+          setInspectedOrg(org);
+        }
+      })
+      .catch((err) => {
+        console.warn('[ProposalReview] Failed to load authoritative organization:', err);
+        if (!cancelled) {
+          setInspectedOrg(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setInspectedOrgLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [inspectedProposal]);
 
   // Audit Events Modal State
   const [auditProposal, setAuditProposal] = useState<Proposal | null>(null);
@@ -99,6 +147,27 @@ export const ProposalReview: React.FC<ProposalReviewProps> = ({
       }
 
       setProposals(data);
+
+      // 3. Concurrently fetch latest AI evaluations for proposals
+      if (data.length > 0) {
+        try {
+          const evalEntries = await Promise.all(
+            data.map(async (p) => {
+              const latest = await ProposalEvaluationService.getLatestEvaluationForProposal(p.id);
+              return latest ? ([p.id, latest] as const) : null;
+            })
+          );
+          const map: Record<string, EvaluationResult> = {};
+          for (const entry of evalEntries) {
+            if (entry) {
+              map[entry[0]] = entry[1];
+            }
+          }
+          setEvaluationsMap(map);
+        } catch (evalErr) {
+          console.warn('[BTI Gov] Non-blocking error fetching evaluation map:', evalErr);
+        }
+      }
     } catch (err) {
       console.error('[BTI Gov] Error loading proposals:', err);
       if (!isLiveFirestoreSession()) {
@@ -241,6 +310,30 @@ export const ProposalReview: React.FC<ProposalReviewProps> = ({
             </span>
             <span className="block text-[10px] text-slate-400 font-mono">Inclusive GST</span>
           </div>
+        );
+      },
+    },
+    {
+      key: 'aiEvaluationScore',
+      header: 'AI Evaluation Score',
+      align: 'center',
+      render: (p) => {
+        const ev = evaluationsMap[p.id];
+        if (ev) {
+          return (
+            <div className="flex flex-col items-center">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold font-mono bg-indigo-50 text-indigo-900 border border-indigo-200">
+                <Sparkles className="w-3 h-3 text-indigo-600" />
+                <span>{ev.overallScore}/100</span>
+              </span>
+              <span className="text-[10px] text-slate-400 font-mono mt-0.5">
+                v{ev.evaluationVersion || '1.0'}
+              </span>
+            </div>
+          );
+        }
+        return (
+          <span className="text-[11px] text-slate-400 italic">Not Evaluated</span>
         );
       },
     },
@@ -560,6 +653,19 @@ export const ProposalReview: React.FC<ProposalReviewProps> = ({
                 </span>
               </div>
             </div>
+
+            {/* AI PROPOSAL INTELLIGENCE & EXPLAINABLE EVALUATION */}
+            {user && (
+              <AiProposalIntelligence
+                proposal={inspectedProposal}
+                tender={tenders.find((t) => t.id === inspectedProposal.tenderId) || null}
+                organization={inspectedOrg}
+                currentUser={user}
+                onEvaluationCompleted={(ev) => {
+                  setEvaluationsMap((prev) => ({ ...prev, [inspectedProposal.id]: ev }));
+                }}
+              />
+            )}
 
             {/* 1. CONTRACTOR IDENTITY & VERIFICATION */}
             <div className="space-y-3 p-4 rounded-xl bg-white border border-slate-200 shadow-xs">
@@ -1242,6 +1348,16 @@ export const ProposalReview: React.FC<ProposalReviewProps> = ({
                   {evt.notes && (
                     <div className="text-[11px] text-slate-700 bg-white p-2 rounded border border-slate-200/70 mt-1">
                       <strong>Notes:</strong> {evt.notes}
+                    </div>
+                  )}
+
+                  {evt.metadata && Object.keys(evt.metadata).length > 0 && (
+                    <div className="text-[10px] text-slate-500 font-mono flex flex-wrap gap-1.5 pt-0.5">
+                      {Object.entries(evt.metadata).map(([k, v]) => (
+                        <span key={k} className="px-1.5 py-0.5 bg-slate-200/60 rounded text-slate-700">
+                          {k}: {String(v)}
+                        </span>
+                      ))}
                     </div>
                   )}
                 </div>

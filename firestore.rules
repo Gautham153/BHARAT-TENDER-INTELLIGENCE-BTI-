@@ -31,9 +31,9 @@ service cloud.firestore {
 
     function isGovernmentUser() {
       return isSignedIn() && (
-        (request.auth.token.role == 'government') ||
+        (request.auth.token.role in ['government', 'government_admin', 'government_officer']) ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'government')
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['government', 'government_admin', 'government_officer'])
       );
     }
 
@@ -609,7 +609,7 @@ service cloud.firestore {
             )
           )
           ||
-          // Case 2: Government evaluation & adjudication review actions
+          // Case 2: Government adjudication review actions
           (
             isGovernmentUser()
             && incoming().actorRole == 'government'
@@ -622,6 +622,17 @@ service cloud.firestore {
 
       // Audit events are strictly immutable
       allow update, delete: if false;
+    }
+
+    // 8. Proposal Evaluations Collection Rules (/proposalEvaluations/{evaluationId})
+    // Phase 5: Authoritative AI evaluations accessible strictly by authorized government reviewers
+    match /proposalEvaluations/{evaluationId} {
+      // Read allowed strictly for government personnel (agencies and public are forbidden)
+      allow get, list: if isSignedIn() && isGovernmentUser();
+
+      // Evaluations are created exclusively by the trusted server-side evaluation service
+      // Direct client creation, modification, and deletion are strictly forbidden
+      allow create, update, delete: if false;
     }
   }
 }

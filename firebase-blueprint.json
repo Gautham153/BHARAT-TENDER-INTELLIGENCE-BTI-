@@ -455,7 +455,7 @@
         },
         "action": {
           "type": "string",
-          "enum": ["CREATED", "UPDATED", "SUBMITTED", "WITHDRAWN", "UNDER_REVIEW", "SHORTLISTED", "REJECTED", "AWARDED"]
+          "enum": ["CREATED", "UPDATED", "SUBMITTED", "WITHDRAWN", "UNDER_REVIEW", "SHORTLISTED", "REJECTED", "AWARDED", "AI_EVALUATION_REQUESTED", "AI_EVALUATION_COMPLETED", "AI_EVALUATION_FAILED"]
         },
         "actorId": {
           "type": "string",
@@ -483,6 +483,76 @@
         }
       },
       "required": ["eventId", "proposalId", "tenderId", "organizationId", "action", "actorId", "actorRole", "timestamp", "newStatus"]
+    },
+    "ProposalEvaluation": {
+      "title": "ProposalEvaluation",
+      "description": "Authoritative AI proposal evaluation record with explainable dimension scores and risk indicators",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "proposalId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "tenderId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "organizationId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "overallScore": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "dimensions": {
+          "type": "object"
+        },
+        "strengths": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "concerns": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "riskIndicators": {
+          "type": "array"
+        },
+        "explanation": {
+          "type": "string"
+        },
+        "limitations": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "modelProvider": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "modelVersion": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "evaluatedAt": {
+          "type": "string",
+          "maxLength": 50
+        },
+        "evaluatedBy": {
+          "type": "string",
+          "enum": ["AI"]
+        },
+        "evaluationVersion": {
+          "type": "string",
+          "maxLength": 20
+        }
+      },
+      "required": ["id", "proposalId", "tenderId", "organizationId", "overallScore", "dimensions", "evaluatedAt", "evaluatedBy", "evaluationVersion"]
     }
   },
   "firestore": {
@@ -513,6 +583,10 @@
     "/proposalEvents/{eventId}": {
       "schema": "ProposalAuditEvent",
       "description": "Append-only audit events tracking proposal lifecycle transitions"
+    },
+    "/proposalEvaluations/{evaluationId}": {
+      "schema": "ProposalEvaluation",
+      "description": "Immutable AI proposal evaluation records restricted to authorized government reviewers"
     }
   }
 }

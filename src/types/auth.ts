@@ -3,7 +3,7 @@
 
 import { VerificationStatus, VerificationResult } from './organization';
 
-export type AuthRole = 'government' | 'agency' | 'public';
+export type AuthRole = 'government' | 'agency' | 'public' | 'government_admin' | 'government_officer';
 
 export type { VerificationStatus, VerificationResult } from './organization';
 export type {

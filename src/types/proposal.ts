@@ -164,6 +164,13 @@ export interface Proposal {
   documents?: Document[];
 }
 
+export function toCanonicalProposalStatus(status: ProposalStatus | string): CanonicalProposalStatus {
+  const norm = (status || '').toUpperCase().replace(/\s+/g, '_');
+  if (norm === 'UNDER_EVALUATION') return 'UNDER_REVIEW';
+  if (norm === 'IN_EVALUATION') return 'UNDER_REVIEW';
+  return (norm as CanonicalProposalStatus) || 'DRAFT';
+}
+
 export type ProposalAuditAction =
   | 'CREATED'
   | 'UPDATED'
@@ -172,7 +179,10 @@ export type ProposalAuditAction =
   | 'UNDER_REVIEW'
   | 'SHORTLISTED'
   | 'REJECTED'
-  | 'AWARDED';
+  | 'AWARDED'
+  | 'AI_EVALUATION_REQUESTED'
+  | 'AI_EVALUATION_COMPLETED'
+  | 'AI_EVALUATION_FAILED';
 
 export interface ProposalAuditEvent {
   eventId: string;

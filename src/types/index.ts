@@ -7,6 +7,7 @@ export * from './auth';
 export * from './organization';
 export * from './tender';
 export * from './proposal';
+export * from './evaluation';
 
 export type UserRole = 'government' | 'agency' | 'public' | 'government_admin' | 'government_officer' | 'agency_user' | 'public_citizen';
 
