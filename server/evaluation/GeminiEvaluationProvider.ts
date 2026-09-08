@@ -1,13 +1,13 @@
 // Bharat Tender Intelligence (BTI) — Gemini AI Evaluation Provider
-// Phase 5: Structured, Evidence-Grounded Gemini 3.8 Flash Evaluation Engine
+// Phase 5: Structured, Evidence-Grounded Gemini 3.5 Flash Lite Evaluation Engine
 
 import { GoogleGenAI } from '@google/genai';
 import { EvaluationProvider, EvaluationContext } from './types.js';
 import { EvaluationResult, RiskIndicator, DimensionEvaluation, EvaluationDimensions } from '../../src/types/evaluation.js';
 
-const GEMINI_MODEL = 'gemini-3.8-flash';
+const GEMINI_MODEL = 'gemini-3.5-flash-lite';
 const PROVIDER_NAME = 'Google Gemini';
-const PROVIDER_VERSION = 'gemini-3.8-flash';
+const PROVIDER_VERSION = 'gemini-3.5-flash-lite';
 
 let geminiClientInstance: GoogleGenAI | null = null;
 

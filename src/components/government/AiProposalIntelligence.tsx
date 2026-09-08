@@ -517,7 +517,7 @@ export const AiProposalIntelligence: React.FC<AiProposalIntelligenceProps> = ({
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-400">Model:</span>
-                <span className="font-mono text-slate-800">{activeEvaluation.modelVersion || 'gemini-3.8-flash'}</span>
+                <span className="font-mono text-slate-800">{activeEvaluation.modelVersion || 'gemini-3.5-flash-lite'}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-400">Evaluated At:</span>
