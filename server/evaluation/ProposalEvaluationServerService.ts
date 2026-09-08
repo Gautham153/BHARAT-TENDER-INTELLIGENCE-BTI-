@@ -1,21 +1,21 @@
 // Bharat Tender Intelligence (BTI) — Server Evaluation Coordinator
 // Phase 5: Provider-Based Proposal Evaluation Service Architecture with Authoritative Backend Data Boundary
 
-import { EvaluationProvider, EvaluationContext } from './types';
-import { GeminiEvaluationProvider } from './GeminiEvaluationProvider';
-import { EvaluationResult } from '../../src/types/evaluation';
-import { Proposal, ProposalAuditEvent, toCanonicalProposalStatus, CanonicalProposalStatus } from '../../src/types/proposal';
-import { Tender, TenderMatchResult } from '../../src/types/tender';
-import { Organization } from '../../src/types/organization';
-import { verifyServerAuth } from './serverAuth';
+import { EvaluationProvider, EvaluationContext } from './types.ts';
+import { GeminiEvaluationProvider } from './GeminiEvaluationProvider.ts';
+import { EvaluationResult } from '../../src/types/evaluation.ts';
+import { Proposal, ProposalAuditEvent, toCanonicalProposalStatus, CanonicalProposalStatus } from '../../src/types/proposal.ts';
+import { Tender, TenderMatchResult } from '../../src/types/tender.ts';
+import { Organization } from '../../src/types/organization.ts';
+import { verifyServerAuth } from './serverAuth.ts';
 import {
   getAuthoritativeProposal,
   getAuthoritativeTender,
   getAuthoritativeOrganization,
   saveAuthoritativeEvaluation,
   saveAuthoritativeAuditEvent,
-} from './authoritativeDataService';
-import { TenderMatchingService } from '../../src/services/matching/tenderMatchingService';
+} from './authoritativeDataService.ts';
+import { TenderMatchingService } from '../../src/services/matching/tenderMatchingService.ts';
 
 export class ProposalEvaluationServerService {
   private provider: EvaluationProvider;

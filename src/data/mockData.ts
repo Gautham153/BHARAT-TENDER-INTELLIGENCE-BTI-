@@ -10,7 +10,7 @@ import {
   AnomalyAlert,
   Report,
   AuditLog,
-} from '../types';
+} from '../types/index.ts';
 
 export const mockStats = {
   totalProjects: 12458,

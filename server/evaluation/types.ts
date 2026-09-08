@@ -1,10 +1,10 @@
 // Bharat Tender Intelligence (BTI) — Server-Side Evaluation Architecture
 // Phase 5: Provider Abstraction & Types
 
-import { EvaluationResult, RiskIndicator, DimensionEvaluation } from '../../src/types/evaluation';
-import { Proposal } from '../../src/types/proposal';
-import { Tender, TenderMatchResult } from '../../src/types/tender';
-import { Organization } from '../../src/types/organization';
+import { EvaluationResult, RiskIndicator, DimensionEvaluation } from '../../src/types/evaluation.ts';
+import { Proposal } from '../../src/types/proposal.ts';
+import { Tender, TenderMatchResult } from '../../src/types/tender.ts';
+import { Organization } from '../../src/types/organization.ts';
 
 export interface EvaluationContext {
   proposalId: string;

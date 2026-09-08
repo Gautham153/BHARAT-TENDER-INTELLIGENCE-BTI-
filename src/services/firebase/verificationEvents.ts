@@ -10,8 +10,8 @@ import {
   getDocs,
   orderBy,
 } from 'firebase/firestore';
-import { db, isFirebaseConfigured } from './firebase';
-import { VerificationEvent, VerificationAuditAction } from '../../types/organization';
+import { db, isFirebaseConfigured } from './firebase.ts';
+import { VerificationEvent, VerificationAuditAction } from '../../types/organization.ts';
 
 const EVENTS_REGISTRY_KEY = 'bti_verification_events_v1';
 const DEMO_STORAGE_KEY = 'bti_demo_session_v1';
