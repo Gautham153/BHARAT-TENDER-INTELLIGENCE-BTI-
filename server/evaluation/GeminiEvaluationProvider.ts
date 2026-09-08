@@ -2,8 +2,8 @@
 // Phase 5: Structured, Evidence-Grounded Gemini 3.8 Flash Evaluation Engine
 
 import { GoogleGenAI } from '@google/genai';
-import { EvaluationProvider, EvaluationContext } from './types.ts';
-import { EvaluationResult, RiskIndicator, DimensionEvaluation, EvaluationDimensions } from '../../src/types/evaluation.ts';
+import { EvaluationProvider, EvaluationContext } from './types.js';
+import { EvaluationResult, RiskIndicator, DimensionEvaluation, EvaluationDimensions } from '../../src/types/evaluation.js';
 
 const GEMINI_MODEL = 'gemini-3.8-flash';
 const PROVIDER_NAME = 'Google Gemini';

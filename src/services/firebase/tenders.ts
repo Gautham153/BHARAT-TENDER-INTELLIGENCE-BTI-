@@ -14,7 +14,7 @@ import {
   orderBy,
   Timestamp,
 } from 'firebase/firestore';
-import { db, isFirebaseConfigured, auth } from './firebase.ts';
+import { db, isFirebaseConfigured, auth } from './firebase.js';
 import {
   Tender,
   TenderFormData,
@@ -23,8 +23,8 @@ import {
   TenderFilters,
   getEffectiveTenderStatus,
   canTransitionStatus,
-} from '../../types/tender.ts';
-import { AuthUser } from '../../types/auth.ts';
+} from '../../types/tender.js';
+import { AuthUser } from '../../types/auth.js';
 
 /**
  * Safely parses any date, string, or Timestamp into an authoritative Firestore Timestamp.

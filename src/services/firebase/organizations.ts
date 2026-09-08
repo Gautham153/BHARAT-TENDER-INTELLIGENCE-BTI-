@@ -13,15 +13,15 @@ import {
   limit,
   writeBatch,
 } from 'firebase/firestore';
-import { auth, db, isFirebaseConfigured } from './firebase.ts';
+import { auth, db, isFirebaseConfigured } from './firebase.js';
 import {
   Organization,
   VerificationStatus,
   VerificationResult,
   VerificationAuditAction,
   VerificationEvent,
-} from '../../types/organization.ts';
-import { recordVerificationEvent, saveLocalVerificationEvent } from './verificationEvents.ts';
+} from '../../types/organization.js';
+import { recordVerificationEvent, saveLocalVerificationEvent } from './verificationEvents.js';
 
 const ORG_STORAGE_PREFIX = 'bti_org_';
 const ORG_REGISTRY_KEY = 'bti_org_registry_v1';

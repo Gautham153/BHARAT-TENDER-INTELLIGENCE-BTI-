@@ -5,7 +5,7 @@ import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer as createViteServer } from 'vite';
-import { ProposalEvaluationServerService } from './server/evaluation/ProposalEvaluationServerService.ts';
+import { ProposalEvaluationServerService } from './server/evaluation/ProposalEvaluationServerService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

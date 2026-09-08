@@ -1,7 +1,7 @@
 // Bharat Tender Intelligence (BTI) — Serverless AI Evaluation Handler
 // Consolidated /api/ai serverless function for Vercel Hobby & Cloud deployment
 
-import { ProposalEvaluationServerService } from '../server/evaluation/ProposalEvaluationServerService.ts';
+import { ProposalEvaluationServerService } from '../server/evaluation/ProposalEvaluationServerService.js';
 
 const evaluationServer = new ProposalEvaluationServerService();
 

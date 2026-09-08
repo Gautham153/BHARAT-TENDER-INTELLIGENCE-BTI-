@@ -1,13 +1,13 @@
 // Bharat Tender Intelligence (BTI) — Domain Types & Interfaces
 // Phase 0 & 1A: Master Foundation Type Architecture
 
-import { Tender, TenderCategory, TenderStatus } from './tender.ts';
+import { Tender, TenderCategory, TenderStatus } from './tender.js';
 
-export * from './auth.ts';
-export * from './organization.ts';
-export * from './tender.ts';
-export * from './proposal.ts';
-export * from './evaluation.ts';
+export * from './auth.js';
+export * from './organization.js';
+export * from './tender.js';
+export * from './proposal.js';
+export * from './evaluation.js';
 
 export type UserRole = 'government' | 'agency' | 'public' | 'government_admin' | 'government_officer' | 'agency_user' | 'public_citizen';
 

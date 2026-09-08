@@ -26,8 +26,8 @@ import {
   TenderMatchResult,
   TenderMatchFactorItem,
   TenderMatchTier,
-} from '../../types/tender.ts';
-import { Organization } from '../../types/organization.ts';
+} from '../../types/tender.js';
+import { Organization } from '../../types/organization.js';
 
 /**
  * Authoritative, immutable deterministic matching weights summing to exactly 100.

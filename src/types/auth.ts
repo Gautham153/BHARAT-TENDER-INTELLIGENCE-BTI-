@@ -1,18 +1,18 @@
 // Bharat Tender Intelligence (BTI) — Authentication & Verification Types
 // Phase 1 & 2A: Master Authentication & Organization Verification Types
 
-import { VerificationStatus, VerificationResult } from './organization.ts';
+import { VerificationStatus, VerificationResult } from './organization.js';
 
 export type AuthRole = 'government' | 'agency' | 'public' | 'government_admin' | 'government_officer';
 
-export type { VerificationStatus, VerificationResult } from './organization.ts';
+export type { VerificationStatus, VerificationResult } from './organization.js';
 export type {
   Organization,
   VerificationEvent,
   VerificationAuditAction,
   VerificationProvider,
   GSTINValidationResult,
-} from './organization.ts';
+} from './organization.js';
 
 export type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated';
 

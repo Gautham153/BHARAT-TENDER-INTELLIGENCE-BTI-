@@ -4,14 +4,14 @@
 // In live Firebase mode, never falls back to mock/seed data on lookup failures.
 
 import crypto from 'crypto';
-import { Proposal, ProposalAuditEvent } from '../../src/types/proposal.ts';
-import { Tender } from '../../src/types/tender.ts';
-import { Organization } from '../../src/types/organization.ts';
-import { EvaluationResult } from '../../src/types/evaluation.ts';
-import { SEED_TENDERS } from '../../src/services/firebase/tenders.ts';
-import { SEED_DEMO_ORGANIZATIONS } from '../../src/services/firebase/organizations.ts';
-import { mockProposals, mockTenders } from '../../src/data/mockData.ts';
-import { isServerDemoModeEnabled } from './serverAuth.ts';
+import { Proposal, ProposalAuditEvent } from '../../src/types/proposal.js';
+import { Tender } from '../../src/types/tender.js';
+import { Organization } from '../../src/types/organization.js';
+import { EvaluationResult } from '../../src/types/evaluation.js';
+import { SEED_TENDERS } from '../../src/services/firebase/tenders.js';
+import { SEED_DEMO_ORGANIZATIONS } from '../../src/services/firebase/organizations.js';
+import { mockProposals, mockTenders } from '../../src/data/mockData.js';
+import { isServerDemoModeEnabled } from './serverAuth.js';
 
 export function convertFirestoreValue(val: any): any {
   if (val === null || val === undefined) return val;
