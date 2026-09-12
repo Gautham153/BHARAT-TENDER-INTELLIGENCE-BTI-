@@ -730,14 +730,7 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/proposals/$(incoming().proposalId)).data.tenderId == incoming().tenderId
         && get(/databases/$(database)/documents/proposals/$(incoming().proposalId)).data.organizationId == incoming().organizationId
         && exists(/databases/$(database)/documents/tenders/$(incoming().tenderId))
-        && (
-          let tenderDoc = get(/databases/$(database)/documents/tenders/$(incoming().tenderId)).data;
-          let propDoc = get(/databases/$(database)/documents/proposals/$(incoming().proposalId)).data;
-          let expectedSanctioned = tenderDoc.get('sanctionedAmount', tenderDoc.get('estimatedCost', tenderDoc.get('budget', 0)));
-          let expectedAwarded = propDoc.get('financialProposal', {}).get('totalProposedAmount', propDoc.get('financialProposal', {}).get('baseAmount', expectedSanctioned));
-          return incoming().sanctionedAmount == expectedSanctioned
-            && (incoming().awardedAmount == expectedAwarded || incoming().awardedAmount == expectedSanctioned);
-        )
+        && isValidProjectFinancialBaseline()
         && exists(/databases/$(database)/documents/organizations/$(incoming().organizationId))
         && (
           get(/databases/$(database)/documents/organizations/$(incoming().organizationId)).data.verified == true ||
@@ -745,6 +738,16 @@ service cloud.firestore {
         )
         && getAfter(/databases/$(database)/documents/projectAuditEvents/$(projectCreatedAuditId(projectId))).data.action == 'PROJECT_CREATED'
         && getAfter(/databases/$(database)/documents/projectAuditEvents/$(projectCreatedAuditId(projectId))).data.projectId == projectId;
+
+      // Project Financial Baseline and Progress Verification Helper Functions
+      function isValidProjectFinancialBaseline() {
+        let tenderDoc = get(/databases/$(database)/documents/tenders/$(incoming().tenderId)).data;
+        let propDoc = get(/databases/$(database)/documents/proposals/$(incoming().proposalId)).data;
+        let expectedSanctioned = tenderDoc.get('sanctionedAmount', tenderDoc.get('estimatedCost', tenderDoc.get('budget', 0)));
+        let expectedAwarded = propDoc.get('financialProposal', {}).get('totalProposedAmount', propDoc.get('financialProposal', {}).get('baseAmount', expectedSanctioned));
+        return incoming().sanctionedAmount == expectedSanctioned
+          && (incoming().awardedAmount == expectedAwarded || incoming().awardedAmount == expectedSanctioned);
+      }
 
       // Project Immutable Linkage & Controlled Update Lifecycle Security
       function isImmutableProjectLinkagePreserved() {
@@ -775,6 +778,23 @@ service cloud.firestore {
           && incoming().financialProgress == incoming().financialProgressPercent
           && incoming().utilizedAmount is number
           && incoming().utilizedAmount >= 0;
+      }
+
+      function isValidFinancialProgressRecalculation() {
+        let finRec = getAfter(/databases/$(database)/documents/projectFinancialRecords/$(incoming().lastVerifiedRecordId)).data;
+        let addedUtil = (finRec.verificationStatus == 'VERIFIED') ? finRec.amount : 0;
+        let expectedUtil = existing().utilizedAmount + addedUtil;
+        let awarded = existing().awardedAmount > 0 ? existing().awardedAmount : (existing().sanctionedAmount > 0 ? existing().sanctionedAmount : 1);
+        let expectedRawPercent = (expectedUtil * 100) / awarded;
+        let expectedCappedPercent = expectedRawPercent > 100 ? 100 : expectedRawPercent;
+        return incoming().utilizedAmount == expectedUtil
+          && incoming().amountDisbursed == expectedUtil
+          && incoming().disbursedAmount == expectedUtil
+          && (
+            (expectedCappedPercent == 100 && incoming().financialProgressPercent == 100)
+            ||
+            (incoming().financialProgressPercent - expectedCappedPercent <= 1 && expectedCappedPercent - incoming().financialProgressPercent <= 1)
+          );
       }
 
       allow update: if isSignedIn()
@@ -858,22 +878,7 @@ service cloud.firestore {
             && get(/databases/$(database)/documents/projectFinancialRecords/$(incoming().lastVerifiedRecordId)).data.verificationStatus == 'PENDING'
             && getAfter(/databases/$(database)/documents/projectFinancialRecords/$(incoming().lastVerifiedRecordId)).data.verificationStatus in ['VERIFIED', 'REJECTED']
             && getAfter(/databases/$(database)/documents/projectFinancialRecords/$(incoming().lastVerifiedRecordId)).data.projectId == projectId
-            && (
-              let finRec = getAfter(/databases/$(database)/documents/projectFinancialRecords/$(incoming().lastVerifiedRecordId)).data;
-              let addedUtil = (finRec.verificationStatus == 'VERIFIED') ? finRec.amount : 0;
-              let expectedUtil = existing().utilizedAmount + addedUtil;
-              let awarded = existing().awardedAmount > 0 ? existing().awardedAmount : (existing().sanctionedAmount > 0 ? existing().sanctionedAmount : 1);
-              let expectedRawPercent = (expectedUtil * 100) / awarded;
-              let expectedCappedPercent = expectedRawPercent > 100 ? 100 : expectedRawPercent;
-              return incoming().utilizedAmount == expectedUtil
-                && incoming().amountDisbursed == expectedUtil
-                && incoming().disbursedAmount == expectedUtil
-                && (
-                  (expectedCappedPercent == 100 && incoming().financialProgressPercent == 100)
-                  ||
-                  (incoming().financialProgressPercent - expectedCappedPercent <= 1 && expectedCappedPercent - incoming().financialProgressPercent <= 1)
-                );
-            )
+            && isValidFinancialProgressRecalculation()
             && getAfter(/databases/$(database)/documents/projectAuditEvents/$(financialVerifiedAuditId(incoming().lastVerifiedRecordId))).data.projectId == projectId
             && getAfter(/databases/$(database)/documents/projectAuditEvents/$(financialVerifiedAuditId(incoming().lastVerifiedRecordId))).data.action in ['FINANCIAL_RECORD_VERIFIED', 'FINANCIAL_RECORD_REJECTED']
           )
