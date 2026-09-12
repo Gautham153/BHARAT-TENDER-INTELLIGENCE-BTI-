@@ -809,8 +809,7 @@ service cloud.firestore {
             )
             && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-prog-submit-$(incoming().lastProgressUpdateId)).data.action == 'PROGRESS_UPDATE_SUBMITTED'
             && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-prog-submit-$(incoming().lastProgressUpdateId)).data.projectId == projectId
-          );
-        );
+          ));
 
       allow delete: if false;
     }
