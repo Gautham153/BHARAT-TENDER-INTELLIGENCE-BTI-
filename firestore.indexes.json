@@ -123,6 +123,10 @@
         {
           "fieldPath": "inspectionDate",
           "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "DESCENDING"
         }
       ]
     },
