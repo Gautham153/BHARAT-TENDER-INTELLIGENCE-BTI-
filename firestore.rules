@@ -943,7 +943,10 @@ service cloud.firestore {
       allow create: if isSignedIn() && isGovernmentUser() && isValidId(milestoneId)
         && incoming().id == milestoneId
         && incoming().projectId is string
-        && exists(/databases/$(database)/documents/projects/$(incoming().projectId))
+        && (
+          exists(/databases/$(database)/documents/projects/$(incoming().projectId)) ||
+          getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.id == incoming().projectId
+        )
         && incoming().sequence is number
         && incoming().sequence >= 1
         && incoming().weightPercent is number
