@@ -98,6 +98,17 @@ export function sanitizeFirestorePayload<T extends Record<string, any>>(obj: T):
 }
 
 /**
+ * Returns the authoritative authenticated Firebase UID when available,
+ * falling back to user.uid or user.id.
+ */
+export function getAuthoritativeUid(user: AuthUser): string {
+  if (auth?.currentUser?.uid) {
+    return auth.currentUser.uid;
+  }
+  return user.uid || user.id;
+}
+
+/**
  * Generates an authoritative project reference number.
  * Format: BTI/MPLAD/{YEAR}/{SEQUENCE}
  * Produces a collision-resistant deterministic suffix derived from the authoritative proposal ID.
@@ -597,17 +608,18 @@ export class ProjectService {
       'Implementation project under Member of Parliament Local Area Development Scheme (MPLAD).';
 
     const agencyName = org.legalName || proposal.organizationName || 'Awarded Implementing Agency';
-    const orgIdentifier = org.organizationId || (org as any).id || orgId;
+    const canonicalOrgId = proposal.organizationId || orgId;
+    const authoritativeActorId = getAuthoritativeUid(user);
 
     const newProject: Project = {
       id: projectId,
       projectNumber,
       tenderId: tender.id,
       proposalId: proposal.id,
-      organizationId: orgIdentifier,
+      organizationId: canonicalOrgId,
       title,
       description,
-      authorityId: user.id || user.uid,
+      authorityId: authoritativeActorId,
       authorityName: user.name || 'District Nodal Authority',
       implementingAgencyName: agencyName,
       sector: tender.category || 'Infrastructure',
@@ -627,7 +639,7 @@ export class ProjectService {
       // Compatibility fields
       projectCode: projectNumber,
       tenderNumber: tender.tenderNumber,
-      assignedAgencyId: orgIdentifier,
+      assignedAgencyId: canonicalOrgId,
       executingAgencyName: agencyName,
       agencyName,
       sanctionedBudget: sanctionedAmount,
@@ -682,15 +694,38 @@ export class ProjectService {
       for (const ms of initialMilestones) {
         const msRef = doc(db, MILESTONES_COLLECTION, ms.id);
         batch.set(msRef, sanitizeFirestorePayload(ms));
+
+        // Create MILESTONE_CREATED audit event in the same atomic writeBatch
+        const msEventId = `evt-ms-create-${ms.id}`;
+        const msAuditEvent: ProjectAuditEvent = {
+          eventId: msEventId,
+          projectId,
+          action: 'MILESTONE_CREATED',
+          actorId: authoritativeActorId,
+          actorRole: 'government',
+          actorName: user.name || 'Authorized Officer',
+          timestamp: nowIso,
+          newState: {
+            milestoneId: ms.id,
+            title: ms.title,
+            weight: ms.weightPercent,
+            sequence: ms.sequence,
+            weightPercent: ms.weightPercent,
+            status: ms.status,
+          },
+          notes: `Initial milestone "${ms.title}" established during project creation.`,
+        };
+        const msEvtRef = doc(db, AUDIT_EVENTS_COLLECTION, msEventId);
+        batch.set(msEvtRef, sanitizeFirestorePayload(msAuditEvent));
       }
 
-      // Record Audit Event
+      // Record PROJECT_CREATED Audit Event
       const eventId = `evt-proj-create-${projectId}`;
       const auditEvent: ProjectAuditEvent = {
         eventId,
         projectId,
         action: 'PROJECT_CREATED',
-        actorId: user.id || user.uid,
+        actorId: authoritativeActorId,
         actorRole: 'government',
         actorName: user.name || 'Authorized Officer',
         timestamp: nowIso,
@@ -713,29 +748,56 @@ export class ProjectService {
     initialMilestones: ProjectMilestone[],
     user: AuthUser
   ): void {
+    const actorId = getAuthoritativeUid(user);
+    const nowIso = new Date().toISOString();
+
     const projects = getLocalItems<Project>(LOCAL_STORAGE_PROJECTS_KEY, [INITIAL_DEMO_PROJECT]);
     projects.unshift(project);
     saveLocalItems(LOCAL_STORAGE_PROJECTS_KEY, projects);
+
+    const events = getLocalItems<ProjectAuditEvent>(LOCAL_STORAGE_EVENTS_KEY, INITIAL_DEMO_EVENTS);
 
     if (initialMilestones.length > 0) {
       const milestones = getLocalItems<ProjectMilestone>(LOCAL_STORAGE_MILESTONES_KEY, INITIAL_DEMO_MILESTONES);
       milestones.push(...initialMilestones);
       saveLocalItems(LOCAL_STORAGE_MILESTONES_KEY, milestones);
+
+      for (const ms of initialMilestones) {
+        const msEventId = `evt-ms-create-${ms.id}`;
+        const msAuditEvent: ProjectAuditEvent = {
+          eventId: msEventId,
+          projectId: project.id,
+          action: 'MILESTONE_CREATED',
+          actorId,
+          actorRole: 'government',
+          actorName: user.name || 'Authorized Officer',
+          timestamp: nowIso,
+          newState: {
+            milestoneId: ms.id,
+            title: ms.title,
+            weight: ms.weightPercent,
+            sequence: ms.sequence,
+            weightPercent: ms.weightPercent,
+            status: ms.status,
+          },
+          notes: `Initial milestone "${ms.title}" established during project creation.`,
+        };
+        events.unshift(msAuditEvent);
+      }
     }
 
-    const eventId = `evt-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    const eventId = `evt-proj-create-${project.id}`;
     const auditEvent: ProjectAuditEvent = {
       eventId,
       projectId: project.id,
       action: 'PROJECT_CREATED',
-      actorId: user.id || user.uid,
+      actorId,
       actorRole: 'government',
       actorName: user.name || 'Authorized Officer',
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso,
       newState: { status: project.status, projectNumber: project.projectNumber, awardedAmount: project.awardedAmount },
       notes: `Project ${project.projectNumber} established from proposal ${project.proposalId}.`,
     };
-    const events = getLocalItems<ProjectAuditEvent>(LOCAL_STORAGE_EVENTS_KEY, INITIAL_DEMO_EVENTS);
     events.unshift(auditEvent);
     saveLocalItems(LOCAL_STORAGE_EVENTS_KEY, events);
   }
@@ -870,7 +932,7 @@ export class ProjectService {
       eventId,
       projectId,
       action: 'STATUS_CHANGED',
-      actorId: user.id || user.uid,
+      actorId: getAuthoritativeUid(user),
       actorRole: 'government',
       actorName: user.name || 'Authorized Officer',
       timestamp: nowIso,
@@ -996,7 +1058,7 @@ export class ProjectService {
       eventId,
       projectId,
       action: 'MILESTONE_CREATED',
-      actorId: user.id || user.uid,
+      actorId: getAuthoritativeUid(user),
       actorRole: 'government',
       actorName: user.name || 'Authorized Officer',
       timestamp: nowIso,
@@ -1121,7 +1183,7 @@ export class ProjectService {
       eventId,
       projectId,
       action: 'MILESTONE_UPDATED',
-      actorId: user.id || user.uid,
+      actorId: getAuthoritativeUid(user),
       actorRole: isGov ? 'government' : 'agency',
       actorName: user.name || 'User',
       timestamp: nowIso,
@@ -1293,7 +1355,7 @@ export class ProjectService {
           eventId: msEventId,
           projectId,
           action: 'MILESTONE_UPDATED',
-          actorId: user.id || user.uid,
+          actorId: getAuthoritativeUid(user),
           actorRole: isGov ? 'government' : 'agency',
           actorName: user.name || 'User',
           timestamp: nowIso,
@@ -1309,7 +1371,7 @@ export class ProjectService {
       projectId,
       milestoneId,
       milestoneTitle,
-      submittedBy: user.id || user.uid,
+      submittedBy: getAuthoritativeUid(user),
       submittedByRole: effectiveRole,
       submittedByName: user.name || (effectiveRole === 'GOVERNMENT' ? 'Government Officer' : 'Contractor Representative'),
       updateDate: nowIso,
@@ -1325,7 +1387,7 @@ export class ProjectService {
       eventId,
       projectId,
       action: 'PROGRESS_UPDATE_SUBMITTED',
-      actorId: user.id || user.uid,
+      actorId: getAuthoritativeUid(user),
       actorRole: effectiveRole === 'GOVERNMENT' ? 'government' : 'agency',
       actorName: user.name || 'User',
       timestamp: nowIso,
@@ -1460,7 +1522,7 @@ export class ProjectService {
       expenditureType,
       description: description.trim(),
       referenceNumber: referenceNumber?.trim() || undefined,
-      submittedBy: user.id || user.uid,
+      submittedBy: getAuthoritativeUid(user),
       submittedByRole: effectiveRole,
       submittedByName: user.name || (effectiveRole === 'GOVERNMENT' ? 'Government Officer' : 'Contractor'),
       verificationStatus: 'PENDING',
@@ -1472,7 +1534,7 @@ export class ProjectService {
       eventId,
       projectId,
       action: 'FINANCIAL_RECORD_SUBMITTED',
-      actorId: user.id || user.uid,
+      actorId: getAuthoritativeUid(user),
       actorRole: effectiveRole === 'GOVERNMENT' ? 'government' : 'agency',
       actorName: user.name || 'User',
       timestamp: nowIso,
@@ -1537,7 +1599,7 @@ export class ProjectService {
     const updated: ProjectFinancialRecord = {
       ...existing,
       verificationStatus: status,
-      verifiedBy: user.id || user.uid,
+      verifiedBy: getAuthoritativeUid(user),
       verifiedByName: user.name || 'District Nodal Officer',
       verifiedAt: nowIso,
       verificationNotes: notes?.trim() || undefined,
@@ -1563,7 +1625,7 @@ export class ProjectService {
       eventId,
       projectId,
       action: status === 'VERIFIED' ? 'FINANCIAL_RECORD_VERIFIED' : 'FINANCIAL_RECORD_REJECTED',
-      actorId: user.id || user.uid,
+      actorId: getAuthoritativeUid(user),
       actorRole: 'government',
       actorName: user.name || 'Authorized Officer',
       timestamp: nowIso,
@@ -1656,7 +1718,7 @@ export class ProjectService {
       id,
       projectId,
       inspectionDate: inspectionDate || nowIso,
-      officerId: user.id || user.uid,
+      officerId: getAuthoritativeUid(user),
       officerName: officerName?.trim() || user.name || 'Inspecting Officer',
       officerDesignation: officerDesignation?.trim() || 'Nodal Technical Officer',
       inspectionType,
@@ -1673,7 +1735,7 @@ export class ProjectService {
       eventId,
       projectId,
       action: 'INSPECTION_CREATED',
-      actorId: user.id || user.uid,
+      actorId: getAuthoritativeUid(user),
       actorRole: 'government',
       actorName: user.name || 'Inspecting Officer',
       timestamp: nowIso,
@@ -1979,7 +2041,7 @@ export class ProjectService {
       eventId,
       projectId,
       action: 'EXCEPTION_ACKNOWLEDGED',
-      actorId: user.id || user.uid,
+      actorId: getAuthoritativeUid(user),
       actorRole: 'government',
       actorName: user.name || 'Authorized Officer',
       timestamp: nowIso,
@@ -2040,7 +2102,7 @@ export class ProjectService {
     const updated: ProjectException = {
       ...existing,
       status: 'RESOLVED',
-      resolvedBy: user.id || user.uid,
+      resolvedBy: getAuthoritativeUid(user),
       resolvedByName: user.name || 'Authorized Officer',
       resolvedAt: nowIso,
       resolutionNote: resolutionNote.trim(),
@@ -2051,7 +2113,7 @@ export class ProjectService {
       eventId,
       projectId,
       action: 'EXCEPTION_RESOLVED',
-      actorId: user.id || user.uid,
+      actorId: getAuthoritativeUid(user),
       actorRole: 'government',
       actorName: user.name || 'Authorized Officer',
       timestamp: nowIso,
