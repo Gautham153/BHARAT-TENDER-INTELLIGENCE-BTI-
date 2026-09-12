@@ -8,6 +8,7 @@ export * from './organization.js';
 export * from './tender.js';
 export * from './proposal.js';
 export * from './evaluation.js';
+export * from './project.js';
 
 export type UserRole = 'government' | 'agency' | 'public' | 'government_admin' | 'government_officer' | 'agency_user' | 'public_citizen';
 
@@ -24,8 +25,6 @@ export interface User {
   verified: boolean;
   createdAt: string;
 }
-
-export type ProjectStatus = 'Planning' | 'In Progress' | 'Under Inspection' | 'Completed' | 'Delayed' | 'Halted';
 
 export interface PublicProjectUpdate {
   id: string;
@@ -61,48 +60,6 @@ export interface Inspection {
   status: 'Passed' | 'Action Required' | 'Irregularity Found';
   findings: string;
   images: string[];
-}
-
-export interface Project {
-  id: string;
-  projectCode: string;
-  title: string;
-  description: string;
-  tenderId?: string;
-  tenderNumber?: string;
-  assignedAgencyId?: string;
-  executingAgencyName: string;
-  agencyName?: string;
-  constituency: string;
-  state: string;
-  district: string;
-  lat: number;
-  lng: number;
-  locationCoordinates?: {
-    lat: number;
-    lng: number;
-    address: string;
-  };
-  category: TenderCategory;
-  sanctionedBudget: number;
-  amountDisbursed: number;
-  disbursedAmount?: number;
-  utilizedAmount?: number;
-  physicalProgress: number; // 0-100%
-  financialProgress: number; // 0-100%
-  startDate?: string;
-  targetCompletionDate: string;
-  actualCompletionDate?: string;
-  status: ProjectStatus;
-  riskScore: number; // 0-100
-  riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' | 'Low' | 'Medium' | 'High' | 'Critical';
-  riskSignals?: string[];
-  beneficiariesCount?: number;
-  mpName: string;
-  lastUpdated?: string;
-  updates?: PublicProjectUpdate[];
-  images?: ProjectImage[];
-  inspections?: Inspection[];
 }
 
 export interface AnomalyAlert {

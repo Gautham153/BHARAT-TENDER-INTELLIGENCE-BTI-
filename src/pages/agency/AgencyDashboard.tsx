@@ -23,12 +23,13 @@ import { ProgressBar } from '../../components/ui/ProgressBar';
 import { SyntheticDataNotice } from '../../components/common/SyntheticDataNotice';
 import { TenderMatchBadge } from '../../components/tenders/TenderMatchBadge';
 import { formatCurrencyINR, getDaysRemainingInfo } from '../../components/tenders/TenderOpportunityCard';
-import { mockProjects, mockProposals } from '../../data/mockData';
 import { TenderService } from '../../services/firebase/tenders';
 import { OrganizationService } from '../../services/firebase/organizations';
+import { ProjectService } from '../../services/firebase/projects';
 import { TenderMatchingService } from '../../services/matching/tenderMatchingService';
 import { Tender, TenderMatchResult } from '../../types/tender';
 import { Organization } from '../../types/organization';
+import { Project, toCanonicalProjectStatus, ProjectMilestone } from '../../types/project';
 import { useAuth } from '../../context/AuthContext';
 
 export const AgencyDashboard: React.FC<{ onNavigate: (path: string) => void }> = ({ onNavigate }) => {
@@ -36,6 +37,9 @@ export const AgencyDashboard: React.FC<{ onNavigate: (path: string) => void }> =
   const [liveTenders, setLiveTenders] = useState<Tender[]>([]);
   const [organization, setOrganization] = useState<Organization | null>(null);
   const [loadingTenders, setLoadingTenders] = useState<boolean>(true);
+  const [agencyProjects, setAgencyProjects] = useState<Project[]>([]);
+  const [projectMilestones, setProjectMilestones] = useState<ProjectMilestone[]>([]);
+  const [loadingProjects, setLoadingProjects] = useState<boolean>(true);
 
   useEffect(() => {
     let isMounted = true;
@@ -46,25 +50,63 @@ export const AgencyDashboard: React.FC<{ onNavigate: (path: string) => void }> =
         setLiveTenders(tenders);
 
         // Fetch user organization safely
+        let org: Organization | null = null;
         try {
           if (user?.organizationId) {
-            const org = await OrganizationService.getOrganizationById(user.organizationId);
-            if (org && isMounted) setOrganization(org);
+            org = await OrganizationService.getOrganizationById(user.organizationId);
           } else if (user?.id || user?.uid) {
             const userId = user.id || user.uid || '';
-            let org = await OrganizationService.getOrganizationByUserId(userId);
+            org = await OrganizationService.getOrganizationByUserId(userId);
             if (!org && user.gstin) {
               org = await OrganizationService.getOrganizationByGstin(user.gstin);
             }
-            if (org && isMounted) setOrganization(org);
           }
+          if (org && isMounted) setOrganization(org);
         } catch (orgErr) {
           console.warn('[BTI AgencyDashboard] Non-fatal org fetch error:', orgErr);
+        }
+
+        // Fetch agency projects using authoritative organizationId
+        const effectiveOrgId = user?.organizationId || org?.organizationId;
+        if (effectiveOrgId) {
+          try {
+            const projects = await ProjectService.getProjects({
+              role: 'agency',
+              organizationId: effectiveOrgId,
+            });
+            if (isMounted) {
+              setAgencyProjects(projects || []);
+              if (projects && projects.length > 0) {
+                const msLists = await Promise.all(
+                  projects.map((p) => ProjectService.getMilestones(p.id))
+                );
+                if (isMounted) {
+                  setProjectMilestones(msLists.flat());
+                }
+              } else {
+                setProjectMilestones([]);
+              }
+            }
+          } catch (projErr) {
+            console.warn('[BTI AgencyDashboard] Error fetching agency projects:', projErr);
+            if (isMounted) {
+              setAgencyProjects([]);
+              setProjectMilestones([]);
+            }
+          }
+        } else {
+          if (isMounted) {
+            setAgencyProjects([]);
+            setProjectMilestones([]);
+          }
         }
       } catch (err) {
         console.warn('[BTI AgencyDashboard] Error fetching live tenders:', err);
       } finally {
-        if (isMounted) setLoadingTenders(false);
+        if (isMounted) {
+          setLoadingTenders(false);
+          setLoadingProjects(false);
+        }
       }
     }
     fetchData();
@@ -72,6 +114,33 @@ export const AgencyDashboard: React.FC<{ onNavigate: (path: string) => void }> =
       isMounted = false;
     };
   }, [user]);
+
+  const activeProjectsCount = useMemo(() => {
+    return agencyProjects.filter(
+      (p) => p.status !== 'COMPLETED' && p.status !== 'CLOSED'
+    ).length;
+  }, [agencyProjects]);
+
+  const totalDisbursedFunds = useMemo(() => {
+    return agencyProjects.reduce(
+      (sum, p) => sum + (p.disbursedAmount || p.amountDisbursed || p.utilizedAmount || 0),
+      0
+    );
+  }, [agencyProjects]);
+
+  const milestoneCompliancePercent = useMemo(() => {
+    if (projectMilestones.length === 0) {
+      if (agencyProjects.length === 0) return 0;
+      const avgProg =
+        agencyProjects.reduce(
+          (sum, p) => sum + (p.physicalProgressPercent ?? p.physicalProgress ?? 0),
+          0
+        ) / agencyProjects.length;
+      return Math.round(avgProg);
+    }
+    const compliantCount = projectMilestones.filter((m) => m.status !== 'DELAYED').length;
+    return Math.round((compliantCount / projectMilestones.length) * 100);
+  }, [agencyProjects, projectMilestones]);
 
   const matchMap = useMemo<Map<string, TenderMatchResult>>(() => {
     return TenderMatchingService.batchMatch(liveTenders, organization);
@@ -213,19 +282,19 @@ export const AgencyDashboard: React.FC<{ onNavigate: (path: string) => void }> =
         />
         <StatCard
           title="Active Projects"
-          value={String(mockProjects.length)}
+          value={String(activeProjectsCount)}
           subtitle="Works underway"
           icon={FolderKanban}
         />
         <StatCard
           title="Milestone Compliance"
-          value="92%"
+          value={agencyProjects.length === 0 ? '0%' : `${milestoneCompliancePercent}%`}
           subtitle="On-time site completion"
           icon={CheckCircle2}
         />
         <StatCard
           title="Disbursed Funds"
-          value="₹ 1.82 Cr"
+          value={formatCurrencyINR(totalDisbursedFunds)}
           subtitle="PFMS verified releases"
           icon={Receipt}
         />
@@ -250,27 +319,43 @@ export const AgencyDashboard: React.FC<{ onNavigate: (path: string) => void }> =
           </div>
 
           <div className="space-y-4">
-            {mockProjects.slice(0, 3).map((proj) => (
-              <div key={proj.id} className="p-3.5 bg-slate-50 border border-slate-200/80 rounded-xl space-y-2">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <span className="text-[10px] font-mono font-bold text-slate-500">{proj.projectCode}</span>
-                    <h4 className="font-bold text-slate-900 text-xs">{proj.title}</h4>
-                  </div>
-                  <StatusBadge status={proj.status} size="sm" />
-                </div>
-                <ProgressBar
-                  label="Physical Site Progress"
-                  value={proj.physicalProgress}
-                  color="emerald"
-                  size="sm"
-                />
-                <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1">
-                  <span>Sanction: ₹ {(proj.sanctionedBudget / 10000000).toFixed(2)} Cr</span>
-                  <span className="font-semibold text-slate-800">Target: {proj.targetCompletionDate}</span>
-                </div>
+            {loadingProjects ? (
+              <div className="p-8 text-center text-xs text-slate-400">Loading active projects...</div>
+            ) : agencyProjects.length === 0 ? (
+              <div className="p-8 text-center text-xs text-slate-500 bg-slate-50 border border-dashed border-slate-200 rounded-xl space-y-1">
+                <p className="font-semibold text-slate-700">No Active Projects</p>
+                <p>Awarded tenders and sanctioned contracts will appear here for progress tracking.</p>
               </div>
-            ))}
+            ) : (
+              agencyProjects.slice(0, 3).map((proj) => {
+                const pCode = proj.projectNumber || proj.projectCode || proj.id.slice(0, 12);
+                const physProg = proj.physicalProgressPercent ?? proj.physicalProgress ?? 0;
+                const budgetVal = proj.awardedAmount || proj.sanctionedAmount || proj.sanctionedBudget || 0;
+                const targetDate = proj.plannedCompletionDate || proj.targetCompletionDate || 'N/A';
+
+                return (
+                  <div key={proj.id} className="p-3.5 bg-slate-50 border border-slate-200/80 rounded-xl space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <span className="text-[10px] font-mono font-bold text-slate-500">{pCode}</span>
+                        <h4 className="font-bold text-slate-900 text-xs">{proj.title}</h4>
+                      </div>
+                      <StatusBadge status={toCanonicalProjectStatus(proj.status)} size="sm" />
+                    </div>
+                    <ProgressBar
+                      label="Physical Site Progress"
+                      value={physProg}
+                      color="emerald"
+                      size="sm"
+                    />
+                    <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1">
+                      <span>Sanction: {formatCurrencyINR(budgetVal)}</span>
+                      <span className="font-semibold text-slate-800">Target: {targetDate.slice(0, 10)}</span>
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
         </Card>
 
@@ -298,7 +383,9 @@ export const AgencyDashboard: React.FC<{ onNavigate: (path: string) => void }> =
                   <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                   <span>On-Time Milestone Rate</span>
                 </div>
-                <strong className="text-slate-900">92% Compliance</strong>
+                <strong className="text-slate-900">
+                  {agencyProjects.length === 0 ? '0% Compliance' : `${milestoneCompliancePercent}% Compliance`}
+                </strong>
               </div>
 
               <div className="flex items-center justify-between p-2.5 bg-slate-50 border border-slate-200 rounded-lg">

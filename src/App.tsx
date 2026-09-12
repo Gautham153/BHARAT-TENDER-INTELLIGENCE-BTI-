@@ -154,6 +154,7 @@ function AppContent() {
 
           case '/agency/proposals':
             return <SubmittedProposalsPage onNavigate={navigate} />;
+          case '/agency/projects':
           case '/agency/milestones':
             return <ProjectMilestonesPage onNavigate={navigate} />;
           case '/agency/disbursements':

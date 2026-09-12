@@ -553,6 +553,135 @@
         }
       },
       "required": ["id", "proposalId", "tenderId", "organizationId", "overallScore", "dimensions", "evaluatedAt", "evaluatedBy", "evaluationVersion"]
+    },
+    "Project": {
+      "title": "Project",
+      "description": "Authoritative master project record created from awarded proposal under MPLAD",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "projectNumber": { "type": "string", "maxLength": 50 },
+        "tenderId": { "type": "string", "maxLength": 128 },
+        "proposalId": { "type": "string", "maxLength": 128 },
+        "organizationId": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 300 },
+        "description": { "type": "string" },
+        "authorityId": { "type": "string", "maxLength": 128 },
+        "implementingAgencyName": { "type": "string", "maxLength": 200 },
+        "sector": { "type": "string", "maxLength": 100 },
+        "category": { "type": "string", "maxLength": 100 },
+        "state": { "type": "string", "maxLength": 100 },
+        "district": { "type": "string", "maxLength": 100 },
+        "sanctionedAmount": { "type": "number", "minimum": 0 },
+        "awardedAmount": { "type": "number", "minimum": 0 },
+        "status": {
+          "type": "string",
+          "enum": ["NOT_STARTED", "IN_PROGRESS", "ON_HOLD", "COMPLETED", "CLOSED"]
+        },
+        "physicalProgressPercent": { "type": "number", "minimum": 0, "maximum": 100 },
+        "financialProgressPercent": { "type": "number", "minimum": 0, "maximum": 100 },
+        "createdAt": { "type": "string", "maxLength": 50 },
+        "updatedAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["id", "projectNumber", "tenderId", "proposalId", "organizationId", "title", "sanctionedAmount", "awardedAmount", "status", "createdAt"]
+    },
+    "ProjectMilestone": {
+      "title": "ProjectMilestone",
+      "description": "Implementation milestone for tracking structured progress",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "projectId": { "type": "string", "maxLength": 128 },
+        "sequence": { "type": "number", "minimum": 1 },
+        "title": { "type": "string", "maxLength": 200 },
+        "weightPercent": { "type": "number", "minimum": 0, "maximum": 100 },
+        "progressPercent": { "type": "number", "minimum": 0, "maximum": 100 },
+        "status": {
+          "type": "string",
+          "enum": ["NOT_STARTED", "IN_PROGRESS", "COMPLETED", "DELAYED"]
+        },
+        "createdAt": { "type": "string", "maxLength": 50 },
+        "updatedAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["id", "projectId", "sequence", "title", "weightPercent", "progressPercent", "status"]
+    },
+    "ProjectProgressUpdate": {
+      "title": "ProjectProgressUpdate",
+      "description": "Append-only record of physical progress and site updates",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "projectId": { "type": "string", "maxLength": 128 },
+        "submittedBy": { "type": "string", "maxLength": 128 },
+        "submittedByRole": { "type": "string", "enum": ["AGENCY", "GOVERNMENT"] },
+        "updateDate": { "type": "string", "maxLength": 50 },
+        "workCompletedDescription": { "type": "string" },
+        "createdAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["id", "projectId", "submittedBy", "submittedByRole", "workCompletedDescription", "createdAt"]
+    },
+    "ProjectFinancialRecord": {
+      "title": "ProjectFinancialRecord",
+      "description": "Financial expenditure record with government verification status",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "projectId": { "type": "string", "maxLength": 128 },
+        "entryDate": { "type": "string", "maxLength": 50 },
+        "amount": { "type": "number", "minimum": 1 },
+        "expenditureType": { "type": "string", "enum": ["MATERIAL", "LABOUR", "EQUIPMENT", "OTHER"] },
+        "description": { "type": "string" },
+        "verificationStatus": { "type": "string", "enum": ["PENDING", "VERIFIED", "REJECTED"] },
+        "createdAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["id", "projectId", "amount", "expenditureType", "description", "verificationStatus", "createdAt"]
+    },
+    "ProjectInspection": {
+      "title": "ProjectInspection",
+      "description": "Official inspection record by authorized government officers",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "projectId": { "type": "string", "maxLength": 128 },
+        "inspectionDate": { "type": "string", "maxLength": 50 },
+        "officerId": { "type": "string", "maxLength": 128 },
+        "officerName": { "type": "string", "maxLength": 200 },
+        "inspectionType": { "type": "string", "enum": ["ROUTINE", "MILESTONE", "COMPLAINT", "FINAL"] },
+        "observations": { "type": "string" },
+        "createdAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["id", "projectId", "officerId", "officerName", "inspectionType", "observations", "createdAt"]
+    },
+    "ProjectException": {
+      "title": "ProjectException",
+      "description": "Deterministic rule-based monitoring exception requiring administrative review",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "projectId": { "type": "string", "maxLength": 128 },
+        "type": { "type": "string", "maxLength": 100 },
+        "severity": { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH"] },
+        "title": { "type": "string", "maxLength": 200 },
+        "description": { "type": "string" },
+        "detectedAt": { "type": "string", "maxLength": 50 },
+        "source": { "type": "string", "enum": ["SYSTEM_RULE"] },
+        "status": { "type": "string", "enum": ["OPEN", "ACKNOWLEDGED", "RESOLVED"] }
+      },
+      "required": ["id", "projectId", "type", "severity", "title", "description", "detectedAt", "source", "status"]
+    },
+    "ProjectAuditEvent": {
+      "title": "ProjectAuditEvent",
+      "description": "Append-only statutory audit trail for project monitoring lifecycle",
+      "type": "object",
+      "properties": {
+        "eventId": { "type": "string", "maxLength": 128 },
+        "projectId": { "type": "string", "maxLength": 128 },
+        "action": { "type": "string" },
+        "actorId": { "type": "string", "maxLength": 128 },
+        "actorRole": { "type": "string", "enum": ["agency", "government", "system"] },
+        "timestamp": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["eventId", "projectId", "action", "actorId", "actorRole", "timestamp"]
     }
   },
   "firestore": {
@@ -587,6 +716,34 @@
     "/proposalEvaluations/{evaluationId}": {
       "schema": "ProposalEvaluation",
       "description": "Immutable AI proposal evaluation records restricted to authorized government reviewers"
+    },
+    "/projects/{projectId}": {
+      "schema": "Project",
+      "description": "Authoritative implementation projects created from awarded proposals"
+    },
+    "/projectMilestones/{milestoneId}": {
+      "schema": "ProjectMilestone",
+      "description": "Implementation milestones for projects"
+    },
+    "/projectProgressUpdates/{updateId}": {
+      "schema": "ProjectProgressUpdate",
+      "description": "Append-only physical progress updates"
+    },
+    "/projectFinancialRecords/{recordId}": {
+      "schema": "ProjectFinancialRecord",
+      "description": "Financial expenditure utilization records"
+    },
+    "/projectInspections/{inspectionId}": {
+      "schema": "ProjectInspection",
+      "description": "Official inspection records by government officers"
+    },
+    "/projectExceptions/{exceptionId}": {
+      "schema": "ProjectException",
+      "description": "Deterministic monitoring exceptions requiring officer review"
+    },
+    "/projectAuditEvents/{eventId}": {
+      "schema": "ProjectAuditEvent",
+      "description": "Append-only statutory audit trail for all project monitoring actions"
     }
   }
 }

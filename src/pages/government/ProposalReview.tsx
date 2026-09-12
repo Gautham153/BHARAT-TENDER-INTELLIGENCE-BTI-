@@ -28,6 +28,8 @@ import {
   Info,
   ExternalLink,
   Sparkles,
+  FolderKanban,
+  PlusCircle,
 } from 'lucide-react';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { Table, Column } from '../../components/ui/Table';
@@ -40,10 +42,12 @@ import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { ProposalService, isLiveFirestoreSession } from '../../services/firebase/proposals';
 import { TenderService } from '../../services/firebase/tenders';
+import { ProjectService } from '../../services/firebase/projects';
 import { fetchOrganizationById } from '../../services/firebase/organizations';
 import { Proposal, ProposalAuditEvent, CanonicalProposalStatus } from '../../types/proposal';
 import { Tender } from '../../types/tender';
 import { Organization } from '../../types/organization';
+import { Project } from '../../types/project';
 import { mockProposals } from '../../data/mockData';
 import { formatCurrencyINR } from '../../components/tenders/TenderOpportunityCard';
 import { AiProposalIntelligence } from '../../components/government/AiProposalIntelligence';
@@ -125,6 +129,13 @@ export const ProposalReview: React.FC<ProposalReviewProps> = ({
   const [rejectionReason, setRejectionReason] = useState<string>('');
   const [actionProcessing, setActionProcessing] = useState<boolean>(false);
 
+  // Project Implementation State (Phase 6)
+  const [projectsMap, setProjectsMap] = useState<Record<string, Project>>({});
+  const [createProjectModalProposal, setCreateProjectModalProposal] = useState<Proposal | null>(null);
+  const [createProjectTitle, setCreateProjectTitle] = useState<string>('');
+  const [createProjectDescription, setCreateProjectDescription] = useState<string>('');
+  const [createProjectProcessing, setCreateProjectProcessing] = useState<boolean>(false);
+
   // Load live tenders and proposals
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -167,6 +178,20 @@ export const ProposalReview: React.FC<ProposalReviewProps> = ({
         } catch (evalErr) {
           console.warn('[BTI Gov] Non-blocking error fetching evaluation map:', evalErr);
         }
+      }
+
+      // 4. Fetch implementation projects to identify awarded proposals with active projects
+      try {
+        const projList = await ProjectService.getProjects({ role: 'government' });
+        const pMap: Record<string, Project> = {};
+        for (const proj of projList) {
+          if (proj.proposalId) {
+            pMap[proj.proposalId] = proj;
+          }
+        }
+        setProjectsMap(pMap);
+      } catch (projErr) {
+        console.warn('[BTI Gov] Error fetching projects map:', projErr);
       }
     } catch (err) {
       console.error('[BTI Gov] Error loading proposals:', err);
@@ -226,6 +251,35 @@ export const ProposalReview: React.FC<ProposalReviewProps> = ({
       });
     } finally {
       setActionProcessing(false);
+    }
+  };
+
+  // Create Project from Awarded Proposal
+  const handleCreateProject = async () => {
+    if (!createProjectModalProposal || !user) return;
+    setCreateProjectProcessing(true);
+    try {
+      const created = await ProjectService.createProjectFromAwardedProposal({
+        proposalId: createProjectModalProposal.id,
+        user,
+        initialTitle: createProjectTitle.trim() || undefined,
+        initialDescription: createProjectDescription.trim() || undefined,
+      });
+
+      setProjectsMap((prev) => ({ ...prev, [createProjectModalProposal.id]: created }));
+      showToast('MPLAD Project Established', {
+        message: `Project ${created.projectNumber} created successfully with initial milestones.`,
+        type: 'success',
+      });
+      setCreateProjectModalProposal(null);
+    } catch (err: unknown) {
+      console.error('Failed to create project:', err);
+      showToast('Project Creation Failed', {
+        message: err instanceof Error ? err.message : 'An error occurred while establishing the project.',
+        type: 'error',
+      });
+    } finally {
+      setCreateProjectProcessing(false);
     }
   };
 
@@ -434,6 +488,37 @@ export const ProposalReview: React.FC<ProposalReviewProps> = ({
                 </Button>
               </div>
             )}
+
+            {s === 'AWARDED' && (
+              <div className="flex items-center gap-1">
+                {projectsMap[p.id] ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onNavigate('/government/projects')}
+                    icon={FolderKanban}
+                    className="text-xs px-2.5 py-1 text-emerald-700 border-emerald-300 hover:bg-emerald-50 font-medium"
+                    title={`Project ${projectsMap[p.id].projectNumber}`}
+                  >
+                    View Project
+                  </Button>
+                ) : (
+                  <Button
+                    variant="gov"
+                    size="sm"
+                    onClick={() => {
+                      setCreateProjectModalProposal(p);
+                      setCreateProjectTitle(p.tenderTitle || `MPLAD Project — ${p.proposalNumber}`);
+                      setCreateProjectDescription(p.technicalProposal?.scopeUnderstanding || '');
+                    }}
+                    icon={PlusCircle}
+                    className="text-xs px-2.5 py-1 bg-emerald-800 hover:bg-emerald-900 text-white"
+                  >
+                    Create Project
+                  </Button>
+                )}
+              </div>
+            )}
           </div>
         );
       },
@@ -614,6 +699,36 @@ export const ProposalReview: React.FC<ProposalReviewProps> = ({
                   >
                     Award Contract
                   </Button>
+                )}
+
+                {inspectedProposal.status === 'AWARDED' && (
+                  <div>
+                    {projectsMap[inspectedProposal.id] ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => onNavigate('/government/projects')}
+                        icon={FolderKanban}
+                        className="text-emerald-700 border-emerald-300 hover:bg-emerald-50 font-medium"
+                      >
+                        View Project ({projectsMap[inspectedProposal.id].projectNumber})
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="gov"
+                        size="sm"
+                        onClick={() => {
+                          setCreateProjectModalProposal(inspectedProposal);
+                          setCreateProjectTitle(inspectedProposal.tenderTitle || `MPLAD Project — ${inspectedProposal.proposalNumber}`);
+                          setCreateProjectDescription(inspectedProposal.technicalProposal?.scopeUnderstanding || '');
+                        }}
+                        icon={PlusCircle}
+                        className="bg-emerald-800 hover:bg-emerald-900 text-white"
+                      >
+                        Establish Implementation Project
+                      </Button>
+                    )}
+                  </div>
                 )}
               </div>
             </div>
@@ -1522,6 +1637,113 @@ export const ProposalReview: React.FC<ProposalReviewProps> = ({
             </Button>
           </div>
         </div>
+      </Modal>
+
+      {/* Create Project Modal (Phase 6) */}
+      <Modal
+        isOpen={Boolean(createProjectModalProposal)}
+        onClose={() => {
+          if (!createProjectProcessing) {
+            setCreateProjectModalProposal(null);
+          }
+        }}
+        title="Establish MPLAD Implementation Project"
+        description="Convert awarded proposal into an authoritative post-award implementation and monitoring record under GFR 2017."
+      >
+        {createProjectModalProposal && (
+          <div className="space-y-4">
+            <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 text-xs space-y-2">
+              <div className="flex justify-between">
+                <span className="text-slate-500">Awarded Proposal:</span>
+                <span className="font-mono font-bold text-slate-800">
+                  {createProjectModalProposal.proposalNumber}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Implementing Agency:</span>
+                <span className="font-semibold text-slate-800">
+                  {createProjectModalProposal.organizationName || createProjectModalProposal.agencyName}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Awarded Contract Value:</span>
+                <span className="font-mono font-bold text-emerald-700">
+                  {formatCurrencyINR(
+                    createProjectModalProposal.financialProposal?.totalProposedAmount ||
+                      createProjectModalProposal.financialBidAmount ||
+                      createProjectModalProposal.quotedAmount ||
+                      0
+                  )}
+                </span>
+              </div>
+              {createProjectModalProposal.tenderTitle && (
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Referenced Tender:</span>
+                  <span className="text-slate-700 max-w-[240px] truncate text-right">
+                    {createProjectModalProposal.tenderTitle}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Authoritative Project Title <span className="text-rose-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={createProjectTitle}
+                onChange={(e) => setCreateProjectTitle(e.target.value)}
+                placeholder="Enter formal work title"
+                className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-700/20 focus:border-emerald-700"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Implementation Scope & Summary
+              </label>
+              <textarea
+                value={createProjectDescription}
+                onChange={(e) => setCreateProjectDescription(e.target.value)}
+                rows={3}
+                placeholder="Detailed scope, location checkpoints, and execution directives..."
+                className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-700/20 focus:border-emerald-700"
+              />
+            </div>
+
+            <div className="p-3 bg-emerald-50 rounded-lg border border-emerald-200 text-emerald-800 text-xs space-y-1">
+              <div className="flex items-center gap-1.5 font-bold">
+                <FolderKanban className="w-3.5 h-3.5" />
+                Statutory Project Initialization
+              </div>
+              <p className="text-[11px] text-emerald-700 leading-relaxed">
+                Initial milestones from the contractor's sealed implementation plan will be imported into the monitoring registry. You can configure further milestones, schedule inspections, and verify financial expenditure entries in the Project Monitoring module.
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCreateProjectModalProposal(null)}
+                disabled={createProjectProcessing}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="gov"
+                size="sm"
+                onClick={handleCreateProject}
+                disabled={createProjectProcessing || !createProjectTitle.trim()}
+                icon={FolderKanban}
+                className="bg-emerald-800 hover:bg-emerald-900 text-white"
+              >
+                {createProjectProcessing ? 'Establishing Project...' : 'Establish Monitored Project'}
+              </Button>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   );

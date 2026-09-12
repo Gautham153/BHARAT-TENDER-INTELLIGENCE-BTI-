@@ -54,7 +54,6 @@ export interface PastExperienceItem {
   description: string;
 }
 
-export type ProjectMilestone = ProposalMilestone;
 export type PastProjectExperience = PastExperienceItem;
 
 export interface TechnicalProposal {

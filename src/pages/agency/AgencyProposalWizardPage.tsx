@@ -50,7 +50,7 @@ import {
   ExperienceProposal,
   ComplianceDeclarations,
   ProposalDocument,
-  ProjectMilestone,
+  ProposalMilestone,
   PastProjectExperience,
 } from '../../types/proposal';
 import { Tender, getEffectiveTenderStatus } from '../../types/tender';
@@ -257,7 +257,7 @@ export const AgencyProposalWizardPage: React.FC<AgencyProposalWizardPageProps> =
   const addMilestone = () => {
     if (isSubmitted || !proposal) return;
     const current = proposal.implementationPlan?.milestones || [];
-    const newMs: ProjectMilestone = {
+    const newMs: ProposalMilestone = {
       id: `ms-${Date.now()}`,
       title: `Milestone ${current.length + 1}`,
       description: '',
@@ -275,7 +275,7 @@ export const AgencyProposalWizardPage: React.FC<AgencyProposalWizardPageProps> =
     );
   };
 
-  const updateMilestone = (id: string, field: keyof ProjectMilestone, val: string) => {
+  const updateMilestone = (id: string, field: keyof ProposalMilestone, val: string) => {
     if (isSubmitted || !proposal) return;
     const current = proposal.implementationPlan?.milestones || [];
     updateImplementation(

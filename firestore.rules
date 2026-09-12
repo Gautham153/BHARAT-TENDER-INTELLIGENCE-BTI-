@@ -86,6 +86,16 @@ service cloud.firestore {
         || (prev == 'CANCELLED' && (next == 'ARCHIVED'));
     }
 
+    // Authoritative project lifecycle status transition validator:
+    // NOT_STARTED -> IN_PROGRESS -> ON_HOLD -> COMPLETED -> CLOSED
+    function isValidProjectStatusTransition(prev, next) {
+      return prev == next
+        || (prev == 'NOT_STARTED' && (next in ['IN_PROGRESS', 'ON_HOLD']))
+        || (prev == 'IN_PROGRESS' && (next in ['ON_HOLD', 'COMPLETED']))
+        || (prev == 'ON_HOLD' && (next in ['IN_PROGRESS', 'CLOSED']))
+        || (prev == 'COMPLETED' && (next == 'CLOSED'));
+    }
+
     // 2. Users Collection Rules (/users/{uid})
     match /users/{uid} {
       // Individual document read allowed for the account owner or verified government personnel
@@ -602,7 +612,18 @@ service cloud.firestore {
               )
               ||
               (
-                incoming().action in ['UPDATED', 'SUBMITTED', 'WITHDRAWN']
+                incoming().action == 'UPDATED'
+                && exists(/databases/$(database)/documents/proposals/$(incoming().proposalId))
+                && existsAfter(/databases/$(database)/documents/proposals/$(incoming().proposalId))
+                && incoming().get('previousStatus', '') == 'DRAFT'
+                && incoming().newStatus == 'DRAFT'
+                && get(/databases/$(database)/documents/proposals/$(incoming().proposalId)).data.status == 'DRAFT'
+                && getAfter(/databases/$(database)/documents/proposals/$(incoming().proposalId)).data.status == 'DRAFT'
+                && getAfter(/databases/$(database)/documents/proposals/$(incoming().proposalId)).data.updatedAt != get(/databases/$(database)/documents/proposals/$(incoming().proposalId)).data.updatedAt
+              )
+              ||
+              (
+                incoming().action in ['SUBMITTED', 'WITHDRAWN']
                 && exists(/databases/$(database)/documents/proposals/$(incoming().proposalId))
                 && incoming().get('previousStatus', '') == get(/databases/$(database)/documents/proposals/$(incoming().proposalId)).data.status
               )
@@ -633,6 +654,626 @@ service cloud.firestore {
       // Evaluations are created exclusively by the trusted server-side evaluation service
       // Direct client creation, modification, and deletion are strictly forbidden
       allow create, update, delete: if false;
+    }
+
+    // 9. Projects Collection Rules (/projects/{projectId})
+    // Phase 6: Authoritative implementation monitoring records
+    match /projects/{projectId} {
+      allow get, list: if isSignedIn() && (
+        isGovernmentUser() ||
+        (isVerifiedAgency() && resource.data.organizationId == getUserOrgId())
+      );
+
+      allow create: if isSignedIn() && isGovernmentUser() && isValidId(projectId)
+        && incoming().id == projectId
+        && incoming().authorityId == request.auth.uid
+        && (projectId == ('proj-' + incoming().proposalId) || projectId == incoming().proposalId)
+        && incoming().sanctionedAmount is number
+        && incoming().awardedAmount is number
+        && incoming().status == 'NOT_STARTED'
+        && incoming().proposalId is string && isValidId(incoming().proposalId)
+        && incoming().tenderId is string && isValidId(incoming().tenderId)
+        && incoming().organizationId is string && isValidId(incoming().organizationId)
+        && exists(/databases/$(database)/documents/proposals/$(incoming().proposalId))
+        && get(/databases/$(database)/documents/proposals/$(incoming().proposalId)).data.status == 'AWARDED'
+        && get(/databases/$(database)/documents/proposals/$(incoming().proposalId)).data.tenderId == incoming().tenderId
+        && get(/databases/$(database)/documents/proposals/$(incoming().proposalId)).data.organizationId == incoming().organizationId
+        && exists(/databases/$(database)/documents/organizations/$(incoming().organizationId))
+        && (
+          get(/databases/$(database)/documents/organizations/$(incoming().organizationId)).data.verified == true ||
+          get(/databases/$(database)/documents/organizations/$(incoming().organizationId)).data.verificationStatus == 'verified'
+        )
+        && existsAfter(/databases/$(database)/documents/projectAuditEvents/evt-proj-create-$(projectId))
+        && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-proj-create-$(projectId)).data.action == 'PROJECT_CREATED'
+        && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-proj-create-$(projectId)).data.projectId == projectId;
+
+      // Project Immutable Linkage & Controlled Update Lifecycle Security
+      function isImmutableProjectLinkagePreserved() {
+        return isValidId(projectId)
+          && incoming().id == existing().id
+          && incoming().proposalId == existing().proposalId
+          && incoming().tenderId == existing().tenderId
+          && incoming().organizationId == existing().organizationId
+          && incoming().get('projectNumber', '') == existing().get('projectNumber', '')
+          && incoming().get('createdAt', '') == existing().get('createdAt', '')
+          && incoming().sanctionedAmount == existing().sanctionedAmount
+          && incoming().awardedAmount == existing().awardedAmount;
+      }
+
+      function isValidPhysicalProgressValues() {
+        return (!incoming().keys().hasAny(['physicalProgressPercent']) || (incoming().physicalProgressPercent is number && incoming().physicalProgressPercent >= 0 && incoming().physicalProgressPercent <= 100))
+          && (!incoming().keys().hasAny(['physicalProgress']) || (incoming().physicalProgress is number && incoming().physicalProgress >= 0 && incoming().physicalProgress <= 100));
+      }
+
+      function isValidFinancialProgressValues() {
+        return (!incoming().keys().hasAny(['financialProgressPercent']) || (incoming().financialProgressPercent is number && incoming().financialProgressPercent >= 0 && incoming().financialProgressPercent <= 100))
+          && (!incoming().keys().hasAny(['financialProgress']) || (incoming().financialProgress is number && incoming().financialProgress >= 0 && incoming().financialProgress <= 100))
+          && (!incoming().keys().hasAny(['utilizedAmount']) || (incoming().utilizedAmount is number && incoming().utilizedAmount >= 0))
+          && (!incoming().keys().hasAny(['amountDisbursed']) || (incoming().amountDisbursed is number && incoming().amountDisbursed >= 0))
+          && (!incoming().keys().hasAny(['disbursedAmount']) || (incoming().disbursedAmount is number && incoming().disbursedAmount >= 0));
+      }
+
+      allow update: if isSignedIn()
+        && isImmutableProjectLinkagePreserved()
+        && (
+          // Path 1: Government status transition (cannot mutate monitoring or baseline fields)
+          (
+            isGovernmentUser()
+            && isValidProjectStatusTransition(existing().status, incoming().status)
+            && incoming().status != existing().status
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'actualCompletionDate', 'completionChecklist', 'updatedAt', 'implementationStartDate'
+            ])
+            && (!existing().keys().hasAny(['implementationStartDate']) || incoming().get('implementationStartDate', '') == existing().get('implementationStartDate', ''))
+            && (
+              incoming().status != 'COMPLETED' ||
+              (
+                incoming().completionChecklist is map
+                && incoming().completionChecklist.physicalWorkCompleted == true
+                && incoming().completionChecklist.finalMilestoneCompleted == true
+                && incoming().completionChecklist.financialRecordsReviewed == true
+                && incoming().completionChecklist.finalInspectionCompleted == true
+                && incoming().completionChecklist.supportingInformationAvailable == true
+              )
+            )
+            && existsAfter(/databases/$(database)/documents/projectAuditEvents/evt-proj-status-$(projectId)-$(incoming().status))
+            && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-proj-status-$(projectId)-$(incoming().status)).data.action == 'STATUS_CHANGED'
+            && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-proj-status-$(projectId)-$(incoming().status)).data.projectId == projectId
+          )
+          ||
+          // Path 2: Physical progress recalculation (controlled government-authorized operation linked to milestone mutation)
+          (
+            isGovernmentUser()
+            && incoming().status == existing().status
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'physicalProgressPercent', 'physicalProgress', 'updatedAt', 'lastMilestoneId'
+            ])
+            && isValidPhysicalProgressValues()
+            && incoming().get('lastMilestoneId', '') is string
+            && incoming().get('lastMilestoneId', '').size() > 0
+            && existsAfter(/databases/$(database)/documents/projectMilestones/$(incoming().lastMilestoneId))
+            && getAfter(/databases/$(database)/documents/projectMilestones/$(incoming().lastMilestoneId)).data.projectId == projectId
+            && (
+              (
+                existsAfter(/databases/$(database)/documents/projectAuditEvents/evt-ms-create-$(incoming().lastMilestoneId))
+                && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-ms-create-$(incoming().lastMilestoneId)).data.action == 'MILESTONE_CREATED'
+                && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-ms-create-$(incoming().lastMilestoneId)).data.projectId == projectId
+              )
+              ||
+              (
+                existsAfter(/databases/$(database)/documents/projectAuditEvents/evt-ms-update-$(incoming().lastMilestoneId))
+                && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-ms-update-$(incoming().lastMilestoneId)).data.action == 'MILESTONE_UPDATED'
+                && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-ms-update-$(incoming().lastMilestoneId)).data.projectId == projectId
+              )
+            )
+          )
+          ||
+          // Path 3: Financial progress recalculation (driven by government verification of expenditure claims)
+          (
+            isGovernmentUser()
+            && incoming().status == existing().status
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'financialProgressPercent', 'financialProgress', 'utilizedAmount', 'amountDisbursed', 'disbursedAmount', 'updatedAt', 'lastVerifiedRecordId'
+            ])
+            && isValidFinancialProgressValues()
+            && incoming().get('lastVerifiedRecordId', '') is string
+            && incoming().get('lastVerifiedRecordId', '').size() > 0
+            && existsAfter(/databases/$(database)/documents/projectFinancialRecords/$(incoming().lastVerifiedRecordId))
+            && get(/databases/$(database)/documents/projectFinancialRecords/$(incoming().lastVerifiedRecordId)).data.verificationStatus == 'PENDING'
+            && getAfter(/databases/$(database)/documents/projectFinancialRecords/$(incoming().lastVerifiedRecordId)).data.verificationStatus in ['VERIFIED', 'REJECTED']
+            && getAfter(/databases/$(database)/documents/projectFinancialRecords/$(incoming().lastVerifiedRecordId)).data.projectId == projectId
+            && existsAfter(/databases/$(database)/documents/projectAuditEvents/evt-fin-verify-$(incoming().lastVerifiedRecordId))
+            && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-fin-verify-$(incoming().lastVerifiedRecordId)).data.projectId == projectId
+            && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-fin-verify-$(incoming().lastVerifiedRecordId)).data.action in ['FINANCIAL_RECORD_VERIFIED', 'FINANCIAL_RECORD_REJECTED']
+          )
+          ||
+          // Path 4: Agency physical progress recalculation (atomically linked to agency progress update & milestone update)
+          (
+            isVerifiedAgency()
+            && existing().organizationId == getUserOrgId()
+            && incoming().status == existing().status
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'physicalProgressPercent', 'physicalProgress', 'updatedAt', 'lastProgressUpdateId', 'lastMilestoneId'
+            ])
+            && isValidPhysicalProgressValues()
+            && incoming().get('lastProgressUpdateId', '') is string
+            && incoming().get('lastProgressUpdateId', '').size() > 0
+            && !exists(/databases/$(database)/documents/projectProgressUpdates/$(incoming().lastProgressUpdateId))
+            && existsAfter(/databases/$(database)/documents/projectProgressUpdates/$(incoming().lastProgressUpdateId))
+            && getAfter(/databases/$(database)/documents/projectProgressUpdates/$(incoming().lastProgressUpdateId)).data.projectId == projectId
+            && getAfter(/databases/$(database)/documents/projectProgressUpdates/$(incoming().lastProgressUpdateId)).data.submittedBy == request.auth.uid
+            && getAfter(/databases/$(database)/documents/projectProgressUpdates/$(incoming().lastProgressUpdateId)).data.submittedByRole == 'AGENCY'
+            && incoming().get('lastMilestoneId', '') is string
+            && incoming().get('lastMilestoneId', '').size() > 0
+            && existsAfter(/databases/$(database)/documents/projectMilestones/$(incoming().lastMilestoneId))
+            && getAfter(/databases/$(database)/documents/projectMilestones/$(incoming().lastMilestoneId)).data.projectId == projectId
+            && (
+              (getAfter(/databases/$(database)/documents/projectMilestones/$(incoming().lastMilestoneId)).data.status == 'NOT_STARTED'
+               && getAfter(/databases/$(database)/documents/projectMilestones/$(incoming().lastMilestoneId)).data.progressPercent == 0) ||
+              (getAfter(/databases/$(database)/documents/projectMilestones/$(incoming().lastMilestoneId)).data.status == 'IN_PROGRESS'
+               && getAfter(/databases/$(database)/documents/projectMilestones/$(incoming().lastMilestoneId)).data.progressPercent > 0
+               && getAfter(/databases/$(database)/documents/projectMilestones/$(incoming().lastMilestoneId)).data.progressPercent < 100) ||
+              (getAfter(/databases/$(database)/documents/projectMilestones/$(incoming().lastMilestoneId)).data.status == 'COMPLETED'
+               && getAfter(/databases/$(database)/documents/projectMilestones/$(incoming().lastMilestoneId)).data.progressPercent == 100) ||
+              (getAfter(/databases/$(database)/documents/projectMilestones/$(incoming().lastMilestoneId)).data.status == 'DELAYED'
+               && getAfter(/databases/$(database)/documents/projectMilestones/$(incoming().lastMilestoneId)).data.progressPercent >= 0
+               && getAfter(/databases/$(database)/documents/projectMilestones/$(incoming().lastMilestoneId)).data.progressPercent < 100)
+            )
+            && existsAfter(/databases/$(database)/documents/projectAuditEvents/evt-prog-submit-$(incoming().lastProgressUpdateId))
+            && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-prog-submit-$(incoming().lastProgressUpdateId)).data.action == 'PROGRESS_UPDATE_SUBMITTED'
+            && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-prog-submit-$(incoming().lastProgressUpdateId)).data.projectId == projectId
+          );
+        );
+
+      allow delete: if false;
+    }
+
+    // 10. Project Milestones (/projectMilestones/{milestoneId})
+    match /projectMilestones/{milestoneId} {
+      allow get, list: if isSignedIn() && (
+        isGovernmentUser() ||
+        (isVerifiedAgency() && exists(/databases/$(database)/documents/projects/$(resource.data.projectId))
+         && get(/databases/$(database)/documents/projects/$(resource.data.projectId)).data.organizationId == getUserOrgId())
+      );
+
+      allow create: if isSignedIn() && isGovernmentUser() && isValidId(milestoneId)
+        && incoming().id == milestoneId
+        && incoming().projectId is string
+        && exists(/databases/$(database)/documents/projects/$(incoming().projectId))
+        && incoming().sequence is number
+        && incoming().sequence >= 1
+        && incoming().weightPercent is number
+        && incoming().weightPercent >= 0
+        && incoming().weightPercent <= 100
+        && incoming().progressPercent is number
+        && incoming().progressPercent >= 0
+        && incoming().progressPercent <= 100
+        && incoming().status in ['NOT_STARTED', 'IN_PROGRESS', 'COMPLETED', 'DELAYED']
+        && incoming().createdAt is string
+        && incoming().updatedAt is string
+        && (
+          (incoming().status == 'NOT_STARTED' && incoming().progressPercent == 0) ||
+          (incoming().status == 'IN_PROGRESS' && incoming().progressPercent > 0 && incoming().progressPercent < 100) ||
+          (incoming().status == 'COMPLETED' && incoming().progressPercent == 100) ||
+          (incoming().status == 'DELAYED')
+        )
+        && existsAfter(/databases/$(database)/documents/projectAuditEvents/evt-ms-create-$(milestoneId))
+        && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-ms-create-$(milestoneId)).data.action == 'MILESTONE_CREATED'
+        && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-ms-create-$(milestoneId)).data.projectId == incoming().projectId;
+
+      // Milestone Immutability: Government configures structure; Agency updates only progress fields
+      allow update: if isSignedIn()
+        && existsAfter(/databases/$(database)/documents/projectAuditEvents/evt-ms-update-$(milestoneId))
+        && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-ms-update-$(milestoneId)).data.action == 'MILESTONE_UPDATED'
+        && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-ms-update-$(milestoneId)).data.projectId == incoming().projectId
+        && (
+        // Case 1: Government configuration
+        (
+          isGovernmentUser()
+          && incoming().id == existing().id
+          && incoming().projectId == existing().projectId
+          && incoming().get('createdAt', '') == existing().get('createdAt', '')
+          && incoming().sequence is number
+          && incoming().sequence >= 1
+          && incoming().weightPercent is number
+          && incoming().weightPercent >= 0
+          && incoming().weightPercent <= 100
+          && incoming().progressPercent is number
+          && incoming().progressPercent >= 0
+          && incoming().progressPercent <= 100
+          && incoming().status in ['NOT_STARTED', 'IN_PROGRESS', 'COMPLETED', 'DELAYED']
+          && (!incoming().keys().hasAny(['plannedStartDate']) || incoming().plannedStartDate is string)
+          && (!incoming().keys().hasAny(['plannedEndDate']) || incoming().plannedEndDate is string)
+          && incoming().updatedAt is string
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'title',
+            'description',
+            'sequence',
+            'plannedStartDate',
+            'plannedEndDate',
+            'weightPercent',
+            'progressPercent',
+            'status',
+            'actualStartDate',
+            'actualEndDate',
+            'updatedAt'
+          ])
+          && (
+            (incoming().status == 'NOT_STARTED' && incoming().progressPercent == 0) ||
+            (incoming().status == 'IN_PROGRESS' && incoming().progressPercent > 0 && incoming().progressPercent < 100) ||
+            (incoming().status == 'COMPLETED' && incoming().progressPercent == 100) ||
+            (incoming().status == 'DELAYED' && incoming().progressPercent >= 0 && incoming().progressPercent < 100)
+          )
+        )
+        ||
+        // Case 2: Agency operational progress update
+        (
+          isVerifiedAgency()
+          && exists(/databases/$(database)/documents/projects/$(existing().projectId))
+          && get(/databases/$(database)/documents/projects/$(existing().projectId)).data.organizationId == getUserOrgId()
+          && incoming().id == existing().id
+          && incoming().projectId == existing().projectId
+          && incoming().sequence == existing().sequence
+          && incoming().title == existing().title
+          && incoming().get('description', '') == existing().get('description', '')
+          && incoming().get('plannedStartDate', '') == existing().get('plannedStartDate', '')
+          && incoming().get('plannedEndDate', '') == existing().get('plannedEndDate', '')
+          && incoming().weightPercent == existing().weightPercent
+          && incoming().get('createdAt', '') == existing().get('createdAt', '')
+          && incoming().progressPercent is number
+          && incoming().progressPercent >= 0
+          && incoming().progressPercent <= 100
+          && incoming().status in ['NOT_STARTED', 'IN_PROGRESS', 'COMPLETED', 'DELAYED']
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'progressPercent', 'status', 'actualStartDate', 'actualEndDate', 'updatedAt'
+          ])
+          && (
+            (incoming().status == 'NOT_STARTED' && incoming().progressPercent == 0) ||
+            (incoming().status == 'IN_PROGRESS' && incoming().progressPercent > 0 && incoming().progressPercent < 100) ||
+            (incoming().status == 'COMPLETED' && incoming().progressPercent == 100) ||
+            (incoming().status == 'DELAYED' && incoming().progressPercent >= 0 && incoming().progressPercent < 100)
+          )
+        )
+      );
+
+      // Direct deletion denied to protect progress recalculation and audit trail integrity
+      allow delete: if false;
+    }
+
+    // 11. Project Progress Updates (/projectProgressUpdates/{updateId})
+    match /projectProgressUpdates/{updateId} {
+      allow get, list: if isSignedIn() && (
+        isGovernmentUser() ||
+        (isVerifiedAgency() && exists(/databases/$(database)/documents/projects/$(resource.data.projectId))
+         && get(/databases/$(database)/documents/projects/$(resource.data.projectId)).data.organizationId == getUserOrgId())
+      );
+
+      // Progress Update Integrity: Append-only, authoritative role binding
+      allow create: if isSignedIn()
+        && isValidId(updateId)
+        && incoming().id == updateId
+        && incoming().submittedBy == request.auth.uid
+        && (!incoming().keys().hasAny(['physicalProgressPercent']) || (incoming().physicalProgressPercent is number && incoming().physicalProgressPercent >= 0 && incoming().physicalProgressPercent <= 100))
+        && incoming().projectId is string
+        && exists(/databases/$(database)/documents/projects/$(incoming().projectId))
+        && (
+          // Case 1: Government submission
+          (
+            isGovernmentUser()
+            && incoming().submittedByRole == 'GOVERNMENT'
+          )
+          ||
+          // Case 2: Agency submission bound to project organization
+          (
+            isVerifiedAgency()
+            && incoming().submittedByRole == 'AGENCY'
+            && get(/databases/$(database)/documents/projects/$(incoming().projectId)).data.organizationId == getUserOrgId()
+          )
+        )
+        && existsAfter(/databases/$(database)/documents/projectAuditEvents/evt-prog-submit-$(updateId))
+        && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-prog-submit-$(updateId)).data.action == 'PROGRESS_UPDATE_SUBMITTED'
+        && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-prog-submit-$(updateId)).data.projectId == incoming().projectId;
+
+      allow update, delete: if false;
+    }
+
+    // 12. Project Financial Records (/projectFinancialRecords/{recordId})
+    match /projectFinancialRecords/{recordId} {
+      allow get, list: if isSignedIn() && (
+        isGovernmentUser() ||
+        (isVerifiedAgency() && exists(/databases/$(database)/documents/projects/$(resource.data.projectId))
+         && get(/databases/$(database)/documents/projects/$(resource.data.projectId)).data.organizationId == getUserOrgId())
+      );
+
+      // Financial Record Integrity: Append-only creation (all new records start as PENDING)
+      allow create: if isSignedIn()
+        && isValidId(recordId)
+        && incoming().id == recordId
+        && incoming().amount is number
+        && incoming().amount > 0
+        && incoming().expenditureType in ['MATERIAL', 'LABOUR', 'EQUIPMENT', 'OTHER']
+        && incoming().submittedBy == request.auth.uid
+        && incoming().verificationStatus == 'PENDING'
+        && incoming().projectId is string
+        && exists(/databases/$(database)/documents/projects/$(incoming().projectId))
+        && (
+          // Case 1: Agency expenditure claim
+          (
+            isVerifiedAgency()
+            && incoming().submittedByRole == 'AGENCY'
+            && get(/databases/$(database)/documents/projects/$(incoming().projectId)).data.organizationId == getUserOrgId()
+          )
+          ||
+          // Case 2: Government record
+          (
+            isGovernmentUser()
+            && incoming().submittedByRole == 'GOVERNMENT'
+          )
+        )
+        && existsAfter(/databases/$(database)/documents/projectAuditEvents/evt-fin-submit-$(recordId))
+        && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-fin-submit-$(recordId)).data.action == 'FINANCIAL_RECORD_SUBMITTED'
+        && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-fin-submit-$(recordId)).data.projectId == incoming().projectId;
+
+      // Government verification: strictly PENDING -> VERIFIED or PENDING -> REJECTED (terminal)
+      allow update: if isSignedIn()
+        && isGovernmentUser()
+        && isValidId(recordId)
+        && incoming().id == existing().id
+        && incoming().amount == existing().amount
+        && incoming().projectId == existing().projectId
+        && incoming().submittedBy == existing().submittedBy
+        && incoming().submittedByRole == existing().submittedByRole
+        && incoming().expenditureType == existing().expenditureType
+        && incoming().description == existing().description
+        && incoming().get('referenceNumber', '') == existing().get('referenceNumber', '')
+        && incoming().get('createdAt', '') == existing().get('createdAt', '')
+        && existing().verificationStatus == 'PENDING'
+        && incoming().verificationStatus in ['VERIFIED', 'REJECTED']
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'verificationStatus', 'verifiedBy', 'verifiedByName', 'verifiedAt', 'verificationNotes'
+        ])
+        && existsAfter(/databases/$(database)/documents/projectAuditEvents/evt-fin-verify-$(recordId))
+        && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-fin-verify-$(recordId)).data.projectId == incoming().projectId
+        && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-fin-verify-$(recordId)).data.action in ['FINANCIAL_RECORD_VERIFIED', 'FINANCIAL_RECORD_REJECTED'];
+
+      allow delete: if false;
+    }
+
+    // 13. Project Inspections (/projectInspections/{inspectionId})
+    match /projectInspections/{inspectionId} {
+      allow get, list: if isSignedIn() && (
+        isGovernmentUser() ||
+        (isVerifiedAgency() && exists(/databases/$(database)/documents/projects/$(resource.data.projectId))
+         && get(/databases/$(database)/documents/projects/$(resource.data.projectId)).data.organizationId == getUserOrgId())
+      );
+
+      // Append-only official inspections by government officers
+      allow create: if isSignedIn()
+        && isGovernmentUser()
+        && isValidId(inspectionId)
+        && incoming().id == inspectionId
+        && incoming().inspectionType in ['ROUTINE', 'MILESTONE', 'COMPLAINT', 'FINAL']
+        && (!incoming().keys().hasAny(['physicalProgressObserved']) || (incoming().physicalProgressObserved is number && incoming().physicalProgressObserved >= 0 && incoming().physicalProgressObserved <= 100))
+        && incoming().officerId == request.auth.uid
+        && incoming().projectId is string
+        && exists(/databases/$(database)/documents/projects/$(incoming().projectId))
+        && existsAfter(/databases/$(database)/documents/projectAuditEvents/evt-insp-create-$(inspectionId))
+        && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-insp-create-$(inspectionId)).data.action == 'INSPECTION_CREATED'
+        && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-insp-create-$(inspectionId)).data.projectId == incoming().projectId;
+
+      allow update, delete: if false;
+    }
+
+    // 14. Project Exceptions (/projectExceptions/{exceptionId})
+    match /projectExceptions/{exceptionId} {
+      allow get, list: if isSignedIn() && (
+        isGovernmentUser() ||
+        (isVerifiedAgency() && exists(/databases/$(database)/documents/projects/$(resource.data.projectId))
+         && get(/databases/$(database)/documents/projects/$(resource.data.projectId)).data.organizationId == getUserOrgId())
+      );
+
+      // Exception Security: Government/system-authorized deterministic exceptions only
+      allow create: if isSignedIn()
+        && isGovernmentUser()
+        && isValidId(exceptionId)
+        && incoming().id == exceptionId
+        && incoming().source == 'SYSTEM_RULE'
+        && incoming().severity in ['LOW', 'MEDIUM', 'HIGH']
+        && (
+          incoming().type in [
+            'SCHEDULE_DELAY',
+            'PHYSICAL_PROGRESS_DELAY',
+            'FINANCIAL_PROGRESS_MISMATCH',
+            'PROGRESS_VARIANCE',
+            'EXPENDITURE_OVER_AWARD',
+            'STALLED_PROJECT'
+          ]
+          || incoming().type.matches('^SCHEDULE_DELAY_.*$')
+          || incoming().type.matches('^PHYSICAL_PROGRESS_DELAY_.*$')
+        )
+        && incoming().status in ['OPEN', 'ACKNOWLEDGED', 'RESOLVED']
+        && incoming().projectId is string
+        && exists(/databases/$(database)/documents/projects/$(incoming().projectId))
+        && existsAfter(/databases/$(database)/documents/projectAuditEvents/evt-exc-detect-$(exceptionId))
+        && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-exc-detect-$(exceptionId)).data.action == 'EXCEPTION_DETECTED'
+        && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-exc-detect-$(exceptionId)).data.projectId == incoming().projectId;
+
+      // Government-only status/resolution updates
+      allow update: if isSignedIn()
+        && isGovernmentUser()
+        && isValidId(exceptionId)
+        && incoming().id == existing().id
+        && incoming().projectId == existing().projectId
+        && incoming().source == existing().source
+        && incoming().type == existing().type
+        && incoming().get('detectedAt', '') == existing().get('detectedAt', '')
+        && (
+          (
+            existing().status == 'OPEN' && incoming().status == 'ACKNOWLEDGED'
+            && existsAfter(/databases/$(database)/documents/projectAuditEvents/evt-exc-ack-$(exceptionId))
+            && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-exc-ack-$(exceptionId)).data.action == 'EXCEPTION_ACKNOWLEDGED'
+            && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-exc-ack-$(exceptionId)).data.projectId == incoming().projectId
+          ) ||
+          (
+            existing().status == 'ACKNOWLEDGED' && incoming().status == 'RESOLVED'
+            && existsAfter(/databases/$(database)/documents/projectAuditEvents/evt-exc-resolve-$(exceptionId))
+            && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-exc-resolve-$(exceptionId)).data.action == 'EXCEPTION_RESOLVED'
+            && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-exc-resolve-$(exceptionId)).data.projectId == incoming().projectId
+          )
+        )
+        && (
+          incoming().status != 'RESOLVED' ||
+          (
+            incoming().get('resolvedBy', '') == request.auth.uid &&
+            incoming().get('resolvedAt', '') is string &&
+            incoming().get('resolvedAt', '').size() > 0 &&
+            incoming().get('resolutionNote', '') is string &&
+            incoming().get('resolutionNote', '').trim().size() >= 10
+          )
+        )
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'status', 'resolvedBy', 'resolvedByName', 'resolvedAt', 'resolutionNote'
+        ]);
+
+      allow delete: if false;
+    }
+
+    // 15. Project Audit Events (/projectAuditEvents/{eventId})
+    match /projectAuditEvents/{eventId} {
+      allow get, list: if isSignedIn() && (
+        isGovernmentUser() ||
+        (isVerifiedAgency() && exists(/databases/$(database)/documents/projects/$(resource.data.projectId))
+         && get(/databases/$(database)/documents/projects/$(resource.data.projectId)).data.organizationId == getUserOrgId())
+      );
+
+      function isValidAuditMutation() {
+        return (
+          // PROJECT_CREATED -> project created in getAfter()
+          (incoming().action == 'PROJECT_CREATED'
+           && !exists(/databases/$(database)/documents/projects/$(incoming().projectId))
+           && existsAfter(/databases/$(database)/documents/projects/$(incoming().projectId))
+           && getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.id == incoming().projectId) ||
+
+          // STATUS_CHANGED -> project status changed in getAfter()
+          (incoming().action == 'STATUS_CHANGED'
+           && exists(/databases/$(database)/documents/projects/$(incoming().projectId))
+           && existsAfter(/databases/$(database)/documents/projects/$(incoming().projectId))
+           && getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.status != get(/databases/$(database)/documents/projects/$(incoming().projectId)).data.status) ||
+
+          // MILESTONE_CREATED -> referenced milestone created in getAfter()
+          (incoming().action == 'MILESTONE_CREATED'
+           && incoming().get('newState', {}).get('milestoneId', '') is string
+           && !exists(/databases/$(database)/documents/projectMilestones/$(incoming().newState.milestoneId))
+           && existsAfter(/databases/$(database)/documents/projectMilestones/$(incoming().newState.milestoneId))
+           && getAfter(/databases/$(database)/documents/projectMilestones/$(incoming().newState.milestoneId)).data.projectId == incoming().projectId) ||
+
+          // MILESTONE_UPDATED -> referenced milestone changed in getAfter()
+          (incoming().action == 'MILESTONE_UPDATED'
+           && incoming().get('newState', {}).get('milestoneId', '') is string
+           && exists(/databases/$(database)/documents/projectMilestones/$(incoming().newState.milestoneId))
+           && existsAfter(/databases/$(database)/documents/projectMilestones/$(incoming().newState.milestoneId))
+           && getAfter(/databases/$(database)/documents/projectMilestones/$(incoming().newState.milestoneId)).data.projectId == incoming().projectId
+           && (getAfter(/databases/$(database)/documents/projectMilestones/$(incoming().newState.milestoneId)).data.progressPercent != get(/databases/$(database)/documents/projectMilestones/$(incoming().newState.milestoneId)).data.progressPercent
+               || getAfter(/databases/$(database)/documents/projectMilestones/$(incoming().newState.milestoneId)).data.status != get(/databases/$(database)/documents/projectMilestones/$(incoming().newState.milestoneId)).data.status
+               || getAfter(/databases/$(database)/documents/projectMilestones/$(incoming().newState.milestoneId)).data.updatedAt != get(/databases/$(database)/documents/projectMilestones/$(incoming().newState.milestoneId)).data.updatedAt)) ||
+
+          // PROGRESS_UPDATE_SUBMITTED -> referenced progress update created in getAfter()
+          (incoming().action == 'PROGRESS_UPDATE_SUBMITTED'
+           && incoming().get('newState', {}).get('updateId', '') is string
+           && !exists(/databases/$(database)/documents/projectProgressUpdates/$(incoming().newState.updateId))
+           && existsAfter(/databases/$(database)/documents/projectProgressUpdates/$(incoming().newState.updateId))
+           && getAfter(/databases/$(database)/documents/projectProgressUpdates/$(incoming().newState.updateId)).data.projectId == incoming().projectId) ||
+
+          // FINANCIAL_RECORD_SUBMITTED -> referenced financial record created in getAfter()
+          (incoming().action == 'FINANCIAL_RECORD_SUBMITTED'
+           && incoming().get('newState', {}).get('recordId', '') is string
+           && !exists(/databases/$(database)/documents/projectFinancialRecords/$(incoming().newState.recordId))
+           && existsAfter(/databases/$(database)/documents/projectFinancialRecords/$(incoming().newState.recordId))
+           && getAfter(/databases/$(database)/documents/projectFinancialRecords/$(incoming().newState.recordId)).data.projectId == incoming().projectId) ||
+
+          // FINANCIAL_RECORD_VERIFIED / REJECTED -> referenced financial record changed in getAfter()
+          (incoming().action in ['FINANCIAL_RECORD_VERIFIED', 'FINANCIAL_RECORD_REJECTED']
+           && incoming().get('newState', {}).get('recordId', '') is string
+           && exists(/databases/$(database)/documents/projectFinancialRecords/$(incoming().newState.recordId))
+           && existsAfter(/databases/$(database)/documents/projectFinancialRecords/$(incoming().newState.recordId))
+           && getAfter(/databases/$(database)/documents/projectFinancialRecords/$(incoming().newState.recordId)).data.projectId == incoming().projectId
+           && getAfter(/databases/$(database)/documents/projectFinancialRecords/$(incoming().newState.recordId)).data.verificationStatus != get(/databases/$(database)/documents/projectFinancialRecords/$(incoming().newState.recordId)).data.verificationStatus) ||
+
+          // INSPECTION_CREATED -> referenced inspection created in getAfter()
+          (incoming().action == 'INSPECTION_CREATED'
+           && incoming().get('newState', {}).get('inspectionId', '') is string
+           && !exists(/databases/$(database)/documents/projectInspections/$(incoming().newState.inspectionId))
+           && existsAfter(/databases/$(database)/documents/projectInspections/$(incoming().newState.inspectionId))
+           && getAfter(/databases/$(database)/documents/projectInspections/$(incoming().newState.inspectionId)).data.projectId == incoming().projectId) ||
+
+          // EXCEPTION_DETECTED -> referenced exception created in getAfter()
+          (incoming().action == 'EXCEPTION_DETECTED'
+           && incoming().get('newState', {}).get('exceptionId', '') is string
+           && !exists(/databases/$(database)/documents/projectExceptions/$(incoming().newState.exceptionId))
+           && existsAfter(/databases/$(database)/documents/projectExceptions/$(incoming().newState.exceptionId))
+           && getAfter(/databases/$(database)/documents/projectExceptions/$(incoming().newState.exceptionId)).data.projectId == incoming().projectId) ||
+
+          // EXCEPTION_ACKNOWLEDGED / RESOLVED -> referenced exception changed in getAfter()
+          (incoming().action in ['EXCEPTION_ACKNOWLEDGED', 'EXCEPTION_RESOLVED']
+           && incoming().get('newState', {}).get('exceptionId', '') is string
+           && exists(/databases/$(database)/documents/projectExceptions/$(incoming().newState.exceptionId))
+           && existsAfter(/databases/$(database)/documents/projectExceptions/$(incoming().newState.exceptionId))
+           && getAfter(/databases/$(database)/documents/projectExceptions/$(incoming().newState.exceptionId)).data.projectId == incoming().projectId
+           && (getAfter(/databases/$(database)/documents/projectExceptions/$(incoming().newState.exceptionId)).data.status != get(/databases/$(database)/documents/projectExceptions/$(incoming().newState.exceptionId)).data.status
+               || getAfter(/databases/$(database)/documents/projectExceptions/$(incoming().newState.exceptionId)).data.get('resolvedAt', '') != get(/databases/$(database)/documents/projectExceptions/$(incoming().newState.exceptionId)).data.get('resolvedAt', ''))) ||
+
+          // PROJECT_UPDATED -> project changed in getAfter()
+          (incoming().action == 'PROJECT_UPDATED'
+           && exists(/databases/$(database)/documents/projects/$(incoming().projectId))
+           && existsAfter(/databases/$(database)/documents/projects/$(incoming().projectId))
+           && getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.updatedAt != get(/databases/$(database)/documents/projects/$(incoming().projectId)).data.updatedAt)
+        );
+      }
+
+      // Audit Trail Security: Append-only, strict actor role & ownership binding
+      allow create: if isSignedIn()
+        && isValidId(eventId)
+        && incoming().eventId == eventId
+        && incoming().actorId == request.auth.uid
+        && incoming().projectId is string
+        && existsAfter(/databases/$(database)/documents/projects/$(incoming().projectId))
+        && isValidAuditMutation()
+        && (
+          // Case 1: Agency actions
+          (
+            isVerifiedAgency()
+            && incoming().actorRole == 'agency'
+            && getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.organizationId == getUserOrgId()
+            && incoming().action in [
+              'PROGRESS_UPDATE_SUBMITTED',
+              'FINANCIAL_RECORD_SUBMITTED',
+              'MILESTONE_UPDATED'
+            ]
+          )
+          ||
+          // Case 2: Government actions
+          (
+            isGovernmentUser()
+            && incoming().actorRole == 'government'
+            && incoming().action in [
+              'PROJECT_CREATED',
+              'PROJECT_UPDATED',
+              'STATUS_CHANGED',
+              'MILESTONE_CREATED',
+              'MILESTONE_UPDATED',
+              'PROGRESS_UPDATE_SUBMITTED',
+              'FINANCIAL_RECORD_SUBMITTED',
+              'FINANCIAL_RECORD_VERIFIED',
+              'FINANCIAL_RECORD_REJECTED',
+              'INSPECTION_CREATED',
+              'EXCEPTION_DETECTED',
+              'EXCEPTION_ACKNOWLEDGED',
+              'EXCEPTION_RESOLVED'
+            ]
+          )
+        );
+
+      allow update, delete: if false;
     }
   }
 }
