@@ -136,6 +136,7 @@ export interface ProjectMilestone {
   weightPercent: number; // 0 to 100
   progressPercent: number; // 0 to 100
   status: ProjectMilestoneStatus;
+  lastAuditEventId?: string;
   createdAt: string;
   updatedAt: string;
 }

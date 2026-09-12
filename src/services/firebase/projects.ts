@@ -1140,9 +1140,11 @@ export class ProjectService {
     }
 
     const nowIso = new Date().toISOString();
+    const eventId = `evt-ms-update-${milestoneId}-${Date.now()}`;
     const updated: ProjectMilestone = {
       ...existing,
       ...updates,
+      lastAuditEventId: eventId,
       updatedAt: nowIso,
     };
 
@@ -1178,7 +1180,6 @@ export class ProjectService {
       milestonesSummary: nextSummary,
     };
 
-    const eventId = `evt-ms-update-${milestoneId}`;
     const auditEvent: ProjectAuditEvent = {
       eventId,
       projectId,
@@ -1317,10 +1318,12 @@ export class ProjectService {
           computedStatus = 'IN_PROGRESS';
         }
 
+        msEventId = `evt-ms-update-${milestoneId}-${Date.now()}`;
         updatedMilestone = {
           ...ms,
           progressPercent: validProg,
           status: computedStatus,
+          lastAuditEventId: msEventId,
           updatedAt: nowIso,
         };
 
@@ -1350,7 +1353,6 @@ export class ProjectService {
           milestonesSummary: nextSummary,
         };
 
-        msEventId = `evt-ms-update-${milestoneId}`;
         milestoneAuditEvent = {
           eventId: msEventId,
           projectId,
