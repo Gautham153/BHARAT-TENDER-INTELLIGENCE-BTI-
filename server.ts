@@ -48,6 +48,54 @@ async function startServer() {
     }
   });
 
+  // Authoritative Physical & Financial Progress Calculation Endpoint
+  app.post('/api/projects/calculate-progress', (req, res) => {
+    try {
+      const { milestones, financialRecords, awardedAmount } = req.body || {};
+
+      let physicalResult = null;
+      if (Array.isArray(milestones)) {
+        let totalWeight = 0;
+        let weightedProgressSum = 0;
+        for (const m of milestones) {
+          const weight = Math.max(0, Math.min(100, Number(m.weightPercent) || 0));
+          const prog = Math.max(0, Math.min(100, Number(m.progressPercent) || 0));
+          totalWeight += weight;
+          weightedProgressSum += (prog * weight) / 100;
+        }
+        const calculatedProgress = Math.round(weightedProgressSum);
+        physicalResult = {
+          progress: Math.min(100, Math.max(0, calculatedProgress)),
+          totalWeight,
+          isCompletePlan: Math.round(totalWeight) === 100,
+        };
+      }
+
+      let financialResult = null;
+      if (Array.isArray(financialRecords) && Number(awardedAmount) > 0) {
+        const verifiedRecords = financialRecords.filter((r: any) => r.verificationStatus === 'VERIFIED');
+        const verifiedAmount = verifiedRecords.reduce((sum: number, r: any) => sum + (Number(r.amount) || 0), 0);
+        const totalExpenditure = financialRecords.reduce((sum: number, r: any) => sum + (Number(r.amount) || 0), 0);
+        const rawPercent = Math.round((verifiedAmount / Number(awardedAmount)) * 100);
+        financialResult = {
+          verifiedAmount,
+          totalExpenditure,
+          progressPercent: Math.min(100, Math.max(0, rawPercent)),
+          isOverBudget: verifiedAmount > Number(awardedAmount),
+        };
+      }
+
+      res.status(200).json({
+        success: true,
+        physical: physicalResult,
+        financial: financialResult,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      res.status(400).json({ success: false, error: err?.message || 'Progress calculation error' });
+    }
+  });
+
   // Vite Middleware Setup for Dev vs Production
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

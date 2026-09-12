@@ -664,6 +664,15 @@ export class ProjectService {
       });
     }
 
+    newProject.milestonesSummary = initialMilestones.map((m) => ({
+      id: m.id,
+      sequence: m.sequence,
+      title: m.title,
+      weightPercent: m.weightPercent,
+      progressPercent: m.progressPercent,
+      status: m.status,
+    }));
+
     // Persist to Live Firestore or Local Storage
     if (isLiveFirestoreSession() && db) {
       const batch = writeBatch(db);
@@ -846,16 +855,17 @@ export class ProjectService {
     }
 
     const nowIso = new Date().toISOString();
+    const eventId = `evt-proj-status-${projectId}-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
     const updated: Project = {
       ...project,
       status: newStatus,
       updatedAt: nowIso,
       implementationStartDate: project.implementationStartDate || (newStatus === 'IN_PROGRESS' ? nowIso : undefined),
-      actualCompletionDate: newStatus === 'COMPLETED' ? nowIso : project.actualCompletionDate,
-      completionChecklist: newStatus === 'COMPLETED' ? completionChecklist : project.completionChecklist,
+      actualCompletionDate: newStatus === 'COMPLETED' ? (project.actualCompletionDate || nowIso) : project.actualCompletionDate,
+      completionChecklist: newStatus === 'COMPLETED' ? (completionChecklist || project.completionChecklist) : project.completionChecklist,
+      lastStatusChangeEventId: eventId,
     };
 
-    const eventId = `evt-proj-status-${projectId}-${newStatus}`;
     const auditEvent: ProjectAuditEvent = {
       eventId,
       projectId,
@@ -963,6 +973,14 @@ export class ProjectService {
     const currentList = await this.getMilestones(projectId);
     const nextMilestones = [...currentList, newMilestone];
     const { progress } = calculatePhysicalProgress(nextMilestones);
+    const nextSummary = nextMilestones.map((m) => ({
+      id: m.id,
+      sequence: m.sequence,
+      title: m.title,
+      weightPercent: m.weightPercent,
+      progressPercent: m.progressPercent,
+      status: m.status,
+    }));
 
     const updatedProject: Project = {
       ...project,
@@ -970,6 +988,7 @@ export class ProjectService {
       physicalProgress: progress,
       updatedAt: nowIso,
       lastMilestoneId: id,
+      milestonesSummary: nextSummary,
     };
 
     const eventId = `evt-ms-create-${id}`;
@@ -1079,12 +1098,22 @@ export class ProjectService {
 
     const nextMilestones = currentList.map((m) => (m.id === milestoneId ? updated : m));
     const { progress } = calculatePhysicalProgress(nextMilestones);
+    const nextSummary = nextMilestones.map((m) => ({
+      id: m.id,
+      sequence: m.sequence,
+      title: m.title,
+      weightPercent: m.weightPercent,
+      progressPercent: m.progressPercent,
+      status: m.status,
+    }));
+
     const updatedProject: Project = {
       ...project,
       physicalProgressPercent: progress,
       physicalProgress: progress,
       updatedAt: nowIso,
       lastMilestoneId: milestoneId,
+      milestonesSummary: nextSummary,
     };
 
     const eventId = `evt-ms-update-${milestoneId}`;
@@ -1241,6 +1270,14 @@ export class ProjectService {
 
         const nextMilestones = milestones.map((m) => (m.id === milestoneId ? updatedMilestone! : m));
         const { progress } = calculatePhysicalProgress(nextMilestones);
+        const nextSummary = nextMilestones.map((m) => ({
+          id: m.id,
+          sequence: m.sequence,
+          title: m.title,
+          weightPercent: m.weightPercent,
+          progressPercent: m.progressPercent,
+          status: m.status,
+        }));
         updatedProject = {
           ...project,
           physicalProgressPercent: progress,
@@ -1248,6 +1285,7 @@ export class ProjectService {
           updatedAt: nowIso,
           lastProgressUpdateId: id,
           lastMilestoneId: milestoneId,
+          milestonesSummary: nextSummary,
         };
 
         msEventId = `evt-ms-update-${milestoneId}`;
@@ -1926,6 +1964,10 @@ export class ProjectService {
       throw new Error(`Exception ${exceptionId} not found.`);
     }
 
+    if (existing.status !== 'OPEN') {
+      throw new Error(`Invalid Transition: Only OPEN exceptions can be ACKNOWLEDGED. Current status is ${existing.status}.`);
+    }
+
     const nowIso = new Date().toISOString();
     const updated: ProjectException = {
       ...existing,
@@ -1986,6 +2028,12 @@ export class ProjectService {
     const existing = exceptions.find((e) => e.id === exceptionId);
     if (!existing) {
       throw new Error(`Exception ${exceptionId} not found.`);
+    }
+
+    if (existing.status !== 'ACKNOWLEDGED') {
+      throw new Error(
+        `Invalid Transition: Exception ${exceptionId} must be in ACKNOWLEDGED status before it can be marked RESOLVED. Current status is ${existing.status}.`
+      );
     }
 
     const nowIso = new Date().toISOString();

@@ -101,8 +101,8 @@ service cloud.firestore {
       return 'evt-proj-create-' + projectId;
     }
 
-    function projectStatusAuditId(projectId, status) {
-      return 'evt-proj-status-' + projectId + '-' + status;
+    function projectStatusAuditId(eventId) {
+      return eventId;
     }
 
     function milestoneCreatedAuditId(milestoneId) {
@@ -709,10 +709,19 @@ service cloud.firestore {
       allow create: if isSignedIn() && isGovernmentUser() && isValidId(projectId)
         && incoming().id == projectId
         && incoming().authorityId == request.auth.uid
-        && (projectId == ('proj-' + incoming().proposalId) || projectId == incoming().proposalId)
+        && projectId == ('proj-' + incoming().proposalId)
         && incoming().sanctionedAmount is number
         && incoming().awardedAmount is number
+        && incoming().sanctionedAmount > 0
+        && incoming().awardedAmount > 0
         && incoming().status == 'NOT_STARTED'
+        && incoming().physicalProgressPercent == 0
+        && incoming().physicalProgress == 0
+        && incoming().financialProgressPercent == 0
+        && incoming().financialProgress == 0
+        && incoming().utilizedAmount == 0
+        && (!incoming().keys().hasAny(['amountDisbursed']) || incoming().amountDisbursed == 0)
+        && (!incoming().keys().hasAny(['disbursedAmount']) || incoming().disbursedAmount == 0)
         && incoming().proposalId is string && isValidId(incoming().proposalId)
         && incoming().tenderId is string && isValidId(incoming().tenderId)
         && incoming().organizationId is string && isValidId(incoming().organizationId)
@@ -720,6 +729,15 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/proposals/$(incoming().proposalId)).data.status == 'AWARDED'
         && get(/databases/$(database)/documents/proposals/$(incoming().proposalId)).data.tenderId == incoming().tenderId
         && get(/databases/$(database)/documents/proposals/$(incoming().proposalId)).data.organizationId == incoming().organizationId
+        && exists(/databases/$(database)/documents/tenders/$(incoming().tenderId))
+        && (
+          let tenderDoc = get(/databases/$(database)/documents/tenders/$(incoming().tenderId)).data;
+          let propDoc = get(/databases/$(database)/documents/proposals/$(incoming().proposalId)).data;
+          let expectedSanctioned = tenderDoc.get('sanctionedAmount', tenderDoc.get('estimatedCost', tenderDoc.get('budget', 0)));
+          let expectedAwarded = propDoc.get('financialProposal', {}).get('totalProposedAmount', propDoc.get('financialProposal', {}).get('baseAmount', expectedSanctioned));
+          return incoming().sanctionedAmount == expectedSanctioned
+            && (incoming().awardedAmount == expectedAwarded || incoming().awardedAmount == expectedSanctioned);
+        )
         && exists(/databases/$(database)/documents/organizations/$(incoming().organizationId))
         && (
           get(/databases/$(database)/documents/organizations/$(incoming().organizationId)).data.verified == true ||
@@ -742,16 +760,21 @@ service cloud.firestore {
       }
 
       function isValidPhysicalProgressValues() {
-        return (!incoming().keys().hasAny(['physicalProgressPercent']) || (incoming().physicalProgressPercent is number && incoming().physicalProgressPercent >= 0 && incoming().physicalProgressPercent <= 100))
-          && (!incoming().keys().hasAny(['physicalProgress']) || (incoming().physicalProgress is number && incoming().physicalProgress >= 0 && incoming().physicalProgress <= 100));
+        return incoming().physicalProgressPercent is number
+          && incoming().physicalProgressPercent >= 0
+          && incoming().physicalProgressPercent <= 100
+          && incoming().physicalProgress is number
+          && incoming().physicalProgress == incoming().physicalProgressPercent;
       }
 
       function isValidFinancialProgressValues() {
-        return (!incoming().keys().hasAny(['financialProgressPercent']) || (incoming().financialProgressPercent is number && incoming().financialProgressPercent >= 0 && incoming().financialProgressPercent <= 100))
-          && (!incoming().keys().hasAny(['financialProgress']) || (incoming().financialProgress is number && incoming().financialProgress >= 0 && incoming().financialProgress <= 100))
-          && (!incoming().keys().hasAny(['utilizedAmount']) || (incoming().utilizedAmount is number && incoming().utilizedAmount >= 0))
-          && (!incoming().keys().hasAny(['amountDisbursed']) || (incoming().amountDisbursed is number && incoming().amountDisbursed >= 0))
-          && (!incoming().keys().hasAny(['disbursedAmount']) || (incoming().disbursedAmount is number && incoming().disbursedAmount >= 0));
+        return incoming().financialProgressPercent is number
+          && incoming().financialProgressPercent >= 0
+          && incoming().financialProgressPercent <= 100
+          && incoming().financialProgress is number
+          && incoming().financialProgress == incoming().financialProgressPercent
+          && incoming().utilizedAmount is number
+          && incoming().utilizedAmount >= 0;
       }
 
       allow update: if isSignedIn()
@@ -763,22 +786,39 @@ service cloud.firestore {
             && isValidProjectStatusTransition(existing().status, incoming().status)
             && incoming().status != existing().status
             && incoming().diff(existing()).affectedKeys().hasOnly([
-              'status', 'actualCompletionDate', 'completionChecklist', 'updatedAt', 'implementationStartDate'
+              'status', 'actualCompletionDate', 'completionChecklist', 'updatedAt', 'implementationStartDate', 'lastStatusChangeEventId'
             ])
-            && (!existing().keys().hasAny(['implementationStartDate']) || incoming().get('implementationStartDate', '') == existing().get('implementationStartDate', ''))
             && (
-              incoming().status != 'COMPLETED' ||
-              (
-                incoming().completionChecklist is map
-                && incoming().completionChecklist.physicalWorkCompleted == true
-                && incoming().completionChecklist.finalMilestoneCompleted == true
-                && incoming().completionChecklist.financialRecordsReviewed == true
-                && incoming().completionChecklist.finalInspectionCompleted == true
-                && incoming().completionChecklist.supportingInformationAvailable == true
-              )
+              (existing().keys().hasAny(['implementationStartDate']) && incoming().get('implementationStartDate', '') == existing().get('implementationStartDate', ''))
+              ||
+              (!existing().keys().hasAny(['implementationStartDate']) && (
+                (incoming().status == 'IN_PROGRESS' && incoming().get('implementationStartDate', '') is string)
+                ||
+                (incoming().status != 'IN_PROGRESS' && !incoming().keys().hasAny(['implementationStartDate']))
+              ))
             )
-            && getAfter(/databases/$(database)/documents/projectAuditEvents/$(projectStatusAuditId(projectId, incoming().status))).data.action == 'STATUS_CHANGED'
-            && getAfter(/databases/$(database)/documents/projectAuditEvents/$(projectStatusAuditId(projectId, incoming().status))).data.projectId == projectId
+            && (
+              (existing().status == 'COMPLETED' && incoming().status == 'CLOSED'
+               && incoming().get('actualCompletionDate', '') == existing().get('actualCompletionDate', '')
+               && incoming().get('completionChecklist', {}) == existing().get('completionChecklist', {}))
+              ||
+              (incoming().status == 'COMPLETED'
+               && incoming().get('actualCompletionDate', '') is string
+               && incoming().completionChecklist is map
+               && incoming().completionChecklist.physicalWorkCompleted == true
+               && incoming().completionChecklist.finalMilestoneCompleted == true
+               && incoming().completionChecklist.financialRecordsReviewed == true
+               && incoming().completionChecklist.finalInspectionCompleted == true
+               && incoming().completionChecklist.supportingInformationAvailable == true)
+              ||
+              (incoming().status != 'COMPLETED' && existing().status != 'COMPLETED'
+               && !incoming().keys().hasAny(['actualCompletionDate', 'completionChecklist']))
+            )
+            && incoming().get('lastStatusChangeEventId', '') is string
+            && incoming().get('lastStatusChangeEventId', '').size() > 0
+            && getAfter(/databases/$(database)/documents/projectAuditEvents/$(incoming().lastStatusChangeEventId)).data.action == 'STATUS_CHANGED'
+            && getAfter(/databases/$(database)/documents/projectAuditEvents/$(incoming().lastStatusChangeEventId)).data.projectId == projectId
+            && getAfter(/databases/$(database)/documents/projectAuditEvents/$(incoming().lastStatusChangeEventId)).data.actorId == request.auth.uid
           )
           ||
           // Path 2: Physical progress recalculation (controlled government-authorized operation linked to milestone mutation)
@@ -786,7 +826,7 @@ service cloud.firestore {
             isGovernmentUser()
             && incoming().status == existing().status
             && incoming().diff(existing()).affectedKeys().hasOnly([
-              'physicalProgressPercent', 'physicalProgress', 'updatedAt', 'lastMilestoneId'
+              'physicalProgressPercent', 'physicalProgress', 'updatedAt', 'lastMilestoneId', 'milestonesSummary'
             ])
             && isValidPhysicalProgressValues()
             && incoming().get('lastMilestoneId', '') is string
@@ -818,6 +858,22 @@ service cloud.firestore {
             && get(/databases/$(database)/documents/projectFinancialRecords/$(incoming().lastVerifiedRecordId)).data.verificationStatus == 'PENDING'
             && getAfter(/databases/$(database)/documents/projectFinancialRecords/$(incoming().lastVerifiedRecordId)).data.verificationStatus in ['VERIFIED', 'REJECTED']
             && getAfter(/databases/$(database)/documents/projectFinancialRecords/$(incoming().lastVerifiedRecordId)).data.projectId == projectId
+            && (
+              let finRec = getAfter(/databases/$(database)/documents/projectFinancialRecords/$(incoming().lastVerifiedRecordId)).data;
+              let addedUtil = (finRec.verificationStatus == 'VERIFIED') ? finRec.amount : 0;
+              let expectedUtil = existing().utilizedAmount + addedUtil;
+              let awarded = existing().awardedAmount > 0 ? existing().awardedAmount : (existing().sanctionedAmount > 0 ? existing().sanctionedAmount : 1);
+              let expectedRawPercent = (expectedUtil * 100) / awarded;
+              let expectedCappedPercent = expectedRawPercent > 100 ? 100 : expectedRawPercent;
+              return incoming().utilizedAmount == expectedUtil
+                && incoming().amountDisbursed == expectedUtil
+                && incoming().disbursedAmount == expectedUtil
+                && (
+                  (expectedCappedPercent == 100 && incoming().financialProgressPercent == 100)
+                  ||
+                  (incoming().financialProgressPercent - expectedCappedPercent <= 1 && expectedCappedPercent - incoming().financialProgressPercent <= 1)
+                );
+            )
             && getAfter(/databases/$(database)/documents/projectAuditEvents/$(financialVerifiedAuditId(incoming().lastVerifiedRecordId))).data.projectId == projectId
             && getAfter(/databases/$(database)/documents/projectAuditEvents/$(financialVerifiedAuditId(incoming().lastVerifiedRecordId))).data.action in ['FINANCIAL_RECORD_VERIFIED', 'FINANCIAL_RECORD_REJECTED']
           )
@@ -828,7 +884,7 @@ service cloud.firestore {
             && existing().organizationId == getUserOrgId()
             && incoming().status == existing().status
             && incoming().diff(existing()).affectedKeys().hasOnly([
-              'physicalProgressPercent', 'physicalProgress', 'updatedAt', 'lastProgressUpdateId', 'lastMilestoneId'
+              'physicalProgressPercent', 'physicalProgress', 'updatedAt', 'lastProgressUpdateId', 'lastMilestoneId', 'milestonesSummary'
             ])
             && isValidPhysicalProgressValues()
             && incoming().get('lastProgressUpdateId', '') is string
@@ -1116,7 +1172,7 @@ service cloud.firestore {
           || incoming().type.matches('^SCHEDULE_DELAY_.*$')
           || incoming().type.matches('^PHYSICAL_PROGRESS_DELAY_.*$')
         )
-        && incoming().status in ['OPEN', 'ACKNOWLEDGED', 'RESOLVED']
+        && incoming().status == 'OPEN'
         && incoming().projectId is string
         && exists(/databases/$(database)/documents/projects/$(incoming().projectId))
         && getAfter(/databases/$(database)/documents/projectAuditEvents/$(exceptionDetectedAuditId(exceptionId))).data.action == 'EXCEPTION_DETECTED'
@@ -1178,7 +1234,8 @@ service cloud.firestore {
           // STATUS_CHANGED -> project status changed in getAfter()
           (incoming().action == 'STATUS_CHANGED'
            && exists(/databases/$(database)/documents/projects/$(incoming().projectId))
-           && getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.status != get(/databases/$(database)/documents/projects/$(incoming().projectId)).data.status) ||
+           && getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.status != get(/databases/$(database)/documents/projects/$(incoming().projectId)).data.status
+           && getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.lastStatusChangeEventId == eventId) ||
 
           // MILESTONE_CREATED -> referenced milestone created in getAfter()
           (incoming().action == 'MILESTONE_CREATED'

@@ -86,6 +86,8 @@ export interface Project {
   lastProgressUpdateId?: string;
   lastMilestoneId?: string;
   lastVerifiedRecordId?: string;
+  lastStatusChangeEventId?: string;
+  milestonesSummary?: ProjectMilestoneSummary[];
 
   // Compatibility fields for GIS maps and existing dashboards
   lat?: number;
@@ -136,6 +138,15 @@ export interface ProjectMilestone {
   status: ProjectMilestoneStatus;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ProjectMilestoneSummary {
+  id: string;
+  sequence: number;
+  title: string;
+  weightPercent: number;
+  progressPercent: number;
+  status: ProjectMilestoneStatus;
 }
 
 /**
