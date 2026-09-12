@@ -590,8 +590,8 @@ export class ProjectService {
     const awardedAmount = Number(
       proposal.financialProposal?.totalProposedAmount ||
         proposal.financialProposal?.baseAmount ||
-        (proposal as any).financialBidAmount ||
-        (proposal as any).quotedAmount ||
+        proposal.financialBidAmount ||
+        proposal.quotedAmount ||
         sanctionedAmount
     );
 

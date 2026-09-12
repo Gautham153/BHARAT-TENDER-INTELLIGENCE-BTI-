@@ -744,7 +744,19 @@ service cloud.firestore {
         let tenderDoc = get(/databases/$(database)/documents/tenders/$(incoming().tenderId)).data;
         let propDoc = get(/databases/$(database)/documents/proposals/$(incoming().proposalId)).data;
         let expectedSanctioned = tenderDoc.get('sanctionedAmount', tenderDoc.get('estimatedCost', tenderDoc.get('budget', 0)));
-        let expectedAwarded = propDoc.get('financialProposal', {}).get('totalProposedAmount', propDoc.get('financialProposal', {}).get('baseAmount', expectedSanctioned));
+        let hasFinMap = ('financialProposal' in propDoc) && (propDoc.financialProposal is map);
+        let finProp = hasFinMap ? propDoc.financialProposal : {};
+        let totalProposed = finProp.get('totalProposedAmount', 0);
+        let baseProposed = finProp.get('baseAmount', 0);
+        let bidAmount = propDoc.get('financialBidAmount', 0);
+        let quoted = propDoc.get('quotedAmount', 0);
+        let expectedAwarded = totalProposed > 0 ? totalProposed : (
+          baseProposed > 0 ? baseProposed : (
+            bidAmount > 0 ? bidAmount : (
+              quoted > 0 ? quoted : expectedSanctioned
+            )
+          )
+        );
         return incoming().sanctionedAmount == expectedSanctioned
           && (incoming().awardedAmount == expectedAwarded || incoming().awardedAmount == expectedSanctioned);
       }
