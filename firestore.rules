@@ -96,6 +96,51 @@ service cloud.firestore {
         || (prev == 'COMPLETED' && (next == 'CLOSED'));
     }
 
+    // Audit-event document ID helper functions
+    function projectCreatedAuditId(projectId) {
+      return 'evt-proj-create-' + projectId;
+    }
+
+    function projectStatusAuditId(projectId, status) {
+      return 'evt-proj-status-' + projectId + '-' + status;
+    }
+
+    function milestoneCreatedAuditId(milestoneId) {
+      return 'evt-ms-create-' + milestoneId;
+    }
+
+    function milestoneUpdatedAuditId(milestoneId) {
+      return 'evt-ms-update-' + milestoneId;
+    }
+
+    function progressSubmittedAuditId(updateId) {
+      return 'evt-prog-submit-' + updateId;
+    }
+
+    function financialSubmittedAuditId(recordId) {
+      return 'evt-fin-submit-' + recordId;
+    }
+
+    function financialVerifiedAuditId(recordId) {
+      return 'evt-fin-verify-' + recordId;
+    }
+
+    function inspectionCreatedAuditId(inspectionId) {
+      return 'evt-insp-create-' + inspectionId;
+    }
+
+    function exceptionDetectedAuditId(exceptionId) {
+      return 'evt-exc-detect-' + exceptionId;
+    }
+
+    function exceptionAcknowledgedAuditId(exceptionId) {
+      return 'evt-exc-ack-' + exceptionId;
+    }
+
+    function exceptionResolvedAuditId(exceptionId) {
+      return 'evt-exc-resolve-' + exceptionId;
+    }
+
     // 2. Users Collection Rules (/users/{uid})
     match /users/{uid} {
       // Individual document read allowed for the account owner or verified government personnel
@@ -680,8 +725,8 @@ service cloud.firestore {
           get(/databases/$(database)/documents/organizations/$(incoming().organizationId)).data.verified == true ||
           get(/databases/$(database)/documents/organizations/$(incoming().organizationId)).data.verificationStatus == 'verified'
         )
-        && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-proj-create-$(projectId)).data.action == 'PROJECT_CREATED'
-        && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-proj-create-$(projectId)).data.projectId == projectId;
+        && getAfter(/databases/$(database)/documents/projectAuditEvents/$(projectCreatedAuditId(projectId))).data.action == 'PROJECT_CREATED'
+        && getAfter(/databases/$(database)/documents/projectAuditEvents/$(projectCreatedAuditId(projectId))).data.projectId == projectId;
 
       // Project Immutable Linkage & Controlled Update Lifecycle Security
       function isImmutableProjectLinkagePreserved() {
@@ -732,8 +777,8 @@ service cloud.firestore {
                 && incoming().completionChecklist.supportingInformationAvailable == true
               )
             )
-            && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-proj-status-$(projectId)-$(incoming().status)).data.action == 'STATUS_CHANGED'
-            && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-proj-status-$(projectId)-$(incoming().status)).data.projectId == projectId
+            && getAfter(/databases/$(database)/documents/projectAuditEvents/$(projectStatusAuditId(projectId, incoming().status))).data.action == 'STATUS_CHANGED'
+            && getAfter(/databases/$(database)/documents/projectAuditEvents/$(projectStatusAuditId(projectId, incoming().status))).data.projectId == projectId
           )
           ||
           // Path 2: Physical progress recalculation (controlled government-authorized operation linked to milestone mutation)
@@ -749,13 +794,13 @@ service cloud.firestore {
             && getAfter(/databases/$(database)/documents/projectMilestones/$(incoming().lastMilestoneId)).data.projectId == projectId
             && (
               (
-                getAfter(/databases/$(database)/documents/projectAuditEvents/evt-ms-create-$(incoming().lastMilestoneId)).data.action == 'MILESTONE_CREATED'
-                && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-ms-create-$(incoming().lastMilestoneId)).data.projectId == projectId
+                getAfter(/databases/$(database)/documents/projectAuditEvents/$(milestoneCreatedAuditId(incoming().lastMilestoneId))).data.action == 'MILESTONE_CREATED'
+                && getAfter(/databases/$(database)/documents/projectAuditEvents/$(milestoneCreatedAuditId(incoming().lastMilestoneId))).data.projectId == projectId
               )
               ||
               (
-                getAfter(/databases/$(database)/documents/projectAuditEvents/evt-ms-update-$(incoming().lastMilestoneId)).data.action == 'MILESTONE_UPDATED'
-                && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-ms-update-$(incoming().lastMilestoneId)).data.projectId == projectId
+                getAfter(/databases/$(database)/documents/projectAuditEvents/$(milestoneUpdatedAuditId(incoming().lastMilestoneId))).data.action == 'MILESTONE_UPDATED'
+                && getAfter(/databases/$(database)/documents/projectAuditEvents/$(milestoneUpdatedAuditId(incoming().lastMilestoneId))).data.projectId == projectId
               )
             )
           )
@@ -773,8 +818,8 @@ service cloud.firestore {
             && get(/databases/$(database)/documents/projectFinancialRecords/$(incoming().lastVerifiedRecordId)).data.verificationStatus == 'PENDING'
             && getAfter(/databases/$(database)/documents/projectFinancialRecords/$(incoming().lastVerifiedRecordId)).data.verificationStatus in ['VERIFIED', 'REJECTED']
             && getAfter(/databases/$(database)/documents/projectFinancialRecords/$(incoming().lastVerifiedRecordId)).data.projectId == projectId
-            && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-fin-verify-$(incoming().lastVerifiedRecordId)).data.projectId == projectId
-            && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-fin-verify-$(incoming().lastVerifiedRecordId)).data.action in ['FINANCIAL_RECORD_VERIFIED', 'FINANCIAL_RECORD_REJECTED']
+            && getAfter(/databases/$(database)/documents/projectAuditEvents/$(financialVerifiedAuditId(incoming().lastVerifiedRecordId))).data.projectId == projectId
+            && getAfter(/databases/$(database)/documents/projectAuditEvents/$(financialVerifiedAuditId(incoming().lastVerifiedRecordId))).data.action in ['FINANCIAL_RECORD_VERIFIED', 'FINANCIAL_RECORD_REJECTED']
           )
           ||
           // Path 4: Agency physical progress recalculation (atomically linked to agency progress update & milestone update)
@@ -807,8 +852,8 @@ service cloud.firestore {
                && getAfter(/databases/$(database)/documents/projectMilestones/$(incoming().lastMilestoneId)).data.progressPercent >= 0
                && getAfter(/databases/$(database)/documents/projectMilestones/$(incoming().lastMilestoneId)).data.progressPercent < 100)
             )
-            && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-prog-submit-$(incoming().lastProgressUpdateId)).data.action == 'PROGRESS_UPDATE_SUBMITTED'
-            && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-prog-submit-$(incoming().lastProgressUpdateId)).data.projectId == projectId
+            && getAfter(/databases/$(database)/documents/projectAuditEvents/$(progressSubmittedAuditId(incoming().lastProgressUpdateId))).data.action == 'PROGRESS_UPDATE_SUBMITTED'
+            && getAfter(/databases/$(database)/documents/projectAuditEvents/$(progressSubmittedAuditId(incoming().lastProgressUpdateId))).data.projectId == projectId
           ));
 
       allow delete: if false;
@@ -843,13 +888,13 @@ service cloud.firestore {
           (incoming().status == 'COMPLETED' && incoming().progressPercent == 100) ||
           (incoming().status == 'DELAYED')
         )
-        && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-ms-create-$(milestoneId)).data.action == 'MILESTONE_CREATED'
-        && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-ms-create-$(milestoneId)).data.projectId == incoming().projectId;
+        && getAfter(/databases/$(database)/documents/projectAuditEvents/$(milestoneCreatedAuditId(milestoneId))).data.action == 'MILESTONE_CREATED'
+        && getAfter(/databases/$(database)/documents/projectAuditEvents/$(milestoneCreatedAuditId(milestoneId))).data.projectId == incoming().projectId;
 
       // Milestone Immutability: Government configures structure; Agency updates only progress fields
       allow update: if isSignedIn()
-        && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-ms-update-$(milestoneId)).data.action == 'MILESTONE_UPDATED'
-        && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-ms-update-$(milestoneId)).data.projectId == incoming().projectId
+        && getAfter(/databases/$(database)/documents/projectAuditEvents/$(milestoneUpdatedAuditId(milestoneId))).data.action == 'MILESTONE_UPDATED'
+        && getAfter(/databases/$(database)/documents/projectAuditEvents/$(milestoneUpdatedAuditId(milestoneId))).data.projectId == incoming().projectId
         && (
         // Case 1: Government configuration
         (
@@ -954,8 +999,8 @@ service cloud.firestore {
             && get(/databases/$(database)/documents/projects/$(incoming().projectId)).data.organizationId == getUserOrgId()
           )
         )
-        && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-prog-submit-$(updateId)).data.action == 'PROGRESS_UPDATE_SUBMITTED'
-        && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-prog-submit-$(updateId)).data.projectId == incoming().projectId;
+        && getAfter(/databases/$(database)/documents/projectAuditEvents/$(progressSubmittedAuditId(updateId))).data.action == 'PROGRESS_UPDATE_SUBMITTED'
+        && getAfter(/databases/$(database)/documents/projectAuditEvents/$(progressSubmittedAuditId(updateId))).data.projectId == incoming().projectId;
 
       allow update, delete: if false;
     }
@@ -993,8 +1038,8 @@ service cloud.firestore {
             && incoming().submittedByRole == 'GOVERNMENT'
           )
         )
-        && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-fin-submit-$(recordId)).data.action == 'FINANCIAL_RECORD_SUBMITTED'
-        && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-fin-submit-$(recordId)).data.projectId == incoming().projectId;
+        && getAfter(/databases/$(database)/documents/projectAuditEvents/$(financialSubmittedAuditId(recordId))).data.action == 'FINANCIAL_RECORD_SUBMITTED'
+        && getAfter(/databases/$(database)/documents/projectAuditEvents/$(financialSubmittedAuditId(recordId))).data.projectId == incoming().projectId;
 
       // Government verification: strictly PENDING -> VERIFIED or PENDING -> REJECTED (terminal)
       allow update: if isSignedIn()
@@ -1014,8 +1059,8 @@ service cloud.firestore {
         && incoming().diff(existing()).affectedKeys().hasOnly([
           'verificationStatus', 'verifiedBy', 'verifiedByName', 'verifiedAt', 'verificationNotes'
         ])
-        && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-fin-verify-$(recordId)).data.projectId == incoming().projectId
-        && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-fin-verify-$(recordId)).data.action in ['FINANCIAL_RECORD_VERIFIED', 'FINANCIAL_RECORD_REJECTED'];
+        && getAfter(/databases/$(database)/documents/projectAuditEvents/$(financialVerifiedAuditId(recordId))).data.projectId == incoming().projectId
+        && getAfter(/databases/$(database)/documents/projectAuditEvents/$(financialVerifiedAuditId(recordId))).data.action in ['FINANCIAL_RECORD_VERIFIED', 'FINANCIAL_RECORD_REJECTED'];
 
       allow delete: if false;
     }
@@ -1038,8 +1083,8 @@ service cloud.firestore {
         && incoming().officerId == request.auth.uid
         && incoming().projectId is string
         && exists(/databases/$(database)/documents/projects/$(incoming().projectId))
-        && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-insp-create-$(inspectionId)).data.action == 'INSPECTION_CREATED'
-        && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-insp-create-$(inspectionId)).data.projectId == incoming().projectId;
+        && getAfter(/databases/$(database)/documents/projectAuditEvents/$(inspectionCreatedAuditId(inspectionId))).data.action == 'INSPECTION_CREATED'
+        && getAfter(/databases/$(database)/documents/projectAuditEvents/$(inspectionCreatedAuditId(inspectionId))).data.projectId == incoming().projectId;
 
       allow update, delete: if false;
     }
@@ -1074,8 +1119,8 @@ service cloud.firestore {
         && incoming().status in ['OPEN', 'ACKNOWLEDGED', 'RESOLVED']
         && incoming().projectId is string
         && exists(/databases/$(database)/documents/projects/$(incoming().projectId))
-        && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-exc-detect-$(exceptionId)).data.action == 'EXCEPTION_DETECTED'
-        && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-exc-detect-$(exceptionId)).data.projectId == incoming().projectId;
+        && getAfter(/databases/$(database)/documents/projectAuditEvents/$(exceptionDetectedAuditId(exceptionId))).data.action == 'EXCEPTION_DETECTED'
+        && getAfter(/databases/$(database)/documents/projectAuditEvents/$(exceptionDetectedAuditId(exceptionId))).data.projectId == incoming().projectId;
 
       // Government-only status/resolution updates
       allow update: if isSignedIn()
@@ -1089,13 +1134,13 @@ service cloud.firestore {
         && (
           (
             existing().status == 'OPEN' && incoming().status == 'ACKNOWLEDGED'
-            && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-exc-ack-$(exceptionId)).data.action == 'EXCEPTION_ACKNOWLEDGED'
-            && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-exc-ack-$(exceptionId)).data.projectId == incoming().projectId
+            && getAfter(/databases/$(database)/documents/projectAuditEvents/$(exceptionAcknowledgedAuditId(exceptionId))).data.action == 'EXCEPTION_ACKNOWLEDGED'
+            && getAfter(/databases/$(database)/documents/projectAuditEvents/$(exceptionAcknowledgedAuditId(exceptionId))).data.projectId == incoming().projectId
           ) ||
           (
             existing().status == 'ACKNOWLEDGED' && incoming().status == 'RESOLVED'
-            && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-exc-resolve-$(exceptionId)).data.action == 'EXCEPTION_RESOLVED'
-            && getAfter(/databases/$(database)/documents/projectAuditEvents/evt-exc-resolve-$(exceptionId)).data.projectId == incoming().projectId
+            && getAfter(/databases/$(database)/documents/projectAuditEvents/$(exceptionResolvedAuditId(exceptionId))).data.action == 'EXCEPTION_RESOLVED'
+            && getAfter(/databases/$(database)/documents/projectAuditEvents/$(exceptionResolvedAuditId(exceptionId))).data.projectId == incoming().projectId
           )
         )
         && (
