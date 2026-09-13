@@ -623,7 +623,11 @@ export const ProjectMilestonesPage: React.FC<{ onNavigate: (path: string) => voi
                 { id: 'milestones', label: `Milestones (${milestones.length})`, icon: FolderKanban },
                 { id: 'progress', label: `Site Updates (${progressUpdates.length})`, icon: Activity },
                 { id: 'financials', label: `Expenditures (${financialRecords.length})`, icon: Coins },
-                { id: 'inspections', label: `Inspections & Flags (${inspections.length})`, icon: ShieldCheck },
+                {
+                  id: 'inspections',
+                  label: `Inspections & Flags (${inspections.length + exceptions.filter((e) => e.status !== 'RESOLVED').length})`,
+                  icon: ShieldCheck,
+                },
               ].map((tab) => {
                 const IconComponent = tab.icon;
                 return (
@@ -970,7 +974,7 @@ export const ProjectMilestonesPage: React.FC<{ onNavigate: (path: string) => voi
                               </div>
                               <div className="pt-1 flex justify-end">
                                 <Button
-                                  variant="outline"
+                                  variant="danger"
                                   size="sm"
                                   onClick={() => {
                                     setReviewingException(exc);
@@ -978,7 +982,7 @@ export const ProjectMilestonesPage: React.FC<{ onNavigate: (path: string) => voi
                                     setDocTitle('');
                                     setDocUrl('');
                                   }}
-                                  className="text-xs bg-rose-600 hover:bg-rose-700 text-white border-transparent"
+                                  className="text-xs font-semibold shadow-sm"
                                 >
                                   Review & Submit Explanation
                                 </Button>
