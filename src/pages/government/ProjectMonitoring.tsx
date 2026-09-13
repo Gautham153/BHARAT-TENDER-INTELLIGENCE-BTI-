@@ -693,36 +693,16 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
 
   // Trigger Grounded AI Risk Evaluation
   const handleTriggerProjectAi = async () => {
-    if (!selectedProject) return;
+    if (!selectedProject || !user) {
+      showToast('Authentication Required', {
+        message: 'You must be logged in as an authorized government officer to generate an AI Risk Advisory.',
+        type: 'warning',
+      });
+      return;
+    }
     setAiRunning(true);
     try {
-      const res = await fetch('/api/ai/project-risk-intelligence', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId: selectedProject.id,
-          projectTitle: selectedProject.title,
-          sanctionedBudget: selectedProject.sanctionedBudget || selectedProject.sanctionedAmount || 0,
-          awardedAmount: selectedProject.awardedAmount || selectedProject.sanctionedBudget || 0,
-          disbursedAmount: selectedProject.disbursedAmount || selectedProject.amountDisbursed || 0,
-          agencyPhysicalProgress: selectedProject.agencyReportedPhysicalProgressPercent ?? selectedProject.physicalProgressPercent ?? 0,
-          verifiedPhysicalProgress: selectedProject.governmentVerifiedPhysicalProgressPercent,
-          anomalies: projectAnomalies.map((a) => ({
-            id: a.id,
-            ruleCode: a.ruleCode,
-            title: a.title,
-            severity: a.severity,
-            summary: a.summary,
-            metricVariance: a.metricVariance,
-          })),
-        }),
-      });
-
-      if (!res.ok) {
-        throw new Error(`Server returned HTTP ${res.status}`);
-      }
-
-      const data: RiskIntelligenceResult = await res.json();
+      const data = await AnomalyDetectionService.runAiRiskAnalysis(selectedProject.id, user);
       setProjectAiResult(data);
       showToast('AI Advisory Generated', {
         message: `Analysis completed with confidence: ${data.confidenceScore ?? 92}%.`,
