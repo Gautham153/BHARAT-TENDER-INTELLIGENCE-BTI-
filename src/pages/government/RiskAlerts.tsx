@@ -13,7 +13,6 @@ import {
   FileCheck2,
   Building2,
   ShieldCheck,
-  Activity,
   Layers,
 } from 'lucide-react';
 import { PageHeader } from '../../components/ui/PageHeader';
@@ -226,15 +225,6 @@ export const RiskAlerts: React.FC<RiskAlertsProps> = ({ onNavigate }) => {
               <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
               <span>{refreshing ? 'Refreshing...' : 'Refresh Surveillance'}</span>
             </Button>
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => onNavigate('/government/risk-intelligence')}
-              className="gap-1.5 text-xs font-semibold bg-[#002B49] text-white hover:bg-[#001D32]"
-            >
-              <Activity className="w-3.5 h-3.5" />
-              <span>Portfolio Risk Intelligence</span>
-            </Button>
           </div>
         }
       />
@@ -242,28 +232,28 @@ export const RiskAlerts: React.FC<RiskAlertsProps> = ({ onNavigate }) => {
       {/* Metric Stat Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
-          title="Active Anomaly Signals"
+          label="Active Anomaly Signals"
           value={loading ? '...' : String(metrics.activeCount)}
-          subtitle="Non-compliance signals requiring action"
-          icon={<AlertTriangle className="w-5 h-5 text-amber-600" />}
+          icon={AlertTriangle}
+          iconColor="amber"
         />
         <StatCard
-          title="Critical & High Priority"
+          label="Critical & High Priority"
           value={loading ? '...' : String(metrics.criticalOrHighCount)}
-          subtitle="Severe financial/progress divergences"
-          icon={<ShieldAlert className="w-5 h-5 text-rose-600" />}
+          icon={ShieldAlert}
+          iconColor="rose"
         />
         <StatCard
-          title="Under Active Review"
+          label="Under Active Review"
           value={loading ? '...' : String(metrics.underReviewCount)}
-          subtitle="Acknowledged or under investigation"
-          icon={<Clock className="w-5 h-5 text-blue-600" />}
+          icon={Clock}
+          iconColor="blue"
         />
         <StatCard
-          title="Resolved / Historical"
+          label="Resolved / Historical"
           value={loading ? '...' : String(metrics.resolvedOrClearedCount)}
-          subtitle="Cleared conditions & closed findings"
-          icon={<CheckCircle2 className="w-5 h-5 text-emerald-600" />}
+          icon={CheckCircle2}
+          iconColor="emerald"
         />
       </div>
 
@@ -420,7 +410,7 @@ export const RiskAlerts: React.FC<RiskAlertsProps> = ({ onNavigate }) => {
                         onClick={() => {
                           setInvestigatingAnomaly(anomaly);
                           setActionType(allowedTransitions[0] || null);
-                          setActionNotes(anomaly.investigationNotes || '');
+                          setActionNotes(anomaly.resolutionNote || anomaly.dismissalReason || '');
                         }}
                         className="gap-1 text-xs bg-[#002B49] hover:bg-[#001D32] text-white"
                       >
@@ -470,15 +460,13 @@ export const RiskAlerts: React.FC<RiskAlertsProps> = ({ onNavigate }) => {
         }
         footer={
           selectedAnomaly && (
-            <div className="flex items-center justify-between w-full">
+            <div className="flex items-center justify-end gap-2 w-full">
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => {
-                  onNavigate('/government/risk-intelligence');
-                }}
+                onClick={() => setSelectedAnomaly(null)}
               >
-                <span>View Full Project Intelligence</span>
+                Close Dossier
               </Button>
               <Button
                 variant="primary"
@@ -487,7 +475,7 @@ export const RiskAlerts: React.FC<RiskAlertsProps> = ({ onNavigate }) => {
                   const allowed = VALID_ANOMALY_STATUS_TRANSITIONS[selectedAnomaly.status] || [];
                   setInvestigatingAnomaly(selectedAnomaly);
                   setActionType(allowed[0] || null);
-                  setActionNotes(selectedAnomaly.investigationNotes || '');
+                  setActionNotes(selectedAnomaly.resolutionNote || selectedAnomaly.dismissalReason || '');
                 }}
                 className="bg-[#002B49] hover:bg-[#001D32] text-white"
               >
@@ -551,10 +539,10 @@ export const RiskAlerts: React.FC<RiskAlertsProps> = ({ onNavigate }) => {
                     >
                       <Layers className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
                       <div>
-                        <div className="font-bold text-slate-900">{ev.title}</div>
+                        <div className="font-bold text-slate-900">{ev.label}</div>
                         <div className="text-slate-600 text-[11px] mt-0.5">{ev.detail}</div>
                         <div className="text-[10px] text-slate-400 font-mono mt-1">
-                          Ref: {ev.itemType} {ev.itemId ? `(#${ev.itemId})` : ''}
+                          Ref: {ev.entityType} {ev.entityId ? `(#${ev.entityId})` : ''}
                         </div>
                       </div>
                     </div>
@@ -624,7 +612,7 @@ export const RiskAlerts: React.FC<RiskAlertsProps> = ({ onNavigate }) => {
           isOpen={Boolean(investigatingAnomaly)}
           onClose={() => setInvestigatingAnomaly(null)}
           title={`Administrative Action: ${investigatingAnomaly.id}`}
-          size="lg"
+          maxWidth="lg"
         >
           <div className="space-y-4">
             <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">

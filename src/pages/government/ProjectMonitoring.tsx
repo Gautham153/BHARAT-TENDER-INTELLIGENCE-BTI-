@@ -1941,7 +1941,7 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
                       <Button
                         size="sm"
                         variant="primary"
-                        onClick={() => onNavigate('/government/risk-intelligence')}
+                        onClick={() => onNavigate('/government/risk-alerts')}
                       >
                         Open Triage Desk
                         <ArrowRight className="w-3.5 h-3.5 ml-1.5" />
@@ -2084,10 +2084,10 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
                           <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1">
                             <span>Detected: {new Date(anom.detectedAt).toLocaleString('en-IN')}</span>
                             <button
-                              onClick={() => onNavigate('/government/risk-intelligence')}
+                              onClick={() => onNavigate('/government/risk-alerts')}
                               className="text-indigo-600 hover:text-indigo-800 font-semibold inline-flex items-center gap-1 cursor-pointer"
                             >
-                              Triage in Risk Intelligence Desk
+                              Triage in Risk Alerts Desk
                               <ChevronRight className="w-3 h-3" />
                             </button>
                           </div>
