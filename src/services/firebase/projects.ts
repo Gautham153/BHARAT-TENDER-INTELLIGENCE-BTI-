@@ -2050,19 +2050,32 @@ export class ProjectService {
   static async getExceptions(projectId: string): Promise<ProjectException[]> {
     if (!projectId) return [];
 
+    let list: ProjectException[] = [];
+
     if (isLiveFirestoreSession() && db) {
       const q = query(
         collection(db, EXCEPTIONS_COLLECTION),
         where('projectId', '==', projectId)
       );
       const snap = await getDocs(q);
-      const list: ProjectException[] = [];
       snap.forEach((d) => list.push(d.data() as ProjectException));
-      return list;
+    } else {
+      const localExceptions = getLocalItems<ProjectException>(LOCAL_STORAGE_EXCEPTIONS_KEY, []);
+      list = localExceptions.filter((e) => e.projectId === projectId);
     }
 
-    const localExceptions = getLocalItems<ProjectException>(LOCAL_STORAGE_EXCEPTIONS_KEY, []);
-    return localExceptions.filter((e) => e.projectId === projectId);
+    const requests = await this.getExceptionRequests(projectId);
+
+    return list.map((exc) => {
+      const excReqs = requests.filter((r) => r.exceptionId === exc.id);
+      const latestReq = excReqs.length > 0
+        ? excReqs.sort((a, b) => new Date(b.requestedAt).getTime() - new Date(a.requestedAt).getTime())[0]
+        : undefined;
+      return {
+        ...exc,
+        explanationRequest: latestReq,
+      };
+    });
   }
 
   /**
@@ -2307,19 +2320,7 @@ export class ProjectService {
       }
     }
 
-    const allExceptions = [...existingExceptions, ...newExceptions];
-    const requests = await this.getExceptionRequests(projectId);
-
-    return allExceptions.map((exc) => {
-      const excReqs = requests.filter((r) => r.exceptionId === exc.id);
-      const latestReq = excReqs.length > 0
-        ? excReqs.sort((a, b) => new Date(b.requestedAt).getTime() - new Date(a.requestedAt).getTime())[0]
-        : undefined;
-      return {
-        ...exc,
-        explanationRequest: latestReq,
-      };
-    });
+    return this.getExceptions(projectId);
   }
 
   static async getExceptionRequests(projectId: string): Promise<ProjectExceptionExplanationRequest[]> {
