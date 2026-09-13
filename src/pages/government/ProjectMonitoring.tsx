@@ -136,9 +136,11 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
   const [directDisbursalType, setDirectDisbursalType] = useState<ExpenditureType>('MATERIAL');
   const [directDisbursalRef, setDirectDisbursalRef] = useState<string>('');
 
-  // Resolve Exception Modal
+  // Resolve & Escalate Exception Modals
   const [resolvingException, setResolvingException] = useState<ProjectException | null>(null);
   const [resolutionNote, setResolutionNote] = useState<string>('');
+  const [escalatingException, setEscalatingException] = useState<ProjectException | null>(null);
+  const [escalationNote, setEscalationNote] = useState<string>('');
 
   const [actionProcessing, setActionProcessing] = useState<boolean>(false);
 
@@ -566,6 +568,33 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
     }
   };
 
+  // Handle Start Government Exception Review
+  const handleStartReview = async (exc: ProjectException) => {
+    if (!selectedProject || !user) return;
+    setActionProcessing(true);
+    try {
+      await ProjectService.startGovernmentExceptionReview({
+        exceptionId: exc.id,
+        projectId: selectedProject.id,
+        user,
+      });
+
+      showToast('Review Initiated', {
+        message: 'Exception marked under active government review.',
+        type: 'success',
+      });
+      loadProjectDetails(selectedProject.id);
+    } catch (err) {
+      console.error('Start review error:', err);
+      showToast('Review Failed', {
+        message: err instanceof Error ? err.message : 'Could not initiate exception review.',
+        type: 'error',
+      });
+    } finally {
+      setActionProcessing(false);
+    }
+  };
+
   // Handle Resolve Exception
   const handleResolveException = async () => {
     if (!selectedProject || !resolvingException || !user) return;
@@ -597,6 +626,44 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
       console.error('Exception resolve error:', err);
       showToast('Resolution Failed', {
         message: err instanceof Error ? err.message : 'Could not resolve exception.',
+        type: 'error',
+      });
+    } finally {
+      setActionProcessing(false);
+    }
+  };
+
+  // Handle Escalate Exception
+  const handleEscalateException = async () => {
+    if (!selectedProject || !escalatingException || !user) return;
+    if (!escalationNote.trim() || escalationNote.trim().length < 10) {
+      showToast('Escalation Note Required', {
+        message: 'A formal administrative escalation note (minimum 10 characters) is mandatory.',
+        type: 'warning',
+      });
+      return;
+    }
+
+    setActionProcessing(true);
+    try {
+      await ProjectService.escalateException({
+        exceptionId: escalatingException.id,
+        projectId: selectedProject.id,
+        escalationNote: escalationNote.trim(),
+        user,
+      });
+
+      showToast('Exception Escalated', {
+        message: 'Monitoring exception escalated for senior administrative action.',
+        type: 'success',
+      });
+      setEscalatingException(null);
+      setEscalationNote('');
+      loadProjectDetails(selectedProject.id);
+    } catch (err) {
+      console.error('Exception escalation error:', err);
+      showToast('Escalation Failed', {
+        message: err instanceof Error ? err.message : 'Could not escalate exception.',
         type: 'error',
       });
     } finally {
@@ -1560,6 +1627,12 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
                           className={`p-3.5 bg-white rounded-xl border ${
                             exc.status === 'RESOLVED'
                               ? 'border-slate-200 opacity-70'
+                              : exc.status === 'AGENCY_RESPONDED'
+                              ? 'border-blue-300 bg-blue-50/20'
+                              : exc.status === 'GOVERNMENT_REVIEW'
+                              ? 'border-purple-300 bg-purple-50/20'
+                              : exc.status === 'ESCALATED'
+                              ? 'border-rose-400 bg-rose-50/20'
                               : exc.severity === 'HIGH'
                               ? 'border-rose-300 bg-rose-50/20'
                               : 'border-amber-300 bg-amber-50/20'
@@ -1579,22 +1652,26 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
                               <span className="font-bold text-slate-900 text-xs">{exc.title}</span>
                             </div>
                             <span
-                              className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                              className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${
                                 exc.status === 'RESOLVED'
                                   ? 'bg-emerald-100 text-emerald-800'
-                                  : exc.status === 'ACKNOWLEDGED'
+                                  : exc.status === 'AGENCY_RESPONDED'
                                   ? 'bg-blue-100 text-blue-800'
+                                  : exc.status === 'GOVERNMENT_REVIEW'
+                                  ? 'bg-purple-100 text-purple-800'
+                                  : exc.status === 'ESCALATED'
+                                  ? 'bg-rose-100 text-rose-800'
                                   : 'bg-amber-100 text-amber-800'
                               }`}
                             >
-                              {exc.status}
+                              {exc.status === 'OPEN' ? 'Pending Agency Response' : exc.status.replace(/_/g, ' ')}
                             </span>
                           </div>
 
                           {/* Historical Detection Snapshot */}
                           <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg space-y-1">
                             <span className="text-[10px] font-bold uppercase text-slate-500 block">
-                              Historical Detection Evidence (Immutable Snapshot)
+                              Deterministic System Detection Indicator (Immutable Snapshot)
                             </span>
                             <p className="text-slate-800 text-xs">{exc.description}</p>
                             <div className="text-[10px] text-slate-400">
@@ -1617,13 +1694,69 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
                                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                               )}
                               <span className="font-bold text-[11px]">
-                                Current Condition Status:{' '}
-                                {condition.isStillActive ? 'Condition Remains Active' : 'Condition Cleared / Reconciled'}
+                                Live Condition Check:{' '}
+                                {condition.isStillActive ? 'Indicator Active' : 'Indicator Cleared / Reconciled'}
                               </span>
                             </div>
                             <p className="text-[11px] leading-relaxed">{condition.currentSummary}</p>
                           </div>
 
+                          {/* Executing Agency Response & Supporting Evidence */}
+                          {exc.agencyResponseNote && (
+                            <div className="p-3 bg-blue-50/80 border border-blue-200 rounded-lg text-xs text-blue-950 space-y-1.5">
+                              <div className="flex items-center justify-between">
+                                <span className="font-bold text-blue-900 text-[11px] flex items-center gap-1.5">
+                                  <FileText className="w-3.5 h-3.5 text-blue-600" />
+                                  Executing Agency Explanation Response
+                                </span>
+                                {exc.agencyRespondedAt && (
+                                  <span className="text-[10px] text-blue-700">
+                                    {new Date(exc.agencyRespondedAt).toLocaleString('en-IN')}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-slate-800 text-xs leading-relaxed font-normal">{exc.agencyResponseNote}</p>
+                              {exc.agencyRespondedByName && (
+                                <div className="text-[10px] text-blue-800 font-medium pt-0.5">
+                                  Submitted by: {exc.agencyRespondedByName}
+                                </div>
+                              )}
+                              {exc.agencySupportingDocuments && exc.agencySupportingDocuments.length > 0 && (
+                                <div className="pt-2 border-t border-blue-200/60 space-y-1">
+                                  <span className="text-[10px] font-bold text-blue-900 uppercase">Supporting Evidence Documents</span>
+                                  <div className="flex flex-wrap gap-2">
+                                    {exc.agencySupportingDocuments.map((doc, idx) => (
+                                      <a
+                                        key={idx}
+                                        href={doc.fileUrl || '#'}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="inline-flex items-center gap-1 px-2 py-1 bg-white border border-blue-200 rounded text-[11px] text-blue-700 hover:text-blue-900 hover:underline"
+                                      >
+                                        <FileText className="w-3 h-3 text-blue-500" />
+                                        {doc.fileName || `Evidence #${idx + 1}`}
+                                      </a>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Government Escalation Note */}
+                          {exc.status === 'ESCALATED' && exc.escalationNote && (
+                            <div className="p-2.5 bg-rose-50 rounded-lg border border-rose-200 text-rose-900 text-[11px] space-y-0.5">
+                              <div><strong>Administrative Escalation:</strong> {exc.escalationNote}</div>
+                              {exc.escalatedByName && (
+                                <div className="text-[10px] text-rose-700">
+                                  Escalated by {exc.escalatedByName}{' '}
+                                  {exc.escalatedAt && `on ${new Date(exc.escalatedAt).toLocaleDateString('en-IN')}`}
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Resolution Details */}
                           {exc.status === 'RESOLVED' && exc.resolutionNote && (
                             <div className="p-2.5 bg-emerald-50 rounded-lg border border-emerald-200 text-emerald-900 text-[11px] space-y-0.5">
                               <div><strong>Resolution Justification:</strong> {exc.resolutionNote}</div>
@@ -1634,27 +1767,45 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
                             </div>
                           )}
 
+                          {/* Government Action Controls */}
                           {exc.status !== 'RESOLVED' && (
                             <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
-                              {exc.status === 'OPEN' && (
+                              {exc.status !== 'GOVERNMENT_REVIEW' && (
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  onClick={() => handleAcknowledgeException(exc)}
+                                  onClick={() => handleStartReview(exc)}
                                   disabled={actionProcessing}
-                                  className="text-xs"
+                                  className="text-xs text-purple-700 border-purple-200 hover:bg-purple-50"
                                 >
-                                  Acknowledge
+                                  Start Government Review
                                 </Button>
                               )}
+
+                              {exc.status !== 'ESCALATED' && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    setEscalatingException(exc);
+                                    setEscalationNote('');
+                                  }}
+                                  disabled={actionProcessing}
+                                  className="text-xs text-rose-700 border-rose-200 hover:bg-rose-50"
+                                >
+                                  Escalate
+                                </Button>
+                              )}
+
                               <Button
                                 variant="gov"
                                 size="sm"
                                 onClick={() => {
                                   setResolvingException(exc);
+                                  setResolutionNote('');
                                 }}
                                 disabled={actionProcessing}
-                                className="text-xs bg-slate-800 hover:bg-slate-900 text-white"
+                                className="text-xs bg-slate-900 hover:bg-slate-800 text-white"
                               >
                                 Resolve with Justification
                               </Button>
@@ -2286,6 +2437,60 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
                 className="bg-slate-900 hover:bg-slate-800 text-white"
               >
                 {actionProcessing ? 'Closing Exception...' : 'Resolve & Close Exception'}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Modal: Escalate Monitoring Exception */}
+      <Modal
+        isOpen={Boolean(escalatingException)}
+        onClose={() => {
+          if (!actionProcessing) setEscalatingException(null);
+        }}
+        title="Escalate Monitoring Exception"
+        description="Escalate this exception for senior administrative review or formal compliance inquiry."
+      >
+        {escalatingException && (
+          <div className="space-y-4">
+            <div className="p-3 bg-rose-50 rounded-lg border border-rose-200 text-xs space-y-1">
+              <span className="font-bold text-rose-900">{escalatingException.title}</span>
+              <p className="text-rose-800 text-[11px]">{escalatingException.description}</p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Administrative Escalation Reason / Directive <span className="text-rose-500">*</span>
+              </label>
+              <textarea
+                value={escalationNote}
+                onChange={(e) => setEscalationNote(e.target.value)}
+                rows={3}
+                placeholder="Specify the reason for administrative escalation (e.g. repeated unresponsiveness, critical delay beyond 60 days)..."
+                required
+                minLength={10}
+                className="w-full text-xs p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-rose-500 focus:border-rose-500"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setEscalatingException(null)}
+                disabled={actionProcessing}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="gov"
+                size="sm"
+                onClick={handleEscalateException}
+                disabled={actionProcessing || !escalationNote.trim() || escalationNote.trim().length < 10}
+                className="bg-rose-700 hover:bg-rose-800 text-white font-bold"
+              >
+                {actionProcessing ? 'Escalating...' : 'Confirm Administrative Escalation'}
               </Button>
             </div>
           </div>

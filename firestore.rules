@@ -133,8 +133,20 @@ service cloud.firestore {
       return 'evt-exc-ack-' + exceptionId;
     }
 
+    function exceptionResponseSubmittedAuditId(exceptionId) {
+      return 'evt-exc-resp-' + exceptionId;
+    }
+
+    function exceptionReviewStartedAuditId(exceptionId) {
+      return 'evt-exc-rev-' + exceptionId;
+    }
+
     function exceptionResolvedAuditId(exceptionId) {
       return 'evt-exc-resolve-' + exceptionId;
+    }
+
+    function exceptionEscalatedAuditId(exceptionId) {
+      return 'evt-exc-esc-' + exceptionId;
     }
 
     // 2. Users Collection Rules (/users/{uid})
@@ -1217,9 +1229,8 @@ service cloud.firestore {
         && getAfter(/databases/$(database)/documents/projectAuditEvents/$(exceptionDetectedAuditId(exceptionId))).data.action == 'EXCEPTION_DETECTED'
         && getAfter(/databases/$(database)/documents/projectAuditEvents/$(exceptionDetectedAuditId(exceptionId))).data.projectId == incoming().projectId;
 
-      // Government-only status/resolution updates
+      // Exception Updates: Agency response or Government review/resolution/escalation
       allow update: if isSignedIn()
-        && isGovernmentUser()
         && isValidId(exceptionId)
         && incoming().id == existing().id
         && incoming().projectId == existing().projectId
@@ -1227,30 +1238,59 @@ service cloud.firestore {
         && incoming().type == existing().type
         && incoming().get('detectedAt', '') == existing().get('detectedAt', '')
         && (
+          // Agency response submission
           (
-            existing().status == 'OPEN' && incoming().status == 'ACKNOWLEDGED'
-            && getAfter(/databases/$(database)/documents/projectAuditEvents/$(exceptionAcknowledgedAuditId(exceptionId))).data.action == 'EXCEPTION_ACKNOWLEDGED'
-            && getAfter(/databases/$(database)/documents/projectAuditEvents/$(exceptionAcknowledgedAuditId(exceptionId))).data.projectId == incoming().projectId
+            isVerifiedAgency()
+            && exists(/databases/$(database)/documents/projects/$(existing().projectId))
+            && get(/databases/$(database)/documents/projects/$(existing().projectId)).data.organizationId == getUserOrgId()
+            && existing().status in ['OPEN', 'AGENCY_RESPONSE_REQUIRED']
+            && incoming().status == 'AGENCY_RESPONDED'
+            && incoming().get('agencyResponseNote', '') is string
+            && incoming().get('agencyResponseNote', '').trim().size() >= 10
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'agencyResponseNote', 'agencyRespondedAt', 'agencyRespondedBy', 'agencyRespondedByName', 'agencySupportingDocuments'
+            ])
+            && getAfter(/databases/$(database)/documents/projectAuditEvents/$(exceptionResponseSubmittedAuditId(exceptionId))).data.action == 'EXCEPTION_RESPONSE_SUBMITTED'
+            && getAfter(/databases/$(database)/documents/projectAuditEvents/$(exceptionResponseSubmittedAuditId(exceptionId))).data.projectId == incoming().projectId
           ) ||
+          // Government status / review / resolution / escalation updates
           (
-            existing().status == 'ACKNOWLEDGED' && incoming().status == 'RESOLVED'
-            && getAfter(/databases/$(database)/documents/projectAuditEvents/$(exceptionResolvedAuditId(exceptionId))).data.action == 'EXCEPTION_RESOLVED'
-            && getAfter(/databases/$(database)/documents/projectAuditEvents/$(exceptionResolvedAuditId(exceptionId))).data.projectId == incoming().projectId
+            isGovernmentUser()
+            && (
+              (
+                incoming().status == 'GOVERNMENT_REVIEW'
+                && getAfter(/databases/$(database)/documents/projectAuditEvents/$(exceptionReviewStartedAuditId(exceptionId))).data.action == 'EXCEPTION_REVIEW_STARTED'
+              ) ||
+              (
+                incoming().status == 'RESOLVED'
+                && incoming().get('resolvedBy', '') == request.auth.uid
+                && incoming().get('resolvedAt', '') is string
+                && incoming().get('resolvedAt', '').size() > 0
+                && incoming().get('resolutionNote', '') is string
+                && incoming().get('resolutionNote', '').trim().size() >= 10
+                && getAfter(/databases/$(database)/documents/projectAuditEvents/$(exceptionResolvedAuditId(exceptionId))).data.action == 'EXCEPTION_RESOLVED'
+              ) ||
+              (
+                incoming().status == 'ESCALATED'
+                && incoming().get('escalatedBy', '') == request.auth.uid
+                && incoming().get('escalatedAt', '') is string
+                && incoming().get('escalatedAt', '').size() > 0
+                && incoming().get('escalationNote', '') is string
+                && incoming().get('escalationNote', '').trim().size() >= 10
+                && getAfter(/databases/$(database)/documents/projectAuditEvents/$(exceptionEscalatedAuditId(exceptionId))).data.action == 'EXCEPTION_ESCALATED'
+              ) ||
+              (
+                existing().status == 'OPEN' && incoming().status == 'ACKNOWLEDGED'
+                && getAfter(/databases/$(database)/documents/projectAuditEvents/$(exceptionAcknowledgedAuditId(exceptionId))).data.action == 'EXCEPTION_ACKNOWLEDGED'
+              )
+            )
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'reviewStartedAt', 'reviewedBy', 'reviewedByName', 'reviewNotes',
+              'resolvedBy', 'resolvedByName', 'resolvedAt', 'resolutionNote',
+              'escalatedBy', 'escalatedByName', 'escalatedAt', 'escalationNote'
+            ])
           )
-        )
-        && (
-          incoming().status != 'RESOLVED' ||
-          (
-            incoming().get('resolvedBy', '') == request.auth.uid &&
-            incoming().get('resolvedAt', '') is string &&
-            incoming().get('resolvedAt', '').size() > 0 &&
-            incoming().get('resolutionNote', '') is string &&
-            incoming().get('resolutionNote', '').trim().size() >= 10
-          )
-        )
-        && incoming().diff(existing()).affectedKeys().hasOnly([
-          'status', 'resolvedBy', 'resolvedByName', 'resolvedAt', 'resolutionNote'
-        ]);
+        );
 
       allow delete: if false;
     }
@@ -1323,13 +1363,14 @@ service cloud.firestore {
            && !exists(/databases/$(database)/documents/projectExceptions/$(incoming().newState.exceptionId))
            && getAfter(/databases/$(database)/documents/projectExceptions/$(incoming().newState.exceptionId)).data.projectId == incoming().projectId) ||
 
-          // EXCEPTION_ACKNOWLEDGED / RESOLVED -> referenced exception changed in getAfter()
-          (incoming().action in ['EXCEPTION_ACKNOWLEDGED', 'EXCEPTION_RESOLVED']
+          // EXCEPTION_ACKNOWLEDGED / RESPONSE / REVIEW / RESOLVED / ESCALATED -> referenced exception changed in getAfter()
+          (incoming().action in ['EXCEPTION_ACKNOWLEDGED', 'EXCEPTION_RESPONSE_SUBMITTED', 'EXCEPTION_REVIEW_STARTED', 'EXCEPTION_RESOLVED', 'EXCEPTION_ESCALATED']
            && incoming().get('newState', {}).get('exceptionId', '') is string
            && exists(/databases/$(database)/documents/projectExceptions/$(incoming().newState.exceptionId))
            && getAfter(/databases/$(database)/documents/projectExceptions/$(incoming().newState.exceptionId)).data.projectId == incoming().projectId
            && (getAfter(/databases/$(database)/documents/projectExceptions/$(incoming().newState.exceptionId)).data.status != get(/databases/$(database)/documents/projectExceptions/$(incoming().newState.exceptionId)).data.status
-               || getAfter(/databases/$(database)/documents/projectExceptions/$(incoming().newState.exceptionId)).data.get('resolvedAt', '') != get(/databases/$(database)/documents/projectExceptions/$(incoming().newState.exceptionId)).data.get('resolvedAt', ''))) ||
+               || getAfter(/databases/$(database)/documents/projectExceptions/$(incoming().newState.exceptionId)).data.get('resolvedAt', '') != get(/databases/$(database)/documents/projectExceptions/$(incoming().newState.exceptionId)).data.get('resolvedAt', '')
+               || getAfter(/databases/$(database)/documents/projectExceptions/$(incoming().newState.exceptionId)).data.get('agencyRespondedAt', '') != get(/databases/$(database)/documents/projectExceptions/$(incoming().newState.exceptionId)).data.get('agencyRespondedAt', ''))) ||
 
           // PROJECT_UPDATED -> project changed in getAfter()
           (incoming().action == 'PROJECT_UPDATED'
