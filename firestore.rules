@@ -854,7 +854,7 @@ service cloud.firestore {
             isGovernmentUser()
             && incoming().status == existing().status
             && incoming().diff(existing()).affectedKeys().hasOnly([
-              'physicalProgressPercent', 'physicalProgress', 'updatedAt', 'lastMilestoneId', 'milestonesSummary'
+              'physicalProgressPercent', 'physicalProgress', 'agencyReportedPhysicalProgressPercent', 'updatedAt', 'lastMilestoneId', 'milestonesSummary'
             ])
             && isValidPhysicalProgressValues()
             && incoming().get('lastMilestoneId', '') is string
@@ -897,7 +897,7 @@ service cloud.firestore {
             && existing().organizationId == getUserOrgId()
             && incoming().status == existing().status
             && incoming().diff(existing()).affectedKeys().hasOnly([
-              'physicalProgressPercent', 'physicalProgress', 'updatedAt', 'lastProgressUpdateId', 'lastMilestoneId', 'milestonesSummary'
+              'physicalProgressPercent', 'physicalProgress', 'agencyReportedPhysicalProgressPercent', 'updatedAt', 'lastProgressUpdateId', 'lastMilestoneId', 'milestonesSummary'
             ])
             && isValidPhysicalProgressValues()
             && incoming().get('lastProgressUpdateId', '') is string
@@ -923,6 +923,21 @@ service cloud.firestore {
             )
             && getAfter(/databases/$(database)/documents/projectAuditEvents/$(progressSubmittedAuditId(incoming().lastProgressUpdateId))).data.action == 'PROGRESS_UPDATE_SUBMITTED'
             && getAfter(/databases/$(database)/documents/projectAuditEvents/$(progressSubmittedAuditId(incoming().lastProgressUpdateId))).data.projectId == projectId
+          )
+          ||
+          // Path 5: Government official inspection verification
+          (
+            isGovernmentUser()
+            && incoming().status == existing().status
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'governmentVerifiedPhysicalProgressPercent', 'lastInspectionId', 'updatedAt'
+            ])
+            && (!incoming().keys().hasAny(['governmentVerifiedPhysicalProgressPercent']) || (incoming().governmentVerifiedPhysicalProgressPercent is number && incoming().governmentVerifiedPhysicalProgressPercent >= 0 && incoming().governmentVerifiedPhysicalProgressPercent <= 100))
+            && incoming().get('lastInspectionId', '') is string
+            && incoming().get('lastInspectionId', '').size() > 0
+            && getAfter(/databases/$(database)/documents/projectInspections/$(incoming().lastInspectionId)).data.projectId == projectId
+            && getAfter(/databases/$(database)/documents/projectAuditEvents/$(inspectionCreatedAuditId(incoming().lastInspectionId))).data.action == 'INSPECTION_CREATED'
+            && getAfter(/databases/$(database)/documents/projectAuditEvents/$(inspectionCreatedAuditId(incoming().lastInspectionId))).data.projectId == projectId
           ));
 
       allow delete: if false;
@@ -1155,6 +1170,8 @@ service cloud.firestore {
         && incoming().id == inspectionId
         && incoming().inspectionType in ['ROUTINE', 'MILESTONE', 'COMPLAINT', 'FINAL']
         && (!incoming().keys().hasAny(['physicalProgressObserved']) || (incoming().physicalProgressObserved is number && incoming().physicalProgressObserved >= 0 && incoming().physicalProgressObserved <= 100))
+        && (!incoming().keys().hasAny(['governmentVerifiedPhysicalProgressPercent']) || (incoming().governmentVerifiedPhysicalProgressPercent is number && incoming().governmentVerifiedPhysicalProgressPercent >= 0 && incoming().governmentVerifiedPhysicalProgressPercent <= 100))
+        && (!incoming().keys().hasAny(['milestoneObservations']) || incoming().milestoneObservations is list)
         && incoming().officerId == request.auth.uid
         && incoming().projectId is string
         && exists(/databases/$(database)/documents/projects/$(incoming().projectId))
@@ -1185,6 +1202,9 @@ service cloud.firestore {
             'PHYSICAL_PROGRESS_DELAY',
             'FINANCIAL_PROGRESS_MISMATCH',
             'PROGRESS_VARIANCE',
+            'VERIFICATION_VARIANCE',
+            'PROGRESS_VERIFICATION_VARIANCE',
+            'GOVERNMENT_VERIFICATION_BELOW_AGENCY',
             'EXPENDITURE_OVER_AWARD',
             'STALLED_PROJECT'
           ]

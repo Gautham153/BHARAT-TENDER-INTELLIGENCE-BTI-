@@ -24,6 +24,7 @@ import {
   ProjectProgressUpdate,
   ProjectFinancialRecord,
   ProjectInspection,
+  ProjectInspectionMilestoneObservation,
   ProjectException,
   ProjectAuditEvent,
   ProjectAuditAction,
@@ -249,6 +250,224 @@ export function calculateFinancialProgress(
     rejectedAmount,
     progressPercent,
     isOverAward,
+  };
+}
+
+/**
+ * Deterministic calculation of government verified physical progress from inspection milestone observations.
+ * Uses the exact milestone weightPercent values defined for the project.
+ */
+export function calculateGovernmentVerifiedProgress(
+  milestones: ProjectMilestone[],
+  observations?: ProjectInspectionMilestoneObservation[]
+): {
+  verifiedProgress?: number;
+  totalObservedWeight: number;
+  isComplete: boolean;
+  warning?: string;
+} {
+  if (!observations || observations.length === 0 || !milestones || milestones.length === 0) {
+    return {
+      verifiedProgress: undefined,
+      totalObservedWeight: 0,
+      isComplete: false,
+      warning: 'No milestone observations recorded.',
+    };
+  }
+
+  let totalObservedWeight = 0;
+  let weightedProgressSum = 0;
+
+  for (const obs of observations) {
+    const ms = milestones.find((m) => m.id === obs.milestoneId);
+    if (!ms) continue;
+    const weight = Math.max(0, Math.min(100, Number(ms.weightPercent) || 0));
+    const rawVal = obs.observedProgressPercent ?? obs.verifiedProgressPercent;
+    if (rawVal === undefined || rawVal === null || isNaN(Number(rawVal))) continue;
+    const prog = Math.max(0, Math.min(100, Number(rawVal)));
+    totalObservedWeight += weight;
+    weightedProgressSum += (prog * weight) / 100;
+  }
+
+  if (totalObservedWeight === 0) {
+    return {
+      verifiedProgress: undefined,
+      totalObservedWeight: 0,
+      isComplete: false,
+      warning: 'No valid milestone weights matched in observations.',
+    };
+  }
+
+  const isComplete = Math.round(totalObservedWeight) === 100;
+  const calculatedProgress = Math.min(100, Math.max(0, Math.round(weightedProgressSum)));
+
+  return {
+    verifiedProgress: calculatedProgress,
+    totalObservedWeight,
+    isComplete,
+    warning: isComplete ? undefined : `Observed milestones cover ${totalObservedWeight}% of total project weight.`,
+  };
+}
+
+export interface ExceptionCurrentCondition {
+  isStillActive: boolean;
+  currentSummary: string;
+  historicalSnapshotSummary: string;
+}
+
+/**
+ * Deterministically evaluates whether an exception's underlying condition is still active vs cleared/reconciled
+ * without rewriting historical detection evidence.
+ */
+export function evaluateExceptionCurrentCondition(
+  exc: ProjectException,
+  project: Project,
+  milestones: ProjectMilestone[],
+  financialRecords: ProjectFinancialRecord[],
+  updates: ProjectProgressUpdate[]
+): ExceptionCurrentCondition {
+  const type = exc.type;
+  const now = new Date();
+
+  const awardedAmount = project.awardedAmount || project.sanctionedAmount || 0;
+  const { verifiedAmount, progressPercent: finProgPercent } = calculateFinancialProgress(financialRecords, awardedAmount);
+  const physProgPercent = project.agencyReportedPhysicalProgressPercent ?? project.physicalProgressPercent ?? 0;
+  const agencyReportedProg = physProgPercent;
+  const govVerifiedProg = project.governmentVerifiedPhysicalProgressPercent;
+
+  if (type.startsWith('SCHEDULE_DELAY')) {
+    const msId = type.replace('SCHEDULE_DELAY_', '');
+    const ms = milestones.find((m) => m.id === msId);
+    if (!ms) {
+      return {
+        isStillActive: false,
+        currentSummary: 'Milestone removed or completed.',
+        historicalSnapshotSummary: exc.description,
+      };
+    }
+    const isCompleted = ms.status === 'COMPLETED' || ms.progressPercent === 100;
+    if (isCompleted) {
+      return {
+        isStillActive: false,
+        currentSummary: `Milestone "${ms.title}" is now 100% completed. Overdue condition cleared.`,
+        historicalSnapshotSummary: exc.description,
+      };
+    }
+    const plannedEnd = ms.plannedEndDate ? new Date(ms.plannedEndDate) : null;
+    const isOverdue = plannedEnd ? now > plannedEnd : false;
+    return {
+      isStillActive: isOverdue,
+      currentSummary: isOverdue
+        ? `Milestone is currently at ${ms.progressPercent}% progress (Target: ${plannedEnd?.toLocaleDateString('en-IN')}). Overdue condition active.`
+        : `Milestone is within planned schedule dates (${ms.progressPercent}%).`,
+      historicalSnapshotSummary: exc.description,
+    };
+  }
+
+  if (type.startsWith('PHYSICAL_PROGRESS_DELAY')) {
+    const msId = type.replace('PHYSICAL_PROGRESS_DELAY_', '');
+    const ms = milestones.find((m) => m.id === msId);
+    if (!ms || ms.status === 'COMPLETED' || ms.progressPercent === 100) {
+      return {
+        isStillActive: false,
+        currentSummary: 'Milestone work completed. Progress delay condition cleared.',
+        historicalSnapshotSummary: exc.description,
+      };
+    }
+    if (ms.plannedStartDate && ms.plannedEndDate) {
+      const start = new Date(ms.plannedStartDate);
+      const end = new Date(ms.plannedEndDate);
+      if (!isNaN(start.getTime()) && !isNaN(end.getTime()) && end > start && now >= start) {
+        const totalDuration = end.getTime() - start.getTime();
+        const elapsed = Math.min(totalDuration, now.getTime() - start.getTime());
+        const expected = Math.min(100, Math.max(0, (elapsed / totalDuration) * 100));
+        const lag = expected - (ms.progressPercent || 0);
+        const isActive = lag > 25;
+        return {
+          isStillActive: isActive,
+          currentSummary: `Current progress: ${ms.progressPercent}% vs expected ${Math.round(expected)}% (${Math.round(lag)}% lag). ${isActive ? 'Schedule lag active.' : 'Schedule lag resolved.'}`,
+          historicalSnapshotSummary: exc.description,
+        };
+      }
+    }
+    return {
+      isStillActive: false,
+      currentSummary: 'Schedule baseline reconciled.',
+      historicalSnapshotSummary: exc.description,
+    };
+  }
+
+  if (type === 'FINANCIAL_PROGRESS_MISMATCH') {
+    const isMismatch = finProgPercent > physProgPercent + 25;
+    return {
+      isStillActive: isMismatch,
+      currentSummary: `Current Physical: ${physProgPercent}%, Financial: ${finProgPercent}% (Diff: ${finProgPercent - physProgPercent} pts). ${isMismatch ? 'Financial utilization remains ahead of physical progress.' : 'Reconciled within tolerance.'}`,
+      historicalSnapshotSummary: exc.description,
+    };
+  }
+
+  if (type === 'PROGRESS_VARIANCE') {
+    const isVariance = physProgPercent > finProgPercent + 40;
+    return {
+      isStillActive: isVariance,
+      currentSummary: `Current Physical: ${physProgPercent}%, Financial: ${finProgPercent}% (Diff: ${physProgPercent - finProgPercent} pts). ${isVariance ? 'Physical progress substantially ahead of financial disbursal.' : 'Reconciled within tolerance.'}`,
+      historicalSnapshotSummary: exc.description,
+    };
+  }
+
+  if (type === 'EXPENDITURE_OVER_AWARD') {
+    const isOver = awardedAmount > 0 && verifiedAmount > awardedAmount;
+    return {
+      isStillActive: isOver,
+      currentSummary: `Current Verified Expenditure: ₹${verifiedAmount.toLocaleString('en-IN')} vs Award Value: ₹${awardedAmount.toLocaleString('en-IN')}. ${isOver ? 'Exceeds contract value.' : 'Within contract limit.'}`,
+      historicalSnapshotSummary: exc.description,
+    };
+  }
+
+  if (type === 'STALLED_PROJECT') {
+    if (project.status !== 'IN_PROGRESS') {
+      return {
+        isStillActive: false,
+        currentSummary: `Project status is currently ${project.status}.`,
+        historicalSnapshotSummary: exc.description,
+      };
+    }
+    const lastUpdateDateStr = updates.length > 0
+      ? (updates[0].createdAt || updates[0].updateDate)
+      : project.implementationStartDate;
+    if (lastUpdateDateStr) {
+      const refDate = new Date(lastUpdateDateStr);
+      const days = Math.floor((now.getTime() - refDate.getTime()) / (1000 * 60 * 60 * 24));
+      const isStalled = days > 30;
+      return {
+        isStillActive: isStalled,
+        currentSummary: `Last update was ${days} days ago. ${isStalled ? 'No progress updates in past 30 days.' : 'Recent progress update recorded.'}`,
+        historicalSnapshotSummary: exc.description,
+      };
+    }
+  }
+
+  if (type === 'VERIFICATION_VARIANCE' || type === 'PROGRESS_VERIFICATION_VARIANCE' || type === 'GOVERNMENT_VERIFICATION_BELOW_AGENCY') {
+    if (govVerifiedProg === undefined || govVerifiedProg === null) {
+      return {
+        isStillActive: false,
+        currentSummary: 'Government verification pending new inspection.',
+        historicalSnapshotSummary: exc.description,
+      };
+    }
+    const diff = agencyReportedProg - govVerifiedProg;
+    const isVariance = diff > 15;
+    return {
+      isStillActive: isVariance,
+      currentSummary: `Current Agency Reported: ${agencyReportedProg}%, Gov Verified: ${govVerifiedProg}% (Diff: ${diff} pts). ${isVariance ? 'Verification variance active.' : 'Reconciled within tolerance.'}`,
+      historicalSnapshotSummary: exc.description,
+    };
+  }
+
+  return {
+    isStillActive: true,
+    currentSummary: 'Condition requires administrative verification.',
+    historicalSnapshotSummary: exc.description,
   };
 }
 
@@ -1046,6 +1265,7 @@ export class ProjectService {
 
     const updatedProject: Project = {
       ...project,
+      agencyReportedPhysicalProgressPercent: progress,
       physicalProgressPercent: progress,
       physicalProgress: progress,
       updatedAt: nowIso,
@@ -1173,6 +1393,7 @@ export class ProjectService {
 
     const updatedProject: Project = {
       ...project,
+      agencyReportedPhysicalProgressPercent: progress,
       physicalProgressPercent: progress,
       physicalProgress: progress,
       updatedAt: nowIso,
@@ -1345,6 +1566,7 @@ export class ProjectService {
         }));
         updatedProject = {
           ...project,
+          agencyReportedPhysicalProgressPercent: progress,
           physicalProgressPercent: progress,
           physicalProgress: progress,
           updatedAt: nowIso,
@@ -1700,9 +1922,10 @@ export class ProjectService {
     issues?: string[];
     correctiveActions?: string[];
     recommendation?: string;
+    milestoneObservations?: ProjectInspectionMilestoneObservation[];
     user: AuthUser;
   }): Promise<ProjectInspection> {
-    const { projectId, inspectionDate, officerName, officerDesignation, inspectionType, physicalProgressObserved, observations, issues, correctiveActions, recommendation, user } = params;
+    const { projectId, inspectionDate, officerName, officerDesignation, inspectionType, physicalProgressObserved, observations, issues, correctiveActions, recommendation, milestoneObservations, user } = params;
 
     const userRole = (user.role || '').toLowerCase();
     if (!userRole.includes('gov')) {
@@ -1711,6 +1934,20 @@ export class ProjectService {
 
     if (!observations || observations.trim().length < 10) {
       throw new Error('Validation Error: Inspection observations are required (minimum 10 characters).');
+    }
+
+    const project = await this.getProjectById(projectId);
+    if (!project) {
+      throw new Error(`Project ${projectId} not found.`);
+    }
+
+    const milestones = await this.getMilestones(projectId);
+
+    // Calculate government-verified physical progress percent deterministically from milestone observations
+    let govVerifiedProgress: number | undefined = undefined;
+    if (milestoneObservations && milestoneObservations.length > 0) {
+      const calcResult = calculateGovernmentVerifiedProgress(milestones, milestoneObservations);
+      govVerifiedProgress = calcResult.verifiedProgress;
     }
 
     const id = `insp-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
@@ -1724,12 +1961,40 @@ export class ProjectService {
       officerName: officerName?.trim() || user.name || 'Inspecting Officer',
       officerDesignation: officerDesignation?.trim() || 'Nodal Technical Officer',
       inspectionType,
-      physicalProgressObserved: physicalProgressObserved !== undefined ? Number(physicalProgressObserved) : undefined,
+      physicalProgressObserved: govVerifiedProgress,
+      governmentVerifiedPhysicalProgressPercent: govVerifiedProgress,
+      milestoneObservations: milestoneObservations?.map((o) => {
+        const rawVal = o.observedProgressPercent ?? o.verifiedProgressPercent;
+        if (rawVal === undefined || rawVal === null || (typeof rawVal === 'string' && rawVal === '') || isNaN(Number(rawVal))) {
+          return {
+            milestoneId: o.milestoneId,
+            milestoneTitle: o.milestoneTitle,
+            notes: o.notes?.trim() || undefined,
+          };
+        }
+        const boundedVal = Math.min(100, Math.max(0, Number(rawVal)));
+        return {
+          milestoneId: o.milestoneId,
+          milestoneTitle: o.milestoneTitle,
+          observedProgressPercent: boundedVal,
+          verifiedProgressPercent: boundedVal,
+          notes: o.notes?.trim() || undefined,
+        };
+      }),
       observations: observations.trim(),
       issues: issues?.filter((i) => i.trim().length > 0) || [],
       correctiveActions: correctiveActions?.filter((c) => c.trim().length > 0) || [],
       recommendation: recommendation?.trim() || undefined,
       createdAt: nowIso,
+    };
+
+    const updatedProject: Project = {
+      ...project,
+      governmentVerifiedPhysicalProgressPercent: govVerifiedProgress !== undefined
+        ? govVerifiedProgress
+        : project.governmentVerifiedPhysicalProgressPercent,
+      lastInspectionId: id,
+      updatedAt: nowIso,
     };
 
     const eventId = `evt-insp-create-${id}`;
@@ -1741,19 +2006,27 @@ export class ProjectService {
       actorRole: 'government',
       actorName: user.name || 'Inspecting Officer',
       timestamp: nowIso,
-      newState: { inspectionId: id, type: inspectionType, observedProgress: physicalProgressObserved },
-      notes: `Official ${inspectionType} inspection recorded by ${newInspection.officerName}.`,
+      newState: { inspectionId: id, type: inspectionType, observedProgress: physicalProgressObserved, governmentVerifiedProgress: govVerifiedProgress },
+      notes: `Official ${inspectionType} inspection recorded by ${newInspection.officerName}${govVerifiedProgress !== undefined ? ` (Verified Progress: ${govVerifiedProgress}%)` : ''}.`,
     };
 
     if (isLiveFirestoreSession() && db) {
       const batch = writeBatch(db);
       batch.set(doc(db, INSPECTIONS_COLLECTION, id), sanitizeFirestorePayload(newInspection));
+      batch.update(doc(db, PROJECTS_COLLECTION, projectId), sanitizeFirestorePayload(updatedProject));
       batch.set(doc(db, AUDIT_EVENTS_COLLECTION, eventId), sanitizeFirestorePayload(auditEvent));
       await batch.commit();
     } else {
       const local = getLocalItems<ProjectInspection>(LOCAL_STORAGE_INSPECTIONS_KEY, INITIAL_DEMO_INSPECTIONS);
       local.unshift(newInspection);
       saveLocalItems(LOCAL_STORAGE_INSPECTIONS_KEY, local);
+
+      const localProjects = getLocalItems<Project>(LOCAL_STORAGE_PROJECTS_KEY, [INITIAL_DEMO_PROJECT]);
+      const pIdx = localProjects.findIndex((p) => p.id === projectId);
+      if (pIdx !== -1) {
+        localProjects[pIdx] = updatedProject;
+        saveLocalItems(LOCAL_STORAGE_PROJECTS_KEY, localProjects);
+      }
 
       const localEvents = getLocalItems<ProjectAuditEvent>(LOCAL_STORAGE_EVENTS_KEY, INITIAL_DEMO_EVENTS);
       localEvents.unshift(auditEvent);
@@ -1955,6 +2228,29 @@ export class ProjectService {
               });
             }
           }
+        }
+      }
+    }
+
+    // Rule G: Government Verification Below Agency Report (Agency reported vs Government verified)
+    const agencyProgress = project.agencyReportedPhysicalProgressPercent ?? project.physicalProgressPercent ?? 0;
+    if (project.governmentVerifiedPhysicalProgressPercent !== undefined && project.governmentVerifiedPhysicalProgressPercent !== null) {
+      const govVerified = project.governmentVerifiedPhysicalProgressPercent;
+      const difference = agencyProgress - govVerified;
+      if (difference > 15) {
+        const type = 'VERIFICATION_VARIANCE';
+        if (!existingExceptions.some((e) => (e.type === type || e.type === 'PROGRESS_VERIFICATION_VARIANCE' || e.type === 'GOVERNMENT_VERIFICATION_BELOW_AGENCY') && e.status !== 'RESOLVED')) {
+          newExceptions.push({
+            id: `exc-verif-variance-${Date.now()}`,
+            projectId,
+            type,
+            severity: difference > 30 ? 'HIGH' : 'MEDIUM',
+            title: 'Government Verification Below Agency Report',
+            description: `Agency reported physical progress (${agencyProgress}%) exceeds government verified physical progress (${govVerified}%) by ${difference} percentage points. Requires review and field reconciliation.`,
+            detectedAt: now.toISOString(),
+            source: 'SYSTEM_RULE',
+            status: 'OPEN',
+          });
         }
       }
     }

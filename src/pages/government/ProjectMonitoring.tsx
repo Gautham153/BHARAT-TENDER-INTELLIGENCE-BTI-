@@ -42,7 +42,11 @@ import { Modal } from '../../components/ui/Modal';
 import { SearchBar } from '../../components/ui/SearchBar';
 import { useToast } from '../../context/ToastContext';
 import { useAuth } from '../../context/AuthContext';
-import { ProjectService } from '../../services/firebase/projects';
+import {
+  ProjectService,
+  calculateGovernmentVerifiedProgress,
+  evaluateExceptionCurrentCondition,
+} from '../../services/firebase/projects';
 import {
   Project,
   CanonicalProjectStatus,
@@ -116,7 +120,7 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
   const [showInspectionModal, setShowInspectionModal] = useState<boolean>(false);
   const [inspectDate, setInspectDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [inspectType, setInspectType] = useState<InspectionType>('ROUTINE');
-  const [inspectObservedProgress, setInspectObservedProgress] = useState<number>(0);
+  const [inspectMilestoneObs, setInspectMilestoneObs] = useState<Record<string, { verifiedPercent?: number; notes: string }>>({});
   const [inspectObservations, setInspectObservations] = useState<string>('');
   const [inspectRecommendation, setInspectRecommendation] = useState<string>('');
 
@@ -357,32 +361,77 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
     }
   };
 
+  // Computed Government-verified physical progress percent based exclusively on explicit milestone observations
+  const computedVerifiedProgress = useMemo(() => {
+    if (milestones.length === 0) return undefined;
+    let totalObservedWeight = 0;
+    let weightedSum = 0;
+    let hasExplicitObservation = false;
+
+    for (const m of milestones) {
+      const obs = inspectMilestoneObs[m.id];
+      if (obs && obs.verifiedPercent !== undefined && obs.verifiedPercent !== null && !isNaN(Number(obs.verifiedPercent))) {
+        hasExplicitObservation = true;
+        const val = Number(obs.verifiedPercent);
+        const w = Number(m.weightPercent) || 0;
+        weightedSum += (val * w) / 100;
+        totalObservedWeight += w;
+      }
+    }
+
+    if (!hasExplicitObservation || totalObservedWeight === 0) return undefined;
+    return Math.min(100, Math.max(0, Math.round(weightedSum)));
+  }, [milestones, inspectMilestoneObs]);
+
   // Handle Record Inspection
   const handleCreateInspection = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedProject || !user || !inspectObservations.trim()) return;
     setActionProcessing(true);
     try {
-      await ProjectService.createInspection({
+      const milestoneObservations = milestones.map((m) => {
+        const obs = inspectMilestoneObs[m.id];
+        const hasVal = obs && obs.verifiedPercent !== undefined && obs.verifiedPercent !== null && !isNaN(Number(obs.verifiedPercent));
+        return {
+          milestoneId: m.id,
+          milestoneTitle: m.title,
+          observedProgressPercent: hasVal ? Number(obs.verifiedPercent) : undefined,
+          verifiedProgressPercent: hasVal ? Number(obs.verifiedPercent) : undefined,
+          notes: obs?.notes?.trim() || undefined,
+        };
+      });
+
+      const newInsp = await ProjectService.createInspection({
         projectId: selectedProject.id,
         inspectionDate: inspectDate,
         officerName: user.name || 'Executive Engineer',
         officerDesignation: 'District Nodal Officer',
         inspectionType: inspectType,
-        physicalProgressObserved: Number(inspectObservedProgress) || 0,
+        physicalProgressObserved: computedVerifiedProgress,
         observations: inspectObservations.trim(),
         recommendation: inspectRecommendation.trim() || undefined,
+        milestoneObservations,
         user,
       });
 
       showToast('Physical Inspection Recorded', {
-        message: 'Official monitoring record and observed progress committed to audit registry.',
+        message: 'Official monitoring record and verified progress committed to audit registry.',
         type: 'success',
       });
       setShowInspectionModal(false);
       setInspectObservations('');
       setInspectRecommendation('');
+
+      if (newInsp.governmentVerifiedPhysicalProgressPercent !== undefined) {
+        setSelectedProject((prev) => (prev ? {
+          ...prev,
+          governmentVerifiedPhysicalProgressPercent: newInsp.governmentVerifiedPhysicalProgressPercent,
+          lastInspectionId: newInsp.id,
+        } : null));
+      }
+
       loadProjectDetails(selectedProject.id);
+      loadProjects();
     } catch (err) {
       console.error('Inspection error:', err);
       showToast('Inspection Log Failed', {
@@ -490,12 +539,39 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
     }
   };
 
+  // Handle Acknowledge Exception
+  const handleAcknowledgeException = async (exc: ProjectException) => {
+    if (!selectedProject || !user) return;
+    setActionProcessing(true);
+    try {
+      await ProjectService.acknowledgeException({
+        exceptionId: exc.id,
+        projectId: selectedProject.id,
+        user,
+      });
+
+      showToast('Exception Acknowledged', {
+        message: 'Exception marked as formally acknowledged under administrative review.',
+        type: 'success',
+      });
+      loadProjectDetails(selectedProject.id);
+    } catch (err) {
+      console.error('Acknowledge exception error:', err);
+      showToast('Acknowledgement Failed', {
+        message: err instanceof Error ? err.message : 'Could not acknowledge exception.',
+        type: 'error',
+      });
+    } finally {
+      setActionProcessing(false);
+    }
+  };
+
   // Handle Resolve Exception
   const handleResolveException = async () => {
     if (!selectedProject || !resolvingException || !user) return;
-    if (!resolutionNote.trim()) {
+    if (!resolutionNote.trim() || resolutionNote.trim().length < 10) {
       showToast('Resolution Note Required', {
-        message: 'A formal statutory justification note is mandatory to resolve an exception.',
+        message: 'A formal statutory justification note (minimum 10 characters) is mandatory to resolve an exception.',
         type: 'warning',
       });
       return;
@@ -582,16 +658,28 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
     {
       key: 'physicalProgress',
       header: 'Physical Progress',
-      width: '160px',
+      width: '180px',
       render: (p) => {
-        const prog = p.physicalProgressPercent ?? p.physicalProgress ?? 0;
+        const agencyProg = p.agencyReportedPhysicalProgressPercent ?? p.physicalProgressPercent ?? p.physicalProgress ?? 0;
+        const govProg = p.governmentVerifiedPhysicalProgressPercent;
+        const variance = govProg !== undefined ? Math.abs(agencyProg - govProg) : 0;
         return (
-          <div className="w-full">
+          <div className="w-full space-y-1">
+            <div className="flex items-center justify-between text-[10px]">
+              <span className="text-slate-500 font-medium">Agency: <span className="font-bold text-slate-800">{agencyProg}%</span></span>
+              {govProg !== undefined ? (
+                <span className={`font-bold ${variance > 15 ? 'text-amber-700' : 'text-emerald-700'}`}>
+                  Gov Verified: {govProg}%
+                </span>
+              ) : (
+                <span className="text-slate-400 italic">Uninspected</span>
+              )}
+            </div>
             <ProgressBar
-              value={prog}
+              value={govProg !== undefined ? govProg : agencyProg}
               size="sm"
-              color={prog >= 80 ? 'emerald' : prog >= 40 ? 'blue' : 'amber'}
-              showPercentage={true}
+              color={govProg !== undefined ? (govProg >= 80 ? 'emerald' : govProg >= 40 ? 'blue' : 'amber') : (agencyProg >= 80 ? 'emerald' : agencyProg >= 40 ? 'blue' : 'amber')}
+              showPercentage={false}
             />
           </div>
         );
@@ -902,17 +990,54 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
       >
         {selectedProject && (
           <div className="space-y-6 text-xs text-slate-800 pb-12">
-            {/* Dual Progress Bars */}
+            {/* Dual / Tri Progress Tracking */}
             <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
-              <div>
-                <ProgressBar
-                  label="Physical Site Progress"
-                  value={selectedProject.physicalProgressPercent ?? selectedProject.physicalProgress ?? 0}
-                  color="emerald"
-                  size="md"
-                  showPercentage={true}
-                />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <ProgressBar
+                    label="Agency-Reported Physical Progress"
+                    value={selectedProject.agencyReportedPhysicalProgressPercent ?? selectedProject.physicalProgressPercent ?? selectedProject.physicalProgress ?? 0}
+                    color="emerald"
+                    size="md"
+                    showPercentage={true}
+                  />
+                </div>
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-medium text-slate-700">Gov-Verified Physical Progress</span>
+                    <span className="font-mono font-bold text-slate-900">
+                      {selectedProject.governmentVerifiedPhysicalProgressPercent !== undefined
+                        ? `${selectedProject.governmentVerifiedPhysicalProgressPercent}%`
+                        : 'Unverified (Pending Site Visit)'}
+                    </span>
+                  </div>
+                  <ProgressBar
+                    value={selectedProject.governmentVerifiedPhysicalProgressPercent ?? 0}
+                    color={selectedProject.governmentVerifiedPhysicalProgressPercent !== undefined ? 'emerald' : 'slate'}
+                    size="md"
+                    showPercentage={false}
+                  />
+                </div>
               </div>
+
+              {selectedProject.governmentVerifiedPhysicalProgressPercent !== undefined &&
+                Math.abs(
+                  (selectedProject.agencyReportedPhysicalProgressPercent ?? selectedProject.physicalProgressPercent ?? 0) -
+                  selectedProject.governmentVerifiedPhysicalProgressPercent
+                ) > 15 && (
+                  <div className="flex items-center gap-2 p-2 bg-amber-50 border border-amber-200 rounded-lg text-amber-900 text-xs">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>
+                      <strong>Verification Variance Alert:</strong> Discrepancy of{' '}
+                      {Math.abs(
+                        (selectedProject.agencyReportedPhysicalProgressPercent ?? selectedProject.physicalProgressPercent ?? 0) -
+                        selectedProject.governmentVerifiedPhysicalProgressPercent
+                      )}
+                      % between Agency submission and official on-site inspection.
+                    </span>
+                  </div>
+                )}
+
               <div>
                 <ProgressBar
                   label="Financial Expenditure Disbursed"
@@ -1320,7 +1445,17 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
                     variant="gov"
                     size="sm"
                     icon={ShieldCheck}
-                    onClick={() => setShowInspectionModal(true)}
+                    onClick={() => {
+                      const initialObs: Record<string, { verifiedPercent: number; notes: string }> = {};
+                      milestones.forEach((m) => {
+                        initialObs[m.id] = { verifiedPercent: m.progressPercent || 0, notes: '' };
+                      });
+                      setInspectMilestoneObs(initialObs);
+                      setInspectDate(new Date().toISOString().split('T')[0]);
+                      setInspectObservations('');
+                      setInspectRecommendation('');
+                      setShowInspectionModal(true);
+                    }}
                   >
                     Record Inspection
                   </Button>
@@ -1356,9 +1491,25 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
                         </div>
 
                         <div className="flex items-center gap-2 text-xs">
-                          <span className="text-slate-500">Observed Physical Progress:</span>
-                          <span className="font-bold text-slate-900">{insp.physicalProgressObserved}%</span>
+                          <span className="text-slate-500">Verified Physical Progress:</span>
+                          <span className="font-bold text-emerald-800">
+                            {insp.governmentVerifiedPhysicalProgressPercent ?? insp.physicalProgressObserved ?? 0}%
+                          </span>
                         </div>
+
+                        {insp.milestoneObservations && insp.milestoneObservations.length > 0 && (
+                          <div className="p-2 bg-slate-50 rounded-lg border border-slate-200 space-y-1">
+                            <span className="text-[10px] font-bold text-slate-700 block">Milestone Verifications:</span>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[11px]">
+                              {insp.milestoneObservations.map((mo, idx) => (
+                                <div key={idx} className="flex justify-between items-center text-slate-700 bg-white px-2 py-1 rounded border border-slate-100">
+                                  <span className="truncate max-w-[200px] font-medium">{mo.milestoneTitle || `Milestone ${idx + 1}`}</span>
+                                  <span className="font-mono font-bold text-slate-900">{mo.verifiedProgressPercent}%</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
 
                         <p className="text-slate-700 text-xs leading-relaxed">{insp.observations}</p>
 
@@ -1395,70 +1546,123 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {exceptions.map((exc) => (
-                      <div
-                        key={exc.id}
-                        className={`p-3 bg-white rounded-xl border ${
-                          exc.status === 'RESOLVED'
-                            ? 'border-slate-200 opacity-70'
-                            : exc.severity === 'HIGH'
-                            ? 'border-rose-300 bg-rose-50/30'
-                            : 'border-amber-300 bg-amber-50/30'
-                        } space-y-2`}
-                      >
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
+                    {exceptions.map((exc) => {
+                      const condition = evaluateExceptionCurrentCondition(
+                        exc,
+                        selectedProject,
+                        milestones,
+                        financialRecords,
+                        progressUpdates
+                      );
+                      return (
+                        <div
+                          key={exc.id}
+                          className={`p-3.5 bg-white rounded-xl border ${
+                            exc.status === 'RESOLVED'
+                              ? 'border-slate-200 opacity-70'
+                              : exc.severity === 'HIGH'
+                              ? 'border-rose-300 bg-rose-50/20'
+                              : 'border-amber-300 bg-amber-50/20'
+                          } space-y-2.5`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${
+                                  exc.severity === 'HIGH'
+                                    ? 'bg-rose-100 text-rose-800'
+                                    : 'bg-amber-100 text-amber-800'
+                                }`}
+                              >
+                                {exc.severity} Priority
+                              </span>
+                              <span className="font-bold text-slate-900 text-xs">{exc.title}</span>
+                            </div>
                             <span
-                              className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${
-                                exc.severity === 'HIGH'
-                                  ? 'bg-rose-100 text-rose-800'
+                              className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                                exc.status === 'RESOLVED'
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : exc.status === 'ACKNOWLEDGED'
+                                  ? 'bg-blue-100 text-blue-800'
                                   : 'bg-amber-100 text-amber-800'
                               }`}
                             >
-                              {exc.severity} Priority
+                              {exc.status}
                             </span>
-                            <span className="font-bold text-slate-900 text-xs">{exc.title}</span>
                           </div>
-                          <span
-                            className={`text-[10px] font-bold px-2 py-0.5 rounded ${
-                              exc.status === 'RESOLVED'
-                                ? 'bg-emerald-100 text-emerald-800'
-                                : exc.status === 'ACKNOWLEDGED'
-                                ? 'bg-blue-100 text-blue-800'
-                                : 'bg-amber-100 text-amber-800'
+
+                          {/* Historical Detection Snapshot */}
+                          <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg space-y-1">
+                            <span className="text-[10px] font-bold uppercase text-slate-500 block">
+                              Historical Detection Evidence (Immutable Snapshot)
+                            </span>
+                            <p className="text-slate-800 text-xs">{exc.description}</p>
+                            <div className="text-[10px] text-slate-400">
+                              Detected: {new Date(exc.detectedAt).toLocaleString('en-IN')}
+                            </div>
+                          </div>
+
+                          {/* Live Current Condition Evaluation */}
+                          <div
+                            className={`p-2.5 rounded-lg border text-xs space-y-1 ${
+                              condition.isStillActive
+                                ? 'bg-amber-50/60 border-amber-200 text-amber-900'
+                                : 'bg-emerald-50/60 border-emerald-200 text-emerald-900'
                             }`}
                           >
-                            {exc.status}
-                          </span>
-                        </div>
-
-                        <p className="text-slate-700 text-xs">{exc.description}</p>
-                        <div className="text-[10px] text-slate-400">
-                          Detected At: {new Date(exc.detectedAt).toLocaleString('en-IN')}
-                        </div>
-
-                        {exc.status === 'RESOLVED' && exc.resolutionNote && (
-                          <div className="p-2 bg-emerald-50 rounded border border-emerald-200 text-emerald-900 text-[11px]">
-                            <strong>Resolution:</strong> {exc.resolutionNote} (by {exc.resolvedByName || 'Officer'})
+                            <div className="flex items-center gap-1.5">
+                              {condition.isStillActive ? (
+                                <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                              ) : (
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                              )}
+                              <span className="font-bold text-[11px]">
+                                Current Condition Status:{' '}
+                                {condition.isStillActive ? 'Condition Remains Active' : 'Condition Cleared / Reconciled'}
+                              </span>
+                            </div>
+                            <p className="text-[11px] leading-relaxed">{condition.currentSummary}</p>
                           </div>
-                        )}
 
-                        {exc.status !== 'RESOLVED' && (
-                          <div className="flex justify-end pt-2 border-t border-slate-100">
-                            <Button
-                              variant="gov"
-                              size="sm"
-                              onClick={() => {
-                                setResolvingException(exc);
-                              }}
-                              className="text-xs bg-slate-800 hover:bg-slate-900 text-white"
-                            >
-                              Resolve Exception
-                            </Button>
-                          </div>
-                        )}
-                      </div>
-                    ))}
+                          {exc.status === 'RESOLVED' && exc.resolutionNote && (
+                            <div className="p-2.5 bg-emerald-50 rounded-lg border border-emerald-200 text-emerald-900 text-[11px] space-y-0.5">
+                              <div><strong>Resolution Justification:</strong> {exc.resolutionNote}</div>
+                              <div className="text-[10px] text-emerald-700">
+                                Closed by {exc.resolvedByName || 'Authorized Officer'}{' '}
+                                {exc.resolvedAt && `on ${new Date(exc.resolvedAt).toLocaleDateString('en-IN')}`}
+                              </div>
+                            </div>
+                          )}
+
+                          {exc.status !== 'RESOLVED' && (
+                            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                              {exc.status === 'OPEN' && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => handleAcknowledgeException(exc)}
+                                  disabled={actionProcessing}
+                                  className="text-xs"
+                                >
+                                  Acknowledge
+                                </Button>
+                              )}
+                              <Button
+                                variant="gov"
+                                size="sm"
+                                onClick={() => {
+                                  setResolvingException(exc);
+                                }}
+                                disabled={actionProcessing}
+                                className="text-xs bg-slate-800 hover:bg-slate-900 text-white"
+                              >
+                                Resolve with Justification
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -1735,20 +1939,96 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
             </div>
           </div>
 
-          <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1">
-              Observed Physical Progress (%)
-            </label>
-            <input
-              type="number"
-              min={0}
-              max={100}
-              value={inspectObservedProgress}
-              onChange={(e) => setInspectObservedProgress(Number(e.target.value))}
-              required
-              className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg"
-            />
-          </div>
+          {milestones.length > 0 ? (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between pb-1 border-b border-slate-200">
+                <div>
+                  <label className="block text-xs font-bold text-slate-900">
+                    Milestone-by-Milestone Physical Verification
+                  </label>
+                  <p className="text-[10px] text-slate-500">
+                    Assess on-site physical completion for each contracted deliverable.
+                  </p>
+                </div>
+                <div className="text-right">
+                  <span className="text-[10px] text-slate-500 block">Verified Physical Progress:</span>
+                  <span className="text-sm font-bold text-emerald-800 font-mono">
+                    {computedVerifiedProgress !== undefined ? `${computedVerifiedProgress}%` : 'Unverified'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
+                {milestones.map((m, idx) => {
+                  const currentObs = inspectMilestoneObs[m.id];
+                  const displayVal = currentObs && currentObs.verifiedPercent !== undefined ? currentObs.verifiedPercent : '';
+                  return (
+                    <div key={m.id} className="p-2.5 bg-slate-50 rounded-lg border border-slate-200 space-y-2 text-xs">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="font-semibold text-slate-900 truncate">
+                          <span className="text-slate-500 mr-1">M{idx + 1}:</span>
+                          {m.title}
+                          <span className="ml-1.5 text-[10px] bg-slate-200 text-slate-700 px-1.5 py-0.2 rounded font-normal">
+                            Weight: {m.weightPercent}%
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-slate-600 shrink-0">
+                          Agency: <span className="font-bold">{m.progressPercent || 0}%</span>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 items-center">
+                        <div className="flex items-center gap-2">
+                          <label className="text-[10px] font-medium text-slate-600 shrink-0">Verified %:</label>
+                          <input
+                            type="number"
+                            min={0}
+                            max={100}
+                            placeholder="Unobserved"
+                            value={displayVal}
+                            onChange={(e) => {
+                              const raw = e.target.value;
+                              const val = raw === '' ? undefined : Math.min(100, Math.max(0, Number(raw)));
+                              setInspectMilestoneObs((prev) => ({
+                                ...prev,
+                                [m.id]: {
+                                  notes: prev[m.id]?.notes || '',
+                                  verifiedPercent: val,
+                                },
+                              }));
+                            }}
+                            className="w-24 text-xs px-2 py-1 border border-slate-300 rounded bg-white font-mono placeholder:text-slate-400"
+                          />
+                        </div>
+                        <div>
+                          <input
+                            type="text"
+                            placeholder="Site notes for this milestone..."
+                            value={currentObs?.notes || ''}
+                            onChange={(e) => {
+                              const noteVal = e.target.value;
+                              setInspectMilestoneObs((prev) => ({
+                                ...prev,
+                                [m.id]: {
+                                  notes: noteVal,
+                                  verifiedPercent: prev[m.id]?.verifiedPercent,
+                                },
+                              }));
+                            }}
+                            className="w-full text-xs px-2 py-1 border border-slate-300 rounded bg-white"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            <div className="p-3 bg-amber-50 rounded-lg border border-amber-200 text-amber-900 text-xs">
+              No structured milestones established for this project. Physical progress verification is derived exclusively from explicit milestone observations once milestones are defined by the nodal authority.
+            </div>
+          )}
 
           <div>
             <label className="block text-xs font-bold text-slate-700 mb-1">

@@ -79,6 +79,8 @@ export interface Project {
 
   // Calculated deterministic progress percentages (0-100)
   physicalProgressPercent?: number;
+  agencyReportedPhysicalProgressPercent?: number;
+  governmentVerifiedPhysicalProgressPercent?: number;
   financialProgressPercent?: number;
 
   createdAt?: string;
@@ -86,6 +88,7 @@ export interface Project {
   lastProgressUpdateId?: string;
   lastMilestoneId?: string;
   lastVerifiedRecordId?: string;
+  lastInspectionId?: string;
   lastStatusChangeEventId?: string;
   milestonesSummary?: ProjectMilestoneSummary[];
 
@@ -208,6 +211,14 @@ export interface ProjectFinancialRecord {
  */
 export type InspectionType = 'ROUTINE' | 'MILESTONE' | 'COMPLAINT' | 'FINAL';
 
+export interface ProjectInspectionMilestoneObservation {
+  milestoneId: string;
+  milestoneTitle?: string;
+  observedProgressPercent?: number; // 0 to 100
+  verifiedProgressPercent?: number; // 0 to 100 (alias)
+  notes?: string;
+}
+
 export interface ProjectInspection {
   id: string;
   projectId: string;
@@ -219,6 +230,8 @@ export interface ProjectInspection {
 
   inspectionType: InspectionType;
   physicalProgressObserved?: number;
+  governmentVerifiedPhysicalProgressPercent?: number;
+  milestoneObservations?: ProjectInspectionMilestoneObservation[];
 
   observations: string;
   issues?: string[];
@@ -240,6 +253,8 @@ export type ProjectExceptionType =
   | 'PHYSICAL_PROGRESS_DELAY'
   | 'FINANCIAL_PROGRESS_MISMATCH'
   | 'PROGRESS_VARIANCE'
+  | 'VERIFICATION_VARIANCE'
+  | 'PROGRESS_VERIFICATION_VARIANCE'
   | 'EXPENDITURE_OVER_AWARD'
   | 'STALLED_PROJECT';
 

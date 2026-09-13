@@ -515,15 +515,36 @@ export const ProjectMilestonesPage: React.FC<{ onNavigate: (path: string) => voi
       >
         {selectedProject && (
           <div className="space-y-6 text-xs text-slate-800 pb-12">
-            {/* Dual Progress Bars */}
+            {/* Multi-Progress Tracking */}
             <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
-              <ProgressBar
-                label="Physical Site Progress"
-                value={selectedProject.physicalProgressPercent ?? selectedProject.physicalProgress ?? 0}
-                color="emerald"
-                size="md"
-                showPercentage={true}
-              />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <ProgressBar
+                    label="Agency-Reported Physical Progress"
+                    value={selectedProject.agencyReportedPhysicalProgressPercent ?? selectedProject.physicalProgressPercent ?? selectedProject.physicalProgress ?? 0}
+                    color="emerald"
+                    size="md"
+                    showPercentage={true}
+                  />
+                </div>
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-medium text-slate-700">Gov-Verified Physical Progress</span>
+                    <span className="font-mono font-bold text-slate-900">
+                      {selectedProject.governmentVerifiedPhysicalProgressPercent !== undefined
+                        ? `${selectedProject.governmentVerifiedPhysicalProgressPercent}%`
+                        : 'Unverified'}
+                    </span>
+                  </div>
+                  <ProgressBar
+                    value={selectedProject.governmentVerifiedPhysicalProgressPercent ?? 0}
+                    color={selectedProject.governmentVerifiedPhysicalProgressPercent !== undefined ? 'emerald' : 'slate'}
+                    size="md"
+                    showPercentage={false}
+                  />
+                </div>
+              </div>
+
               <ProgressBar
                 label="Verified Financial Disbursal"
                 value={selectedProject.financialProgressPercent ?? selectedProject.financialProgress ?? 0}
