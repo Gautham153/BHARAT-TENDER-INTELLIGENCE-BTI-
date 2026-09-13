@@ -42,6 +42,13 @@ import { AuthUser } from '../../types/auth';
 import { ProposalService } from './proposals';
 import { TenderService } from './tenders';
 import { OrganizationService } from './organizations';
+import {
+  DEMONSTRATION_PROJECTS,
+  DEMONSTRATION_MILESTONES,
+  DEMONSTRATION_PROGRESS_UPDATES,
+  DEMONSTRATION_FINANCIAL_RECORDS,
+  DEMONSTRATION_INSPECTIONS,
+} from '../../data/demonstrationProjects';
 
 const PROJECTS_COLLECTION = 'projects';
 const MILESTONES_COLLECTION = 'projectMilestones';
@@ -1048,7 +1055,12 @@ export class ProjectService {
       return list;
     }
 
-    const localProjects = getLocalItems<Project>(LOCAL_STORAGE_PROJECTS_KEY, [INITIAL_DEMO_PROJECT]);
+    const localProjects = getLocalItems<Project>(LOCAL_STORAGE_PROJECTS_KEY, DEMONSTRATION_PROJECTS);
+    for (const dp of DEMONSTRATION_PROJECTS) {
+      if (!localProjects.some((p) => p.id === dp.id)) {
+        localProjects.push(dp);
+      }
+    }
     if (role === 'agency' && organizationId) {
       return localProjects.filter((p) => p.organizationId === organizationId);
     }
@@ -1066,8 +1078,10 @@ export class ProjectService {
       return null;
     }
 
-    const localProjects = getLocalItems<Project>(LOCAL_STORAGE_PROJECTS_KEY, [INITIAL_DEMO_PROJECT]);
-    return localProjects.find((p) => p.id === projectId || p.projectNumber === projectId) || null;
+    const localProjects = getLocalItems<Project>(LOCAL_STORAGE_PROJECTS_KEY, DEMONSTRATION_PROJECTS);
+    const found = localProjects.find((p) => p.id === projectId || p.projectNumber === projectId);
+    if (found) return found;
+    return DEMONSTRATION_PROJECTS.find((p) => p.id === projectId || p.projectNumber === projectId) || null;
   }
 
   static async getProjectByProposalId(proposalId: string): Promise<Project | null> {
@@ -1211,10 +1225,15 @@ export class ProjectService {
       return list;
     }
 
-    const localMilestones = getLocalItems<ProjectMilestone>(LOCAL_STORAGE_MILESTONES_KEY, INITIAL_DEMO_MILESTONES);
-    return localMilestones
+    const localMilestones = getLocalItems<ProjectMilestone>(LOCAL_STORAGE_MILESTONES_KEY, [
+      ...INITIAL_DEMO_MILESTONES,
+      ...DEMONSTRATION_MILESTONES,
+    ]);
+    const filtered = localMilestones
       .filter((m) => m.projectId === projectId)
       .sort((a, b) => a.sequence - b.sequence);
+    if (filtered.length > 0) return filtered;
+    return DEMONSTRATION_MILESTONES.filter((m) => m.projectId === projectId).sort((a, b) => a.sequence - b.sequence);
   }
 
   /**
@@ -1444,6 +1463,11 @@ export class ProjectService {
       saveLocalItems(LOCAL_STORAGE_EVENTS_KEY, localEvents);
     }
 
+    if (isGov) {
+      await this.runDeterministicExceptionChecks(projectId);
+      await this.triggerAnomalyChecksSafely(projectId);
+    }
+
     return updated;
   }
 
@@ -1466,8 +1490,13 @@ export class ProjectService {
       return list;
     }
 
-    const localUpdates = getLocalItems<ProjectProgressUpdate>(LOCAL_STORAGE_UPDATES_KEY, INITIAL_DEMO_UPDATES);
-    return localUpdates.filter((u) => u.projectId === projectId).sort((a, b) => (b.createdAt > a.createdAt ? 1 : -1));
+    const localUpdates = getLocalItems<ProjectProgressUpdate>(LOCAL_STORAGE_UPDATES_KEY, [
+      ...INITIAL_DEMO_UPDATES,
+      ...DEMONSTRATION_PROGRESS_UPDATES,
+    ]);
+    const filtered = localUpdates.filter((u) => u.projectId === projectId).sort((a, b) => (b.createdAt > a.createdAt ? 1 : -1));
+    if (filtered.length > 0) return filtered;
+    return DEMONSTRATION_PROGRESS_UPDATES.filter((u) => u.projectId === projectId).sort((a, b) => (b.createdAt > a.createdAt ? 1 : -1));
   }
 
   static async submitProgressUpdate(params: {
@@ -1667,6 +1696,7 @@ export class ProjectService {
     // Run deterministic exception checks only for government-authorized callers
     if (isGov) {
       await this.runDeterministicExceptionChecks(projectId);
+      await this.triggerAnomalyChecksSafely(projectId);
     }
 
     return newUpdate;
@@ -1691,8 +1721,13 @@ export class ProjectService {
       return list;
     }
 
-    const localFinancial = getLocalItems<ProjectFinancialRecord>(LOCAL_STORAGE_FINANCIAL_KEY, INITIAL_DEMO_FINANCIAL);
-    return localFinancial.filter((f) => f.projectId === projectId).sort((a, b) => (b.entryDate > a.entryDate ? 1 : -1));
+    const localFinancial = getLocalItems<ProjectFinancialRecord>(LOCAL_STORAGE_FINANCIAL_KEY, [
+      ...INITIAL_DEMO_FINANCIAL,
+      ...DEMONSTRATION_FINANCIAL_RECORDS,
+    ]);
+    const filtered = localFinancial.filter((f) => f.projectId === projectId).sort((a, b) => (b.entryDate > a.entryDate ? 1 : -1));
+    if (filtered.length > 0) return filtered;
+    return DEMONSTRATION_FINANCIAL_RECORDS.filter((f) => f.projectId === projectId).sort((a, b) => (b.entryDate > a.entryDate ? 1 : -1));
   }
 
   static async submitFinancialRecord(params: {
@@ -1886,8 +1921,9 @@ export class ProjectService {
       saveLocalItems(LOCAL_STORAGE_EVENTS_KEY, localEvents);
     }
 
-    // Check exceptions
+    // Check exceptions and anomalies
     await this.runDeterministicExceptionChecks(projectId);
+    await this.triggerAnomalyChecksSafely(projectId);
 
     return updated;
   }
@@ -1911,8 +1947,13 @@ export class ProjectService {
       return list;
     }
 
-    const localInspections = getLocalItems<ProjectInspection>(LOCAL_STORAGE_INSPECTIONS_KEY, INITIAL_DEMO_INSPECTIONS);
-    return localInspections.filter((i) => i.projectId === projectId).sort((a, b) => (b.inspectionDate > a.inspectionDate ? 1 : -1));
+    const localInspections = getLocalItems<ProjectInspection>(LOCAL_STORAGE_INSPECTIONS_KEY, [
+      ...INITIAL_DEMO_INSPECTIONS,
+      ...DEMONSTRATION_INSPECTIONS,
+    ]);
+    const filtered = localInspections.filter((i) => i.projectId === projectId).sort((a, b) => (b.inspectionDate > a.inspectionDate ? 1 : -1));
+    if (filtered.length > 0) return filtered;
+    return DEMONSTRATION_INSPECTIONS.filter((i) => i.projectId === projectId).sort((a, b) => (b.inspectionDate > a.inspectionDate ? 1 : -1));
   }
 
   static async createInspection(params: {
@@ -2039,6 +2080,7 @@ export class ProjectService {
 
     // Run deterministic exception checks
     await this.runDeterministicExceptionChecks(projectId);
+    await this.triggerAnomalyChecksSafely(projectId);
 
     return newInspection;
   }
@@ -2672,5 +2714,18 @@ export class ProjectService {
 
     const localEvents = getLocalItems<ProjectAuditEvent>(LOCAL_STORAGE_EVENTS_KEY, INITIAL_DEMO_EVENTS);
     return localEvents.filter((e) => e.projectId === projectId).sort((a, b) => (b.timestamp > a.timestamp ? 1 : -1));
+  }
+
+  /**
+   * Safe asynchronous hook to trigger deterministic anomaly checks
+   * after mutations without failing the parent transaction.
+   */
+  static async triggerAnomalyChecksSafely(projectId: string): Promise<void> {
+    try {
+      const { AnomalyDetectionService } = await import('../anomaly/anomalyDetectionService');
+      await AnomalyDetectionService.runDeterministicAnomalyChecks(projectId);
+    } catch (err) {
+      console.warn('[AnomalyDetection Hook Warning]:', err);
+    }
   }
 }

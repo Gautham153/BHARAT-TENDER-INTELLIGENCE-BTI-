@@ -1288,6 +1288,111 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // 14.6. Project Anomalies (/projectAnomalies/{anomalyId}) — Government intelligence layer
+    match /projectAnomalies/{anomalyId} {
+      // Government only; agency and public strictly forbidden
+      allow get, list: if isSignedIn() && isGovernmentUser();
+
+      // Created or updated only by authorized government reviewers
+      allow create: if isSignedIn()
+        && isGovernmentUser()
+        && isValidId(anomalyId)
+        && incoming().id == anomalyId
+        && incoming().projectId is string
+        && exists(/databases/$(database)/documents/projects/$(incoming().projectId));
+
+      // Enforce authoritative state machine for anomaly investigations:
+      // OPEN -> UNDER_REVIEW, ACKNOWLEDGED, DISMISSED
+      // ACKNOWLEDGED -> UNDER_REVIEW, RESOLVED, DISMISSED
+      // UNDER_REVIEW -> ACKNOWLEDGED, RESOLVED, DISMISSED
+      // RESOLVED -> terminal (cannot transition)
+      // DISMISSED -> terminal (cannot transition)
+      function isValidAnomalyStatusTransition() {
+        let oldStatus = existing().get('status', 'OPEN');
+        let newStatus = incoming().get('status', 'OPEN');
+        return oldStatus == newStatus ||
+          (oldStatus == 'OPEN' && (newStatus == 'ACKNOWLEDGED' || newStatus == 'UNDER_REVIEW' || newStatus == 'DISMISSED')) ||
+          (oldStatus == 'ACKNOWLEDGED' && (newStatus == 'UNDER_REVIEW' || newStatus == 'RESOLVED' || newStatus == 'DISMISSED')) ||
+          (oldStatus == 'UNDER_REVIEW' && (newStatus == 'RESOLVED' || newStatus == 'DISMISSED' || newStatus == 'ACKNOWLEDGED'));
+      }
+
+      allow update: if isSignedIn()
+        && isGovernmentUser()
+        && isValidId(anomalyId)
+        && incoming().id == existing().id
+        && incoming().projectId == existing().projectId
+        && isValidAnomalyStatusTransition();
+
+      allow delete: if false;
+    }
+
+    // 14.7. Project Risk Assessments (/projectRiskAssessments/{assessmentId})
+    match /projectRiskAssessments/{assessmentId} {
+      // Government only; agency and public strictly forbidden
+      allow get, list: if isSignedIn() && isGovernmentUser();
+
+      // Validate deterministic risk assessment schema integrity
+      function isValidRiskAssessmentData() {
+        let data = incoming();
+        let breakdown = data.get('scoreBreakdown', null);
+
+        return data.id == assessmentId
+          && data.projectId == assessmentId
+          && exists(/databases/$(database)/documents/projects/$(data.projectId))
+          && data.riskScore is number
+          && data.riskScore >= 0
+          && data.riskScore <= 100
+          && data.riskLevel in ['LOW', 'MODERATE', 'HIGH', 'CRITICAL']
+          && data.activeAnomalyCount is number
+          && data.activeAnomalyCount >= 0
+          && data.resolvedAnomalyCount is number
+          && data.resolvedAnomalyCount >= 0
+          && data.dismissedAnomalyCount is number
+          && data.dismissedAnomalyCount >= 0
+          && data.updatedAt is string
+          && data.updatedAt.size() > 0
+          && data.lastAnalysisAt is string
+          && data.lastAnalysisAt.size() > 0
+          && breakdown is map
+          && breakdown.totalRiskScore is number
+          && breakdown.totalRiskScore >= 0
+          && breakdown.totalRiskScore <= 100
+          && breakdown.riskLevel in ['LOW', 'MODERATE', 'HIGH', 'CRITICAL']
+          && breakdown.financialDivergenceScore is number
+          && breakdown.financialDivergenceScore >= 0
+          && breakdown.financialDivergenceScore <= 25
+          && breakdown.progressDivergenceScore is number
+          && breakdown.progressDivergenceScore >= 0
+          && breakdown.progressDivergenceScore <= 20
+          && breakdown.milestoneDelaysScore is number
+          && breakdown.milestoneDelaysScore >= 0
+          && breakdown.milestoneDelaysScore <= 20
+          && breakdown.reportingGapsScore is number
+          && breakdown.reportingGapsScore >= 0
+          && breakdown.reportingGapsScore <= 15
+          && breakdown.inspectionInconsistenciesScore is number
+          && breakdown.inspectionInconsistenciesScore >= 0
+          && breakdown.inspectionInconsistenciesScore <= 10
+          && breakdown.budgetAndAccelerationScore is number
+          && breakdown.budgetAndAccelerationScore >= 0
+          && breakdown.budgetAndAccelerationScore <= 10;
+      }
+
+      allow create: if isSignedIn()
+        && isGovernmentUser()
+        && isValidId(assessmentId)
+        && isValidRiskAssessmentData();
+
+      allow update: if isSignedIn()
+        && isGovernmentUser()
+        && isValidId(assessmentId)
+        && incoming().id == existing().id
+        && incoming().projectId == existing().projectId
+        && isValidRiskAssessmentData();
+
+      allow delete: if false;
+    }
+
     // 15. Project Audit Events (/projectAuditEvents/{eventId})
     match /projectAuditEvents/{eventId} {
       allow get, list: if isSignedIn() && (
@@ -1380,7 +1485,19 @@ service cloud.firestore {
           // PROJECT_UPDATED -> project changed in getAfter()
           (incoming().action == 'PROJECT_UPDATED'
            && exists(/databases/$(database)/documents/projects/$(incoming().projectId))
-           && getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.updatedAt != get(/databases/$(database)/documents/projects/$(incoming().projectId)).data.updatedAt)
+           && getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.updatedAt != get(/databases/$(database)/documents/projects/$(incoming().projectId)).data.updatedAt) ||
+
+          // Phase 7: ANOMALY & RISK INTELLIGENCE ACTIONS
+          (incoming().action in [
+            'ANOMALY_DETECTED',
+            'AI_RISK_ANALYSIS_REQUESTED',
+            'AI_RISK_ANALYSIS_COMPLETED',
+            'AI_RISK_ANALYSIS_FAILED',
+            'ANOMALY_ACKNOWLEDGED',
+            'ANOMALY_UNDER_REVIEW',
+            'ANOMALY_RESOLVED',
+            'ANOMALY_DISMISSED'
+          ] && exists(/databases/$(database)/documents/projects/$(incoming().projectId)))
         );
       }
 
@@ -1424,7 +1541,15 @@ service cloud.firestore {
               'EXCEPTION_DETECTED',
               'EXCEPTION_ACKNOWLEDGED',
               'EXCEPTION_RESOLVED',
-              'EXCEPTION_EXPLANATION_REQUESTED'
+              'EXCEPTION_EXPLANATION_REQUESTED',
+              'ANOMALY_DETECTED',
+              'AI_RISK_ANALYSIS_REQUESTED',
+              'AI_RISK_ANALYSIS_COMPLETED',
+              'AI_RISK_ANALYSIS_FAILED',
+              'ANOMALY_ACKNOWLEDGED',
+              'ANOMALY_UNDER_REVIEW',
+              'ANOMALY_RESOLVED',
+              'ANOMALY_DISMISSED'
             ]
           )
         );

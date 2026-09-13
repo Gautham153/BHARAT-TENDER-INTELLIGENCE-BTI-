@@ -114,7 +114,7 @@ export interface Project {
   targetCompletionDate?: string;
   mpName?: string;
   riskScore?: number;
-  riskLevel?: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' | 'Low' | 'Medium' | 'High' | 'Critical';
+  riskLevel?: 'LOW' | 'MEDIUM' | 'MODERATE' | 'HIGH' | 'CRITICAL' | 'Low' | 'Medium' | 'High' | 'Critical';
   riskSignals?: string[];
   beneficiariesCount?: number;
   lastUpdated?: string;
@@ -317,7 +317,15 @@ export type ProjectAuditAction =
   | 'EXCEPTION_ACKNOWLEDGED'
   | 'EXCEPTION_RESOLVED'
   | 'EXCEPTION_EXPLANATION_REQUESTED'
-  | 'EXCEPTION_EXPLANATION_SUBMITTED';
+  | 'EXCEPTION_EXPLANATION_SUBMITTED'
+  | 'ANOMALY_DETECTED'
+  | 'AI_RISK_ANALYSIS_REQUESTED'
+  | 'AI_RISK_ANALYSIS_COMPLETED'
+  | 'AI_RISK_ANALYSIS_FAILED'
+  | 'ANOMALY_ACKNOWLEDGED'
+  | 'ANOMALY_UNDER_REVIEW'
+  | 'ANOMALY_RESOLVED'
+  | 'ANOMALY_DISMISSED';
 
 export interface ProjectAuditEvent {
   eventId: string;

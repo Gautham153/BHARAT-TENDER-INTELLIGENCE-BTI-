@@ -29,6 +29,7 @@ import { ProposalReview } from './pages/government/ProposalReview';
 import { RiskAlerts } from './pages/government/RiskAlerts';
 import { FraudInvestigations } from './pages/government/FraudInvestigations';
 import { ProjectMonitoring } from './pages/government/ProjectMonitoring';
+import { RiskIntelligenceDashboard } from './pages/government/RiskIntelligenceDashboard';
 import { AuditLogsPage } from './pages/government/AuditLogsPage';
 import { AnalyticsReportsPage } from './pages/government/AnalyticsReportsPage';
 import { SettingsSecurityPage } from './pages/government/SettingsSecurityPage';
@@ -93,6 +94,8 @@ function AppContent() {
           }
           case '/government/risk-alerts':
             return <RiskAlerts onNavigate={navigate} />;
+          case '/government/risk-intelligence':
+            return <RiskIntelligenceDashboard onNavigate={navigate} />;
           case '/government/investigations':
             return <FraudInvestigations onNavigate={navigate} />;
           case '/government/projects':

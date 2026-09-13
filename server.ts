@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer as createViteServer } from 'vite';
 import { ProposalEvaluationServerService } from './server/evaluation/ProposalEvaluationServerService.js';
+import { ProjectRiskAiServerService } from './server/anomaly/ProjectRiskAiServerService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -18,6 +19,7 @@ async function startServer() {
   app.use(express.json({ limit: '10mb' }));
 
   const evaluationServer = new ProposalEvaluationServerService();
+  const projectRiskAiServer = new ProjectRiskAiServerService();
 
   // API Routes FIRST
   app.get('/api/health', (_req, res) => {
@@ -27,6 +29,25 @@ async function startServer() {
       timestamp: new Date().toISOString(),
       geminiConfigured: Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim().length > 0),
     });
+  });
+
+  // Project Risk Intelligence AI Analysis Endpoint (Phase 7)
+  app.post('/api/ai/project-risk-intelligence', async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization || (req.headers['authorization'] as string | undefined);
+      const payload = req.body || {};
+      const assessment = await projectRiskAiServer.analyzeProjectRisk({
+        ...payload,
+        authHeader,
+      });
+      res.status(200).json({ success: true, assessment });
+    } catch (err: any) {
+      const statusCode =
+        err?.statusCode ||
+        (err?.message && err.message.includes('Access Denied') ? 403 : err?.message && err.message.includes('Unauthorized') ? 401 : 400);
+      const message = err instanceof Error ? err.message : 'Risk intelligence service error occurred.';
+      res.status(statusCode).json({ success: false, error: message });
+    }
   });
 
   // Consolidated Server-Side AI Evaluation Endpoint

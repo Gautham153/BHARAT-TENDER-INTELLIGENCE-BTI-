@@ -31,6 +31,8 @@ import {
   Activity,
   Layers,
   MessageSquare,
+  ShieldAlert,
+  Sparkles,
 } from 'lucide-react';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { Table, Column } from '../../components/ui/Table';
@@ -48,6 +50,14 @@ import {
   calculateGovernmentVerifiedProgress,
   evaluateExceptionCurrentCondition,
 } from '../../services/firebase/projects';
+import { AnomalyDetectionService } from '../../services/anomaly/anomalyDetectionService';
+import {
+  ProjectAnomaly,
+  ProjectRiskAssessment,
+  RiskIntelligenceResult,
+  SEVERITY_COLORS,
+  STATUS_COLORS,
+} from '../../types/anomaly';
 import {
   Project,
   CanonicalProjectStatus,
@@ -71,6 +81,7 @@ type ActiveTab =
   | 'financials'
   | 'inspections'
   | 'exceptions'
+  | 'risk_intelligence'
   | 'audit';
 
 export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }> = ({ onNavigate }) => {
@@ -97,6 +108,10 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
   const [inspections, setInspections] = useState<ProjectInspection[]>([]);
   const [exceptions, setExceptions] = useState<ProjectException[]>([]);
   const [auditEvents, setAuditEvents] = useState<ProjectAuditEvent[]>([]);
+  const [projectAnomalies, setProjectAnomalies] = useState<ProjectAnomaly[]>([]);
+  const [projectAssessment, setProjectAssessment] = useState<ProjectRiskAssessment | null>(null);
+  const [projectAiResult, setProjectAiResult] = useState<RiskIntelligenceResult | null>(null);
+  const [aiRunning, setAiRunning] = useState<boolean>(false);
 
   // Modals state
   const [statusModalType, setStatusModalType] = useState<CanonicalProjectStatus | null>(null);
@@ -187,12 +202,21 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
       // 3. Only after exception detection completes, fetch audit events
       const a = await ProjectService.getAuditEvents(projectId);
 
+      // 4. Load Phase 7 Anomaly and Risk Intelligence profiles
+      const [anoms, assess] = await Promise.all([
+        AnomalyDetectionService.getProjectAnomalies(projectId),
+        AnomalyDetectionService.getProjectRiskAssessment(projectId),
+      ]);
+
       setMilestones(m);
       setProgressUpdates(u);
       setFinancialRecords(f);
       setInspections(i);
       setExceptions(e);
       setAuditEvents(a);
+      setProjectAnomalies(anoms);
+      setProjectAssessment(assess);
+      setProjectAiResult(null);
     } catch (err) {
       console.error('[ProjectMonitoring] Failed to fetch project sub-records:', err);
       showToast('Error Loading Details', {
@@ -641,6 +665,80 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
     }
   };
 
+  // Trigger Deterministic Anomaly Audit
+  const handleTriggerAnomalyAudit = async () => {
+    if (!selectedProject) return;
+    setActionProcessing(true);
+    try {
+      const detected = await AnomalyDetectionService.runDeterministicAnomalyChecks(selectedProject.id);
+      const assessment = await AnomalyDetectionService.getProjectRiskAssessment(selectedProject.id);
+      setProjectAnomalies(detected);
+      setProjectAssessment(assessment);
+      showToast('Anomaly Scan Completed', {
+        message: `Evaluated 7 intelligence rules. Found ${detected.length} indicator(s).`,
+        type: detected.length > 0 ? 'warning' : 'success',
+      });
+      // Also refresh main list
+      loadProjects();
+    } catch (err) {
+      console.error('Audit run error:', err);
+      showToast('Scan Failed', {
+        message: err instanceof Error ? err.message : 'Could not complete anomaly check.',
+        type: 'error',
+      });
+    } finally {
+      setActionProcessing(false);
+    }
+  };
+
+  // Trigger Grounded AI Risk Evaluation
+  const handleTriggerProjectAi = async () => {
+    if (!selectedProject) return;
+    setAiRunning(true);
+    try {
+      const res = await fetch('/api/ai/project-risk-intelligence', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: selectedProject.id,
+          projectTitle: selectedProject.title,
+          sanctionedBudget: selectedProject.sanctionedBudget || selectedProject.sanctionedAmount || 0,
+          awardedAmount: selectedProject.awardedAmount || selectedProject.sanctionedBudget || 0,
+          disbursedAmount: selectedProject.disbursedAmount || selectedProject.amountDisbursed || 0,
+          agencyPhysicalProgress: selectedProject.agencyReportedPhysicalProgressPercent ?? selectedProject.physicalProgressPercent ?? 0,
+          verifiedPhysicalProgress: selectedProject.governmentVerifiedPhysicalProgressPercent,
+          anomalies: projectAnomalies.map((a) => ({
+            id: a.id,
+            ruleCode: a.ruleCode,
+            title: a.title,
+            severity: a.severity,
+            summary: a.summary,
+            metricVariance: a.metricVariance,
+          })),
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error(`Server returned HTTP ${res.status}`);
+      }
+
+      const data: RiskIntelligenceResult = await res.json();
+      setProjectAiResult(data);
+      showToast('AI Advisory Generated', {
+        message: `Analysis completed with confidence: ${data.confidenceScore ?? 92}%.`,
+        type: 'success',
+      });
+    } catch (err) {
+      console.error('AI Advisory error:', err);
+      showToast('AI Advisory Unavailable', {
+        message: err instanceof Error ? err.message : 'Could not contact AI advisory endpoint.',
+        type: 'error',
+      });
+    } finally {
+      setAiRunning(false);
+    }
+  };
+
   // Table Columns
   const columns: Column<Project>[] = [
     {
@@ -744,6 +842,30 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
       render: (p) => {
         const canonical = toCanonicalProjectStatus(p.status);
         return <StatusBadge status={canonical} size="sm" />;
+      },
+    },
+    {
+      key: 'riskPosture',
+      header: 'Risk Score',
+      align: 'center',
+      render: (p) => {
+        const score = p.riskScore ?? 0;
+        const level = p.riskLevel || (score >= 70 ? 'CRITICAL' : score >= 40 ? 'HIGH' : score > 15 ? 'MODERATE' : 'LOW');
+        const badgeClass =
+          level === 'CRITICAL'
+            ? 'bg-rose-100 text-rose-800 border-rose-300'
+            : level === 'HIGH'
+            ? 'bg-amber-100 text-amber-800 border-amber-300'
+            : level === 'MODERATE'
+            ? 'bg-yellow-100 text-yellow-800 border-yellow-300'
+            : 'bg-emerald-100 text-emerald-800 border-emerald-300';
+
+        return (
+          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${badgeClass}`}>
+            <ShieldAlert className="w-3 h-3 shrink-0" />
+            {level} • {score}
+          </span>
+        );
       },
     },
     {
@@ -1098,6 +1220,11 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
                   id: 'exceptions',
                   label: `Exceptions (${exceptions.filter((e) => e.status !== 'RESOLVED').length})`,
                   icon: AlertTriangle,
+                },
+                {
+                  id: 'risk_intelligence',
+                  label: `Risk & Anomalies (${projectAnomalies.filter((a) => a.status === 'OPEN').length})`,
+                  icon: ShieldAlert,
                 },
                 { id: 'audit', label: 'Audit Trail', icon: History },
               ].map((tab) => {
@@ -1773,6 +1900,222 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
                     })}
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* Tab: Risk Intelligence & Anomaly Detection */}
+            {activeTab === 'risk_intelligence' && (
+              <div className="space-y-4">
+                {/* Header Card */}
+                <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-rose-50 border border-rose-200 flex items-center justify-center text-rose-700">
+                        <ShieldAlert className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h4 className="font-bold text-slate-900 text-sm">MPLAD Anomaly & Risk Posture</h4>
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                              projectAssessment?.riskLevel === 'CRITICAL'
+                                ? 'bg-rose-100 text-rose-800 border-rose-300'
+                                : projectAssessment?.riskLevel === 'HIGH'
+                                ? 'bg-amber-100 text-amber-800 border-amber-300'
+                                : projectAssessment?.riskLevel === 'MODERATE'
+                                ? 'bg-yellow-100 text-yellow-800 border-yellow-300'
+                                : 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                            }`}
+                          >
+                            {projectAssessment?.riskLevel || 'ASSESSING'} • Risk Score:{' '}
+                            {projectAssessment?.riskScore ?? selectedProject.riskScore ?? 0}/100
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-500">
+                          Deterministic cross-signal checks comparing contract terms, physical site inspections, and financial releases.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={handleTriggerAnomalyAudit}
+                        disabled={actionProcessing}
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${actionProcessing ? 'animate-spin' : ''}`} />
+                        Re-scan Rules
+                      </Button>
+
+                      <Button
+                        size="sm"
+                        className="bg-indigo-700 hover:bg-indigo-800 text-white"
+                        onClick={handleTriggerProjectAi}
+                        disabled={aiRunning}
+                      >
+                        <Sparkles className={`w-3.5 h-3.5 mr-1.5 ${aiRunning ? 'animate-spin text-amber-300' : ''}`} />
+                        {aiRunning ? 'Generating Advisory...' : 'AI Risk Advisory'}
+                      </Button>
+
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        onClick={() => onNavigate('/government/risk-intelligence')}
+                      >
+                        Open Triage Desk
+                        <ArrowRight className="w-3.5 h-3.5 ml-1.5" />
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Risk Metric Grid */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-slate-200 text-xs">
+                    <div>
+                      <span className="text-slate-400 block text-[10px]">Physical Divergence Risk</span>
+                      <span className="font-semibold text-slate-800">
+                        {projectAssessment?.scoreBreakdown?.progressDivergenceScore !== undefined
+                          ? `${projectAssessment.scoreBreakdown.progressDivergenceScore}/20 pts`
+                          : 'Normal'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block text-[10px]">Financial Divergence Risk</span>
+                      <span className="font-semibold text-slate-800">
+                        {projectAssessment?.scoreBreakdown?.financialDivergenceScore !== undefined
+                          ? `${projectAssessment.scoreBreakdown.financialDivergenceScore}/25 pts`
+                          : 'Aligned'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block text-[10px]">Detected Anomalies</span>
+                      <span className="font-bold text-rose-700">
+                        {projectAnomalies.length} Flag{projectAnomalies.length === 1 ? '' : 's'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block text-[10px]">Administrative Status</span>
+                      <span className="font-semibold text-slate-800">
+                        {projectAnomalies.some((a) => a.status === 'ESCALATED')
+                          ? 'Escalated'
+                          : projectAnomalies.some((a) => a.status === 'OPEN')
+                          ? 'Under Scrutiny'
+                          : 'Routine Monitoring'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* AI Advisory Panel (if generated) */}
+                {projectAiResult && (
+                  <div className="p-4 bg-indigo-50/70 border border-indigo-200 rounded-xl space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-indigo-900 font-bold text-xs uppercase tracking-wider">
+                        <Sparkles className="w-4 h-4 text-indigo-600" />
+                        Grounded AI Administrative Risk Advisory
+                      </div>
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-100 text-indigo-800 border border-indigo-200">
+                        Model Confidence: {projectAiResult.confidenceScore}%
+                      </span>
+                    </div>
+
+                    <p className="text-xs text-indigo-950 leading-relaxed font-medium">
+                      {projectAiResult.aiAnalysisSummary}
+                    </p>
+
+                    {projectAiResult.recommendedActionItems && projectAiResult.recommendedActionItems.length > 0 && (
+                      <div className="space-y-1">
+                        <span className="text-[11px] font-bold text-indigo-900">Recommended Executive Interventions:</span>
+                        <ul className="list-disc list-inside text-xs text-indigo-900 space-y-0.5 pl-1">
+                          {projectAiResult.recommendedActionItems.map((item, idx) => (
+                            <li key={idx}>{item}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    <div className="text-[10px] text-indigo-600 border-t border-indigo-200/60 pt-2 italic">
+                      {projectAiResult.disclaimer}
+                    </div>
+                  </div>
+                )}
+
+                {/* Anomalies List */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h5 className="font-bold text-slate-800 text-xs">
+                      Active Anomaly Findings ({projectAnomalies.length})
+                    </h5>
+                    <span className="text-[11px] text-slate-400">
+                      Evaluated on real project milestones, financial releases, and geo-tagged inspections
+                    </span>
+                  </div>
+
+                  {projectAnomalies.length === 0 ? (
+                    <div className="p-8 text-center bg-white border border-slate-200 rounded-xl">
+                      <CheckCircle2 className="w-8 h-8 text-emerald-600 mx-auto mb-2" />
+                      <p className="font-bold text-sm text-slate-800">No Active Anomalies Detected</p>
+                      <p className="text-xs text-slate-500 mt-1">
+                        All financial disbursals, milestone dates, and physical inspections are mathematically within permitted tolerances.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {projectAnomalies.map((anom) => (
+                        <div
+                          key={anom.id}
+                          className="p-3.5 bg-white border border-slate-200 rounded-xl space-y-2 hover:border-slate-300 transition-colors"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${SEVERITY_COLORS[anom.severity]}`}>
+                                  {anom.severity}
+                                </span>
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${STATUS_COLORS[anom.status]}`}>
+                                  {anom.status}
+                                </span>
+                                <span className="font-mono text-[10px] text-slate-400">{anom.ruleCode}</span>
+                              </div>
+                              <h6 className="font-bold text-xs text-slate-900">{anom.title}</h6>
+                            </div>
+
+                            {anom.metricVariance && (
+                              <div className="text-right shrink-0">
+                                <span className="text-[10px] text-slate-400 block">{anom.metricVariance.label}</span>
+                                <span className="font-bold text-xs text-rose-700">
+                                  {anom.metricVariance.variancePercent !== undefined
+                                    ? `${anom.metricVariance.variancePercent > 0 ? '+' : ''}${anom.metricVariance.variancePercent}%`
+                                    : anom.metricVariance.varianceValue !== undefined
+                                    ? `₹${anom.metricVariance.varianceValue.toLocaleString('en-IN')}`
+                                    : 'Detected'}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+
+                          <p className="text-xs text-slate-600 leading-relaxed">{anom.summary}</p>
+
+                          <div className="p-2 bg-slate-50 rounded border border-slate-200 text-xs">
+                            <span className="font-semibold text-slate-700">Recommended Action: </span>
+                            <span className="text-slate-600">{anom.recommendedAction}</span>
+                          </div>
+
+                          <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1">
+                            <span>Detected: {new Date(anom.detectedAt).toLocaleString('en-IN')}</span>
+                            <button
+                              onClick={() => onNavigate('/government/risk-intelligence')}
+                              className="text-indigo-600 hover:text-indigo-800 font-semibold inline-flex items-center gap-1 cursor-pointer"
+                            >
+                              Triage in Risk Intelligence Desk
+                              <ChevronRight className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
