@@ -21,6 +21,8 @@ import {
   Send,
   Receipt,
   CheckSquare,
+  MessageSquare,
+  FileText,
 } from 'lucide-react';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { Card } from '../../components/ui/Card';
@@ -43,7 +45,6 @@ import {
   ProjectFinancialRecord,
   ProjectInspection,
   ProjectException,
-  ProjectSupportingDocument,
   ExpenditureType,
 } from '../../types/project';
 import { formatCurrencyINR } from '../../components/tenders/TenderOpportunityCard';
@@ -85,17 +86,18 @@ export const ProjectMilestonesPage: React.FC<{ onNavigate: (path: string) => voi
   const [claimDesc, setClaimDesc] = useState<string>('');
   const [claimRef, setClaimRef] = useState<string>('');
 
-  // Exception Response Modal State
-  const [respondingException, setRespondingException] = useState<ProjectException | null>(null);
-  const [agencyResponseInput, setAgencyResponseInput] = useState<string>('');
-  const [agencyDocTitleInput, setAgencyDocTitleInput] = useState<string>('');
-  const [agencyDocUrlInput, setAgencyDocUrlInput] = useState<string>('');
-
   // Update Milestone Status Modal
   const [updatingMilestone, setUpdatingMilestone] = useState<ProjectMilestone | null>(null);
   const [msNewProgress, setMsNewProgress] = useState<number>(0);
   const [msNewStatus, setMsNewStatus] = useState<ProjectMilestoneStatus>('IN_PROGRESS');
   const [msNotes, setMsNotes] = useState<string>('');
+
+  // Agency Exception Explanation Review Modal
+  const [reviewingException, setReviewingException] = useState<ProjectException | null>(null);
+  const [explanationText, setExplanationText] = useState<string>('');
+  const [docTitle, setDocTitle] = useState<string>('');
+  const [docUrl, setDocUrl] = useState<string>('');
+  const [submittingExplanation, setSubmittingExplanation] = useState<boolean>(false);
 
   const [actionProcessing, setActionProcessing] = useState<boolean>(false);
 
@@ -335,54 +337,57 @@ export const ProjectMilestonesPage: React.FC<{ onNavigate: (path: string) => voi
     }
   };
 
-  // Submit Agency Exception Response
-  const handleSubmitAgencyResponse = async (e: React.FormEvent) => {
+  // Handle Agency Submit Exception Explanation Response
+  const handleSubmitExplanation = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedProject || !respondingException || !user) return;
-    if (!agencyResponseInput.trim() || agencyResponseInput.trim().length < 10) {
-      showToast('Explanation Required', {
-        message: 'A mandatory explanation/response note (min 10 characters) is required.',
-        type: 'warning',
+    if (!selectedProject || !user || !reviewingException || !reviewingException.explanationRequest) return;
+    if (!explanationText.trim()) {
+      showToast('Explanation Text Mandatory', {
+        message: 'Please provide a detailed explanation response describing the cause or status.',
+        type: 'error',
       });
       return;
     }
 
-    setActionProcessing(true);
+    setSubmittingExplanation(true);
     try {
-      const docs: ProjectSupportingDocument[] = agencyDocUrlInput.trim() ? [{
-        id: `doc-${Date.now()}`,
-        fileName: agencyDocTitleInput.trim() || 'Agency Supporting Evidence',
-        documentType: 'OTHER',
-        fileUrl: agencyDocUrlInput.trim(),
+      const docs = docUrl.trim() ? [{
+        id: `doc-exc-${Date.now()}`,
+        fileName: docTitle.trim() || 'Supporting Evidence Document',
+        title: docTitle.trim() || 'Supporting Evidence Document',
+        documentUrl: docUrl.trim(),
+        fileUrl: docUrl.trim(),
         uploadedAt: new Date().toISOString(),
-        uploadedBy: user.uid || '',
       }] : [];
 
-      await ProjectService.submitAgencyExceptionResponse({
+      await ProjectService.submitExceptionExplanation({
+        requestId: reviewingException.explanationRequest.id,
         projectId: selectedProject.id,
-        exceptionId: respondingException.id,
-        responseNote: agencyResponseInput.trim(),
+        exceptionId: reviewingException.id,
+        explanationText: explanationText.trim(),
         supportingDocuments: docs,
         user,
       });
 
-      showToast('Response Submitted', {
-        message: 'Agency explanation and supporting evidence recorded for government review.',
+      showToast('Explanation Response Submitted', {
+        message: 'Your explanation response has been recorded and submitted for government review.',
         type: 'success',
       });
-      setRespondingException(null);
-      setAgencyResponseInput('');
-      setAgencyDocTitleInput('');
-      setAgencyDocUrlInput('');
+
+      setReviewingException(null);
+      setExplanationText('');
+      setDocTitle('');
+      setDocUrl('');
+
       loadProjectDetails(selectedProject.id);
-    } catch (err) {
-      console.error('Submit agency response error:', err);
+    } catch (err: any) {
+      console.error('Submit explanation error:', err);
       showToast('Submission Failed', {
-        message: err instanceof Error ? err.message : 'Could not submit exception response.',
+        message: err.message || 'Could not submit explanation response.',
         type: 'error',
       });
     } finally {
-      setActionProcessing(false);
+      setSubmittingExplanation(false);
     }
   };
 
@@ -908,84 +913,99 @@ export const ProjectMilestonesPage: React.FC<{ onNavigate: (path: string) => voi
                 {/* Exceptions if any */}
                 {exceptions.length > 0 && (
                   <div className="pt-4 border-t border-slate-200 space-y-3">
-                    <h4 className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+                    <h4 className="font-bold text-amber-900 text-xs flex items-center gap-1.5">
                       <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
-                      Monitoring Exceptions & Variance Review
+                      Active Monitoring Exceptions Requiring Attention
                     </h4>
-                    {exceptions.map((exc) => (
-                      <div
-                        key={exc.id}
-                        className={`p-3 rounded-xl border text-xs space-y-2 ${
-                          exc.status === 'RESOLVED'
-                            ? 'bg-slate-50 border-slate-200 opacity-75'
-                            : exc.status === 'AGENCY_RESPONDED'
-                            ? 'bg-blue-50/50 border-blue-200 text-blue-900'
-                            : exc.status === 'GOVERNMENT_REVIEW'
-                            ? 'bg-purple-50/50 border-purple-200 text-purple-900'
-                            : 'bg-amber-50/60 border-amber-200 text-amber-900'
-                        }`}
-                      >
-                        <div className="flex justify-between items-center gap-2">
-                          <span className="font-bold text-slate-900 text-xs">{exc.title}</span>
-                          <span
-                            className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${
+                    {exceptions.map((exc) => {
+                      const isPendingRequest = exc.explanationRequest && exc.explanationRequest.status === 'PENDING';
+                      const isRespondedRequest = exc.explanationRequest && exc.explanationRequest.status === 'RESPONDED';
+
+                      return (
+                        <div
+                          key={exc.id}
+                          className={`p-3 border rounded-xl text-xs space-y-2 ${
+                            isPendingRequest
+                              ? 'bg-rose-50/70 border-rose-300'
+                              : isRespondedRequest
+                              ? 'bg-blue-50/60 border-blue-200'
+                              : 'bg-amber-50/60 border-amber-200'
+                          }`}
+                        >
+                          <div className="flex justify-between items-center">
+                            <span className="font-bold text-slate-900">{exc.title}</span>
+                            <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${
                               exc.status === 'RESOLVED'
                                 ? 'bg-emerald-100 text-emerald-800'
-                                : exc.status === 'AGENCY_RESPONDED'
+                                : exc.status === 'ACKNOWLEDGED'
                                 ? 'bg-blue-100 text-blue-800'
-                                : exc.status === 'GOVERNMENT_REVIEW'
-                                ? 'bg-purple-100 text-purple-800'
-                                : exc.status === 'ESCALATED'
-                                ? 'bg-rose-100 text-rose-800'
                                 : 'bg-amber-100 text-amber-800'
-                            }`}
-                          >
-                            {exc.status === 'OPEN' ? 'Response Required' : exc.status.replace(/_/g, ' ')}
-                          </span>
-                        </div>
+                            }`}>
+                              {exc.status}
+                            </span>
+                          </div>
 
-                        <div className="p-2 bg-white/80 rounded border border-slate-200 text-[11px] space-y-0.5">
-                          <span className="text-[10px] font-bold text-slate-500 uppercase block">System Detection Indicator</span>
-                          <p className="text-slate-800">{exc.description}</p>
-                        </div>
+                          <div className="p-2 bg-white/80 border border-slate-200 rounded text-[11px] space-y-0.5">
+                            <span className="text-[10px] font-semibold text-slate-500 uppercase block">System Detection Evidence</span>
+                            <p className="text-slate-800">{exc.description}</p>
+                          </div>
 
-                        {exc.agencyResponseNote && (
-                          <div className="p-2 bg-blue-50 rounded border border-blue-200 text-blue-900 text-[11px] space-y-0.5">
-                            <span className="text-[10px] font-bold text-blue-700 uppercase block">Submitted Agency Explanation</span>
-                            <p>{exc.agencyResponseNote}</p>
-                            {exc.agencyRespondedAt && (
-                              <div className="text-[10px] text-blue-600 mt-1">
-                                Submitted by {exc.agencyRespondedByName || 'Agency Representative'} on {new Date(exc.agencyRespondedAt).toLocaleString('en-IN')}
+                          {/* Request / Response Notice Box */}
+                          {isPendingRequest && (
+                            <div className="p-2.5 bg-rose-100/80 border border-rose-300 rounded-lg text-xs space-y-1.5">
+                              <div className="flex items-center justify-between">
+                                <span className="font-bold text-rose-950 flex items-center gap-1.5">
+                                  <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                                  Review Needed — Agency Action Required
+                                </span>
+                                <span className="text-[10px] font-bold px-2 py-0.5 bg-rose-200 text-rose-900 rounded uppercase">
+                                  Action Required
+                                </span>
                               </div>
-                            )}
-                          </div>
-                        )}
+                              <p className="text-[11px] text-rose-900">
+                                Government has requested a formal explanation for this exception:
+                              </p>
+                              <div className="p-2 bg-white rounded border border-rose-200 text-[11px] italic text-slate-800">
+                                "{exc.explanationRequest!.requestNote}"
+                              </div>
+                              <div className="pt-1 flex justify-end">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    setReviewingException(exc);
+                                    setExplanationText('');
+                                    setDocTitle('');
+                                    setDocUrl('');
+                                  }}
+                                  className="text-xs bg-rose-600 hover:bg-rose-700 text-white border-transparent"
+                                >
+                                  Review & Submit Explanation
+                                </Button>
+                              </div>
+                            </div>
+                          )}
 
-                        {exc.resolutionNote && (
-                          <div className="p-2 bg-emerald-50 rounded border border-emerald-200 text-emerald-900 text-[11px] space-y-0.5">
-                            <span className="text-[10px] font-bold text-emerald-700 uppercase block">Government Resolution</span>
-                            <p>{exc.resolutionNote}</p>
-                          </div>
-                        )}
-
-                        {(exc.status === 'OPEN' || exc.status === 'AGENCY_RESPONSE_REQUIRED') && (
-                          <div className="pt-1 flex justify-end">
-                            <Button
-                              size="sm"
-                              onClick={() => {
-                                setRespondingException(exc);
-                                setAgencyResponseInput('');
-                                setAgencyDocTitleInput('');
-                                setAgencyDocUrlInput('');
-                              }}
-                              className="text-xs bg-amber-600 hover:bg-amber-700 text-white"
-                            >
-                              Respond to Exception
-                            </Button>
-                          </div>
-                        )}
-                      </div>
-                    ))}
+                          {isRespondedRequest && (
+                            <div className="p-2.5 bg-blue-100/70 border border-blue-200 rounded-lg text-xs space-y-1">
+                              <div className="flex items-center justify-between">
+                                <span className="font-bold text-blue-900 flex items-center gap-1.5">
+                                  <CheckCircle2 className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                                  Explanation Response Submitted
+                                </span>
+                                <span className="text-[10px] text-blue-700 font-mono">
+                                  {new Date(exc.explanationRequest!.respondedAt!).toLocaleDateString('en-IN')}
+                                </span>
+                              </div>
+                              <div className="p-2 bg-white rounded border border-blue-200 text-[11px] text-blue-950">
+                                <strong>Submitted Explanation: </strong>
+                                {exc.explanationRequest!.explanationText}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -1260,74 +1280,102 @@ export const ProjectMilestonesPage: React.FC<{ onNavigate: (path: string) => voi
         )}
       </Modal>
 
-      {/* Agency Exception Response Modal */}
+      {/* Modal: Agency Submit Exception Explanation */}
       <Modal
-        isOpen={!!respondingException}
-        onClose={() => setRespondingException(null)}
-        title="Submit Exception Response & Explanation"
+        isOpen={Boolean(reviewingException)}
+        onClose={() => {
+          if (!submittingExplanation) setReviewingException(null);
+        }}
+        title="Submit Exception Explanation"
+        description="Provide formal cause / explanation and supporting evidence for government review."
       >
-        {respondingException && (
-          <form onSubmit={handleSubmitAgencyResponse} className="space-y-4">
-            <div className="p-3 bg-amber-50 rounded-lg border border-amber-200 text-xs text-amber-900 space-y-1">
-              <span className="font-bold block">{respondingException.title}</span>
-              <p>{respondingException.description}</p>
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                Agency Response & Operational Explanation <span className="text-rose-500">*</span>
-              </label>
-              <textarea
-                value={agencyResponseInput}
-                onChange={(e) => setAgencyResponseInput(e.target.value)}
-                rows={4}
-                required
-                minLength={10}
-                placeholder="Provide a detailed explanation regarding site conditions, delay causes, or progress reconciliation..."
-                className="w-full text-xs p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              />
-              <p className="text-[10px] text-slate-500 mt-1">
-                Minimum 10 characters. Your response will be permanently logged in the project audit log for government review.
-              </p>
-            </div>
-
-            <div className="space-y-2 pt-2 border-t border-slate-100">
-              <label className="block text-xs font-bold text-slate-700">Supporting Document / Evidence Link (Optional)</label>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <input
-                  type="text"
-                  value={agencyDocTitleInput}
-                  onChange={(e) => setAgencyDocTitleInput(e.target.value)}
-                  placeholder="Document Title (e.g. Site Report)"
-                  className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg"
-                />
-                <input
-                  type="url"
-                  value={agencyDocUrlInput}
-                  onChange={(e) => setAgencyDocUrlInput(e.target.value)}
-                  placeholder="Document URL (https://...)"
-                  className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg"
-                />
+        {reviewingException && reviewingException.explanationRequest && (
+          <form onSubmit={handleSubmitExplanation} className="space-y-4 text-xs">
+            {/* Project Context */}
+            <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg space-y-1">
+              <span className="text-[10px] font-bold text-slate-500 uppercase">Project Context</span>
+              <div className="font-bold text-slate-900">{selectedProject?.title}</div>
+              <div className="text-[11px] text-slate-600">
+                Code: {selectedProject?.projectCode} | Department: {selectedProject?.department}
               </div>
             </div>
 
-            <div className="flex justify-end gap-2 pt-3 border-t border-slate-200">
+            {/* System Exception Snapshot */}
+            <div className="p-3 bg-amber-50 rounded-lg border border-amber-200 space-y-1">
+              <span className="text-[10px] font-bold text-amber-900 uppercase">System Detected Exception</span>
+              <div className="font-bold text-amber-950">{reviewingException.title}</div>
+              <p className="text-[11px] text-amber-900">{reviewingException.description}</p>
+            </div>
+
+            {/* Government Instruction / Request Note */}
+            <div className="p-3 bg-rose-50 rounded-lg border border-rose-200 space-y-1">
+              <span className="text-[10px] font-bold text-rose-900 uppercase">Government Directive / Instruction</span>
+              <p className="text-[11px] text-rose-950 font-medium">"{reviewingException.explanationRequest.requestNote}"</p>
+              <div className="text-[10px] text-rose-700 pt-0.5">
+                Requested by: {reviewingException.explanationRequest.requestedByName || 'District Officer'} on {new Date(reviewingException.explanationRequest.requestedAt).toLocaleDateString('en-IN')}
+              </div>
+            </div>
+
+            {/* Mandatory Explanation Input */}
+            <div>
+              <label className="block font-bold text-slate-800 mb-1">
+                Agency Cause / Explanation <span className="text-rose-500">*</span>
+              </label>
+              <textarea
+                value={explanationText}
+                onChange={(e) => setExplanationText(e.target.value)}
+                rows={4}
+                placeholder="Detail the technical or operational causes (e.g., site access delay, unseasonable heavy rainfall, raw material supply chain delay, or invoice processing backlog)..."
+                required
+                className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+            </div>
+
+            {/* Optional Supporting Document */}
+            <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-2">
+              <span className="font-bold text-slate-700 text-xs block">Optional Supporting Evidence / Report</span>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[10px] text-slate-600 mb-0.5">Document Title</label>
+                  <input
+                    type="text"
+                    value={docTitle}
+                    onChange={(e) => setDocTitle(e.target.value)}
+                    placeholder="e.g. Site Delay Justification Report"
+                    className="w-full text-xs px-2.5 py-1.5 border border-slate-300 rounded"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-slate-600 mb-0.5">Document URL</label>
+                  <input
+                    type="url"
+                    value={docUrl}
+                    onChange={(e) => setDocUrl(e.target.value)}
+                    placeholder="https://..."
+                    className="w-full text-xs px-2.5 py-1.5 border border-slate-300 rounded"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
               <Button
-                type="button"
                 variant="outline"
                 size="sm"
-                onClick={() => setRespondingException(null)}
-                disabled={actionProcessing}
+                type="button"
+                onClick={() => setReviewingException(null)}
+                disabled={submittingExplanation}
               >
                 Cancel
               </Button>
               <Button
-                type="submit"
+                variant="gov"
                 size="sm"
-                disabled={actionProcessing}
-                className="bg-blue-600 hover:bg-blue-700 text-white font-bold"
+                type="submit"
+                disabled={submittingExplanation || !explanationText.trim()}
+                className="bg-blue-600 hover:bg-blue-700 text-white"
               >
-                {actionProcessing ? 'Submitting...' : 'Submit Response to Government'}
+                {submittingExplanation ? 'Submitting Explanation...' : 'Submit Explanation Response'}
               </Button>
             </div>
           </form>

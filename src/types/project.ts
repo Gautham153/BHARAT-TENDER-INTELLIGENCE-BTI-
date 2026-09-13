@@ -247,15 +247,7 @@ export interface ProjectInspection {
  * (Rule-based condition markers requiring human review — NOT fraud declarations)
  */
 export type ProjectExceptionSeverity = 'LOW' | 'MEDIUM' | 'HIGH';
-export type ProjectExceptionStatus =
-  | 'OPEN'
-  | 'AGENCY_RESPONSE_REQUIRED'
-  | 'AGENCY_RESPONDED'
-  | 'GOVERNMENT_REVIEW'
-  | 'ESCALATED'
-  | 'RESOLVED'
-  | 'ACKNOWLEDGED';
-
+export type ProjectExceptionStatus = 'OPEN' | 'ACKNOWLEDGED' | 'RESOLVED';
 export type ProjectExceptionType =
   | 'SCHEDULE_DELAY'
   | 'PHYSICAL_PROGRESS_DELAY'
@@ -265,6 +257,24 @@ export type ProjectExceptionType =
   | 'PROGRESS_VERIFICATION_VARIANCE'
   | 'EXPENDITURE_OVER_AWARD'
   | 'STALLED_PROJECT';
+
+export interface ProjectExceptionExplanationRequest {
+  id: string;
+  exceptionId: string;
+  projectId: string;
+  requestedBy: string;
+  requestedByName?: string;
+  requestNote: string;
+  requestedAt: string;
+  status: 'PENDING' | 'RESPONDED';
+
+  respondedBy?: string;
+  respondedByName?: string;
+  agencyOrganizationName?: string;
+  explanationText?: string;
+  supportingDocuments?: ProjectSupportingDocument[];
+  respondedAt?: string;
+}
 
 export interface ProjectException {
   id: string;
@@ -281,30 +291,12 @@ export interface ProjectException {
 
   status: ProjectExceptionStatus;
 
-  // Permanent Agency Response Evidence
-  agencyResponseNote?: string;
-  agencyRespondedAt?: string;
-  agencyRespondedBy?: string;
-  agencyRespondedByName?: string;
-  agencySupportingDocuments?: ProjectSupportingDocument[];
-
-  // Permanent Government Nodal Review
-  reviewStartedAt?: string;
-  reviewedBy?: string;
-  reviewedByName?: string;
-  reviewNotes?: string;
-
-  // Permanent Resolution
   resolvedBy?: string;
   resolvedByName?: string;
   resolvedAt?: string;
   resolutionNote?: string;
 
-  // Permanent Escalation
-  escalatedBy?: string;
-  escalatedByName?: string;
-  escalatedAt?: string;
-  escalationNote?: string;
+  explanationRequest?: ProjectExceptionExplanationRequest;
 }
 
 /**
@@ -323,10 +315,9 @@ export type ProjectAuditAction =
   | 'INSPECTION_CREATED'
   | 'EXCEPTION_DETECTED'
   | 'EXCEPTION_ACKNOWLEDGED'
-  | 'EXCEPTION_RESPONSE_SUBMITTED'
-  | 'EXCEPTION_REVIEW_STARTED'
   | 'EXCEPTION_RESOLVED'
-  | 'EXCEPTION_ESCALATED';
+  | 'EXCEPTION_EXPLANATION_REQUESTED'
+  | 'EXCEPTION_EXPLANATION_SUBMITTED';
 
 export interface ProjectAuditEvent {
   eventId: string;

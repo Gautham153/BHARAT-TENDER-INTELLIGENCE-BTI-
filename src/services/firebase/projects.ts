@@ -26,6 +26,7 @@ import {
   ProjectInspection,
   ProjectInspectionMilestoneObservation,
   ProjectException,
+  ProjectExceptionExplanationRequest,
   ProjectSupportingDocument,
   ProjectAuditEvent,
   ProjectAuditAction,
@@ -48,6 +49,7 @@ const PROGRESS_UPDATES_COLLECTION = 'projectProgressUpdates';
 const FINANCIAL_RECORDS_COLLECTION = 'projectFinancialRecords';
 const INSPECTIONS_COLLECTION = 'projectInspections';
 const EXCEPTIONS_COLLECTION = 'projectExceptions';
+const EXCEPTION_REQUESTS_COLLECTION = 'projectExceptionRequests';
 const AUDIT_EVENTS_COLLECTION = 'projectAuditEvents';
 
 const LOCAL_STORAGE_PROJECTS_KEY = 'bti_projects_cache_v1';
@@ -56,6 +58,7 @@ const LOCAL_STORAGE_UPDATES_KEY = 'bti_project_updates_cache_v1';
 const LOCAL_STORAGE_FINANCIAL_KEY = 'bti_project_financial_cache_v1';
 const LOCAL_STORAGE_INSPECTIONS_KEY = 'bti_project_inspections_cache_v1';
 const LOCAL_STORAGE_EXCEPTIONS_KEY = 'bti_project_exceptions_cache_v1';
+const LOCAL_STORAGE_EXCEPTION_REQUESTS_KEY = 'bti_project_exception_requests_cache_v1';
 const LOCAL_STORAGE_EVENTS_KEY = 'bti_project_audit_events_cache_v1';
 
 const DEMO_STORAGE_KEY = 'bti_demo_session_v1';
@@ -2304,7 +2307,206 @@ export class ProjectService {
       }
     }
 
-    return [...existingExceptions, ...newExceptions];
+    const allExceptions = [...existingExceptions, ...newExceptions];
+    const requests = await this.getExceptionRequests(projectId);
+
+    return allExceptions.map((exc) => {
+      const excReqs = requests.filter((r) => r.exceptionId === exc.id);
+      const latestReq = excReqs.length > 0
+        ? excReqs.sort((a, b) => new Date(b.requestedAt).getTime() - new Date(a.requestedAt).getTime())[0]
+        : undefined;
+      return {
+        ...exc,
+        explanationRequest: latestReq,
+      };
+    });
+  }
+
+  static async getExceptionRequests(projectId: string): Promise<ProjectExceptionExplanationRequest[]> {
+    if (!projectId) return [];
+
+    if (isLiveFirestoreSession() && db) {
+      const q = query(
+        collection(db, EXCEPTION_REQUESTS_COLLECTION),
+        where('projectId', '==', projectId)
+      );
+      const snap = await getDocs(q);
+      const list: ProjectExceptionExplanationRequest[] = [];
+      snap.forEach((d) => list.push(d.data() as ProjectExceptionExplanationRequest));
+      return list;
+    } else {
+      const local = getLocalItems<ProjectExceptionExplanationRequest>(LOCAL_STORAGE_EXCEPTION_REQUESTS_KEY, []);
+      return local.filter((r) => r.projectId === projectId);
+    }
+  }
+
+  static async requestExceptionExplanation(params: {
+    projectId: string;
+    exceptionId: string;
+    requestNote: string;
+    user: AuthUser;
+  }): Promise<ProjectExceptionExplanationRequest> {
+    const { projectId, exceptionId, requestNote, user } = params;
+
+    const userRole = (user.role || '').toLowerCase();
+    if (!userRole.includes('gov')) {
+      throw new Error('Access Denied: Only authorized government officers can request agency explanations.');
+    }
+
+    if (!requestNote || !requestNote.trim()) {
+      throw new Error('Validation Error: A government instruction note is required when requesting an agency explanation.');
+    }
+
+    const exceptions = await this.getExceptions(projectId);
+    const existingExc = exceptions.find((e) => e.id === exceptionId);
+    if (!existingExc) {
+      throw new Error(`Exception ${exceptionId} not found.`);
+    }
+
+    if (existingExc.status !== 'OPEN') {
+      throw new Error(`Invalid Action: Agency explanation can only be requested for OPEN exceptions.`);
+    }
+
+    if (existingExc.explanationRequest && existingExc.explanationRequest.status === 'PENDING') {
+      throw new Error('Duplicate Request: An agency explanation request is already pending for this exception.');
+    }
+
+    const nowIso = new Date().toISOString();
+    const requestId = `req-exc-${Date.now()}`;
+    const newRequest: ProjectExceptionExplanationRequest = {
+      id: requestId,
+      exceptionId,
+      projectId,
+      requestedBy: getAuthoritativeUid(user),
+      requestedByName: user.name || 'District Nodal Officer',
+      requestNote: requestNote.trim(),
+      requestedAt: nowIso,
+      status: 'PENDING',
+    };
+
+    const eventId = `evt-exc-req-${requestId}`;
+    const auditEvent: ProjectAuditEvent = {
+      eventId,
+      projectId,
+      action: 'EXCEPTION_EXPLANATION_REQUESTED',
+      actorId: getAuthoritativeUid(user),
+      actorRole: 'government',
+      actorName: user.name || 'District Nodal Officer',
+      timestamp: nowIso,
+      newState: {
+        exceptionId,
+        requestId,
+        requestNote: newRequest.requestNote,
+      },
+      notes: `Government requested agency explanation for exception "${existingExc.title}": ${newRequest.requestNote}`,
+    };
+
+    if (isLiveFirestoreSession() && db) {
+      const batch = writeBatch(db);
+      batch.set(doc(db, EXCEPTION_REQUESTS_COLLECTION, requestId), sanitizeFirestorePayload(newRequest));
+      batch.set(doc(db, AUDIT_EVENTS_COLLECTION, eventId), sanitizeFirestorePayload(auditEvent));
+      await batch.commit();
+    } else {
+      const localReqs = getLocalItems<ProjectExceptionExplanationRequest>(LOCAL_STORAGE_EXCEPTION_REQUESTS_KEY, []);
+      localReqs.unshift(newRequest);
+      saveLocalItems(LOCAL_STORAGE_EXCEPTION_REQUESTS_KEY, localReqs);
+
+      const localEvents = getLocalItems<ProjectAuditEvent>(LOCAL_STORAGE_EVENTS_KEY, INITIAL_DEMO_EVENTS);
+      localEvents.unshift(auditEvent);
+      saveLocalItems(LOCAL_STORAGE_EVENTS_KEY, localEvents);
+    }
+
+    return newRequest;
+  }
+
+  static async submitExceptionExplanation(params: {
+    requestId: string;
+    projectId: string;
+    exceptionId: string;
+    explanationText: string;
+    supportingDocuments?: ProjectSupportingDocument[];
+    user: AuthUser;
+  }): Promise<ProjectExceptionExplanationRequest> {
+    const { requestId, projectId, exceptionId, explanationText, supportingDocuments, user } = params;
+
+    const userRole = (user.role || '').toLowerCase();
+    if (userRole.includes('gov')) {
+      throw new Error('Access Denied: Only contracting agency representatives can submit explanation responses.');
+    }
+
+    if (!explanationText || !explanationText.trim()) {
+      throw new Error('Validation Error: Explanation text is mandatory.');
+    }
+
+    const requests = await this.getExceptionRequests(projectId);
+    const existingReq = requests.find((r) => r.id === requestId);
+    if (!existingReq) {
+      throw new Error(`Explanation request ${requestId} not found.`);
+    }
+
+    if (existingReq.status !== 'PENDING') {
+      throw new Error(`Invalid Action: This explanation request has already been responded to.`);
+    }
+
+    const exceptions = await this.getExceptions(projectId);
+    const existingExc = exceptions.find((e) => e.id === exceptionId);
+
+    const nowIso = new Date().toISOString();
+    const updatedRequest: ProjectExceptionExplanationRequest = {
+      ...existingReq,
+      status: 'RESPONDED',
+      respondedBy: getAuthoritativeUid(user),
+      respondedByName: user.name || 'Agency Representative',
+      agencyOrganizationName: user.agencyName || user.organizationId || 'Executing Agency',
+      explanationText: explanationText.trim(),
+      supportingDocuments: supportingDocuments || [],
+      respondedAt: nowIso,
+    };
+
+    const eventId = `evt-exc-sub-${requestId}`;
+    const auditEvent: ProjectAuditEvent = {
+      eventId,
+      projectId,
+      action: 'EXCEPTION_EXPLANATION_SUBMITTED',
+      actorId: getAuthoritativeUid(user),
+      actorRole: 'agency',
+      actorName: user.name || 'Agency Representative',
+      timestamp: nowIso,
+      newState: {
+        exceptionId,
+        requestId,
+        explanationText: updatedRequest.explanationText,
+      },
+      notes: `Agency submitted explanation response for exception "${existingExc?.title || exceptionId}": ${updatedRequest.explanationText}`,
+    };
+
+    if (isLiveFirestoreSession() && db) {
+      const batch = writeBatch(db);
+      batch.update(doc(db, EXCEPTION_REQUESTS_COLLECTION, requestId), sanitizeFirestorePayload({
+        status: updatedRequest.status,
+        respondedBy: updatedRequest.respondedBy,
+        respondedByName: updatedRequest.respondedByName,
+        agencyOrganizationName: updatedRequest.agencyOrganizationName,
+        explanationText: updatedRequest.explanationText,
+        supportingDocuments: updatedRequest.supportingDocuments,
+        respondedAt: updatedRequest.respondedAt,
+      }));
+      batch.set(doc(db, AUDIT_EVENTS_COLLECTION, eventId), sanitizeFirestorePayload(auditEvent));
+      await batch.commit();
+    } else {
+      const localReqs = getLocalItems<ProjectExceptionExplanationRequest>(LOCAL_STORAGE_EXCEPTION_REQUESTS_KEY, []);
+      const idx = localReqs.findIndex((r) => r.id === requestId);
+      if (idx !== -1) {
+        localReqs[idx] = updatedRequest;
+        saveLocalItems(LOCAL_STORAGE_EXCEPTION_REQUESTS_KEY, localReqs);
+      }
+
+      const localEvents = getLocalItems<ProjectAuditEvent>(LOCAL_STORAGE_EVENTS_KEY, INITIAL_DEMO_EVENTS);
+      localEvents.unshift(auditEvent);
+      saveLocalItems(LOCAL_STORAGE_EVENTS_KEY, localEvents);
+    }
+
+    return updatedRequest;
   }
 
   static async acknowledgeException(params: {
@@ -2325,6 +2527,10 @@ export class ProjectService {
       throw new Error(`Exception ${exceptionId} not found.`);
     }
 
+    if (existing.status !== 'OPEN') {
+      throw new Error(`Invalid Transition: Only OPEN exceptions can be ACKNOWLEDGED. Current status is ${existing.status}.`);
+    }
+
     const nowIso = new Date().toISOString();
     const updated: ProjectException = {
       ...existing,
@@ -2342,148 +2548,6 @@ export class ProjectService {
       timestamp: nowIso,
       newState: { exceptionId, status: 'ACKNOWLEDGED' },
       notes: `Monitoring exception "${existing.title}" acknowledged by ${user.name || 'Authorized Officer'}.`,
-    };
-
-    if (isLiveFirestoreSession() && db) {
-      const batch = writeBatch(db);
-      batch.update(doc(db, EXCEPTIONS_COLLECTION, exceptionId), sanitizeFirestorePayload(updated));
-      batch.set(doc(db, AUDIT_EVENTS_COLLECTION, eventId), sanitizeFirestorePayload(auditEvent));
-      await batch.commit();
-    } else {
-      const local = getLocalItems<ProjectException>(LOCAL_STORAGE_EXCEPTIONS_KEY, []);
-      const idx = local.findIndex((e) => e.id === exceptionId);
-      if (idx !== -1) {
-        local[idx] = updated;
-        saveLocalItems(LOCAL_STORAGE_EXCEPTIONS_KEY, local);
-      }
-      const localEvents = getLocalItems<ProjectAuditEvent>(LOCAL_STORAGE_EVENTS_KEY, INITIAL_DEMO_EVENTS);
-      localEvents.unshift(auditEvent);
-      saveLocalItems(LOCAL_STORAGE_EVENTS_KEY, localEvents);
-    }
-
-    return updated;
-  }
-
-  static async submitAgencyExceptionResponse(params: {
-    projectId: string;
-    exceptionId: string;
-    responseNote: string;
-    supportingDocuments?: ProjectSupportingDocument[];
-    user: AuthUser;
-  }): Promise<ProjectException> {
-    const { projectId, exceptionId, responseNote, supportingDocuments, user } = params;
-
-    const userRole = (user.role || '').toLowerCase();
-    if (userRole.includes('gov')) {
-      throw new Error('Access Denied: Government users cannot submit agency responses.');
-    }
-
-    if (!responseNote || responseNote.trim().length < 10) {
-      throw new Error('Validation Error: A mandatory explanation response (min 10 chars) is required.');
-    }
-
-    const exceptions = await this.getExceptions(projectId);
-    const existing = exceptions.find((e) => e.id === exceptionId);
-    if (!existing) {
-      throw new Error(`Exception ${exceptionId} not found.`);
-    }
-
-    if (existing.status === 'RESOLVED') {
-      throw new Error(`Invalid Transition: Cannot submit response for a RESOLVED exception.`);
-    }
-
-    const nowIso = new Date().toISOString();
-    const updated: ProjectException = {
-      ...existing,
-      status: 'AGENCY_RESPONDED',
-      agencyResponseNote: responseNote.trim(),
-      agencyRespondedAt: nowIso,
-      agencyRespondedBy: getAuthoritativeUid(user),
-      agencyRespondedByName: user.name || 'Executing Agency Representative',
-      agencySupportingDocuments: supportingDocuments && supportingDocuments.length > 0 ? supportingDocuments : existing.agencySupportingDocuments,
-    };
-
-    const eventId = `evt-exc-resp-${exceptionId}`;
-    const auditEvent: ProjectAuditEvent = {
-      eventId,
-      projectId,
-      action: 'EXCEPTION_RESPONSE_SUBMITTED',
-      actorId: getAuthoritativeUid(user),
-      actorRole: 'agency',
-      actorName: user.name || 'Executing Agency Representative',
-      timestamp: nowIso,
-      newState: {
-        exceptionId,
-        status: 'AGENCY_RESPONDED',
-        agencyResponseNote: updated.agencyResponseNote,
-      },
-      notes: `Executing agency submitted explanation response for monitoring exception "${existing.title}".`,
-    };
-
-    if (isLiveFirestoreSession() && db) {
-      const batch = writeBatch(db);
-      batch.update(doc(db, EXCEPTIONS_COLLECTION, exceptionId), sanitizeFirestorePayload(updated));
-      batch.set(doc(db, AUDIT_EVENTS_COLLECTION, eventId), sanitizeFirestorePayload(auditEvent));
-      await batch.commit();
-    } else {
-      const local = getLocalItems<ProjectException>(LOCAL_STORAGE_EXCEPTIONS_KEY, []);
-      const idx = local.findIndex((e) => e.id === exceptionId);
-      if (idx !== -1) {
-        local[idx] = updated;
-        saveLocalItems(LOCAL_STORAGE_EXCEPTIONS_KEY, local);
-      }
-      const localEvents = getLocalItems<ProjectAuditEvent>(LOCAL_STORAGE_EVENTS_KEY, INITIAL_DEMO_EVENTS);
-      localEvents.unshift(auditEvent);
-      saveLocalItems(LOCAL_STORAGE_EVENTS_KEY, localEvents);
-    }
-
-    return updated;
-  }
-
-  static async startGovernmentExceptionReview(params: {
-    projectId: string;
-    exceptionId: string;
-    reviewNotes?: string;
-    user: AuthUser;
-  }): Promise<ProjectException> {
-    const { projectId, exceptionId, reviewNotes, user } = params;
-
-    const userRole = (user.role || '').toLowerCase();
-    if (!userRole.includes('gov')) {
-      throw new Error('Access Denied: Only authorized government officers can initiate exception review.');
-    }
-
-    const exceptions = await this.getExceptions(projectId);
-    const existing = exceptions.find((e) => e.id === exceptionId);
-    if (!existing) {
-      throw new Error(`Exception ${exceptionId} not found.`);
-    }
-
-    if (existing.status === 'RESOLVED') {
-      throw new Error(`Invalid Transition: Exception ${exceptionId} is already RESOLVED.`);
-    }
-
-    const nowIso = new Date().toISOString();
-    const updated: ProjectException = {
-      ...existing,
-      status: 'GOVERNMENT_REVIEW',
-      reviewStartedAt: existing.reviewStartedAt || nowIso,
-      reviewedBy: getAuthoritativeUid(user),
-      reviewedByName: user.name || 'Authorized Officer',
-      reviewNotes: reviewNotes?.trim() || existing.reviewNotes,
-    };
-
-    const eventId = `evt-exc-rev-${exceptionId}`;
-    const auditEvent: ProjectAuditEvent = {
-      eventId,
-      projectId,
-      action: 'EXCEPTION_REVIEW_STARTED',
-      actorId: getAuthoritativeUid(user),
-      actorRole: 'government',
-      actorName: user.name || 'Authorized Officer',
-      timestamp: nowIso,
-      newState: { exceptionId, status: 'GOVERNMENT_REVIEW' },
-      notes: `Government officer initiated review of exception "${existing.title}".`,
     };
 
     if (isLiveFirestoreSession() && db) {
@@ -2529,6 +2593,12 @@ export class ProjectService {
       throw new Error(`Exception ${exceptionId} not found.`);
     }
 
+    if (existing.status !== 'ACKNOWLEDGED') {
+      throw new Error(
+        `Invalid Transition: Exception ${exceptionId} must be in ACKNOWLEDGED status before it can be marked RESOLVED. Current status is ${existing.status}.`
+      );
+    }
+
     const nowIso = new Date().toISOString();
     const updated: ProjectException = {
       ...existing,
@@ -2550,76 +2620,6 @@ export class ProjectService {
       timestamp: nowIso,
       newState: { exceptionId, resolutionNote: updated.resolutionNote },
       notes: `Monitoring exception "${existing.title}" resolved: ${updated.resolutionNote}`,
-    };
-
-    if (isLiveFirestoreSession() && db) {
-      const batch = writeBatch(db);
-      batch.update(doc(db, EXCEPTIONS_COLLECTION, exceptionId), sanitizeFirestorePayload(updated));
-      batch.set(doc(db, AUDIT_EVENTS_COLLECTION, eventId), sanitizeFirestorePayload(auditEvent));
-      await batch.commit();
-    } else {
-      const local = getLocalItems<ProjectException>(LOCAL_STORAGE_EXCEPTIONS_KEY, []);
-      const idx = local.findIndex((e) => e.id === exceptionId);
-      if (idx !== -1) {
-        local[idx] = updated;
-        saveLocalItems(LOCAL_STORAGE_EXCEPTIONS_KEY, local);
-      }
-      const localEvents = getLocalItems<ProjectAuditEvent>(LOCAL_STORAGE_EVENTS_KEY, INITIAL_DEMO_EVENTS);
-      localEvents.unshift(auditEvent);
-      saveLocalItems(LOCAL_STORAGE_EVENTS_KEY, localEvents);
-    }
-
-    return updated;
-  }
-
-  static async escalateException(params: {
-    projectId: string;
-    exceptionId: string;
-    escalationNote: string;
-    user: AuthUser;
-  }): Promise<ProjectException> {
-    const { projectId, exceptionId, escalationNote, user } = params;
-
-    const userRole = (user.role || '').toLowerCase();
-    if (!userRole.includes('gov')) {
-      throw new Error('Access Denied: Only authorized government officers can escalate monitoring exceptions.');
-    }
-
-    if (!escalationNote || escalationNote.trim().length < 10) {
-      throw new Error('Validation Error: A mandatory administrative escalation note (min 10 chars) is required.');
-    }
-
-    const exceptions = await this.getExceptions(projectId);
-    const existing = exceptions.find((e) => e.id === exceptionId);
-    if (!existing) {
-      throw new Error(`Exception ${exceptionId} not found.`);
-    }
-
-    if (existing.status === 'RESOLVED') {
-      throw new Error(`Invalid Transition: Exception ${exceptionId} is already RESOLVED.`);
-    }
-
-    const nowIso = new Date().toISOString();
-    const updated: ProjectException = {
-      ...existing,
-      status: 'ESCALATED',
-      escalatedBy: getAuthoritativeUid(user),
-      escalatedByName: user.name || 'Authorized Officer',
-      escalatedAt: nowIso,
-      escalationNote: escalationNote.trim(),
-    };
-
-    const eventId = `evt-exc-esc-${exceptionId}`;
-    const auditEvent: ProjectAuditEvent = {
-      eventId,
-      projectId,
-      action: 'EXCEPTION_ESCALATED',
-      actorId: getAuthoritativeUid(user),
-      actorRole: 'government',
-      actorName: user.name || 'Authorized Officer',
-      timestamp: nowIso,
-      newState: { exceptionId, status: 'ESCALATED', escalationNote: updated.escalationNote },
-      notes: `Monitoring exception "${existing.title}" escalated for administrative review: ${updated.escalationNote}`,
     };
 
     if (isLiveFirestoreSession() && db) {
