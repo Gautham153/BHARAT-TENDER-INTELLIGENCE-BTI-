@@ -2553,7 +2553,9 @@ export class ProjectService {
 
     if (isLiveFirestoreSession() && db) {
       const batch = writeBatch(db);
-      batch.update(doc(db, EXCEPTIONS_COLLECTION, exceptionId), sanitizeFirestorePayload(updated));
+      batch.update(doc(db, EXCEPTIONS_COLLECTION, exceptionId), sanitizeFirestorePayload({
+        status: updated.status,
+      }));
       batch.set(doc(db, AUDIT_EVENTS_COLLECTION, eventId), sanitizeFirestorePayload(auditEvent));
       await batch.commit();
     } else {
