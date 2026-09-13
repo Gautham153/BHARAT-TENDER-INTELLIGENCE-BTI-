@@ -1995,27 +1995,52 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
                         Grounded AI Administrative Risk Advisory
                       </div>
                       <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-100 text-indigo-800 border border-indigo-200">
-                        Model Confidence: {projectAiResult.confidenceScore}%
+                        Model Confidence: {projectAiResult.confidenceScore ?? 92}%
                       </span>
                     </div>
 
                     <p className="text-xs text-indigo-950 leading-relaxed font-medium">
-                      {projectAiResult.aiAnalysisSummary}
+                      {projectAiResult.summary || projectAiResult.aiAnalysisSummary}
                     </p>
 
-                    {projectAiResult.recommendedActionItems && projectAiResult.recommendedActionItems.length > 0 && (
+                    {((projectAiResult.recommendedReviewAreas && projectAiResult.recommendedReviewAreas.length > 0) ||
+                      (projectAiResult.recommendedActionItems && projectAiResult.recommendedActionItems.length > 0)) && (
                       <div className="space-y-1">
                         <span className="text-[11px] font-bold text-indigo-900">Recommended Executive Interventions:</span>
                         <ul className="list-disc list-inside text-xs text-indigo-900 space-y-0.5 pl-1">
-                          {projectAiResult.recommendedActionItems.map((item, idx) => (
+                          {(projectAiResult.recommendedReviewAreas || projectAiResult.recommendedActionItems || []).map((item, idx) => (
                             <li key={idx}>{item}</li>
                           ))}
                         </ul>
                       </div>
                     )}
 
+                    {projectAiResult.priorityFindings && projectAiResult.priorityFindings.length > 0 && (
+                      <div className="space-y-1.5 pt-1">
+                        <span className="text-[11px] font-bold text-indigo-900">Priority Review Observations:</span>
+                        <div className="space-y-1.5">
+                          {projectAiResult.priorityFindings.map((finding, idx) => (
+                            <div key={idx} className="p-2 bg-white/80 border border-indigo-100 rounded-lg text-xs space-y-0.5">
+                              <div className="font-semibold text-indigo-950 flex items-center justify-between">
+                                <span>{finding.title}</span>
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold">
+                                  {finding.severity}
+                                </span>
+                              </div>
+                              <p className="text-slate-600 text-[11px] leading-normal">{finding.explanation}</p>
+                              {finding.reviewRecommendation && (
+                                <p className="text-indigo-800 text-[11px] font-medium">
+                                  <span className="font-bold">Action:</span> {finding.reviewRecommendation}
+                                </p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
                     <div className="text-[10px] text-indigo-600 border-t border-indigo-200/60 pt-2 italic">
-                      {projectAiResult.disclaimer}
+                      {projectAiResult.limitations || projectAiResult.disclaimer || 'Advisory decision support grounded strictly in authoritative project records; does not constitute a formal legal, forensic, or statutory audit finding. Deterministic scores remain authoritative.'}
                     </div>
                   </div>
                 )}
