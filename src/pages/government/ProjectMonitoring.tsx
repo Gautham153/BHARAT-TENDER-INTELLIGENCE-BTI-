@@ -707,6 +707,15 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
     }
     setAiRunning(true);
     try {
+      // 1. Recalculate deterministic anomalies and risk assessment first
+      const deterministicAnomalies = await AnomalyDetectionService.runDeterministicAnomalyChecks(selectedProject.id);
+      setProjectAnomalies(deterministicAnomalies);
+      const deterministicAssess = await AnomalyDetectionService.getProjectRiskAssessment(selectedProject.id);
+      if (deterministicAssess) {
+        setProjectAssessment(deterministicAssess);
+      }
+
+      // 2. Run AI advisory on authoritative data
       const data = await AnomalyDetectionService.runAiRiskAnalysis(selectedProject.id, user);
       setProjectAiResult(data);
       const updatedAssess = await AnomalyDetectionService.getProjectRiskAssessment(selectedProject.id);
@@ -1269,23 +1278,47 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
                 </div>
               </div>
 
-              {selectedProject.governmentVerifiedPhysicalProgressPercent !== undefined &&
-                Math.abs(
-                  (selectedProject.agencyReportedPhysicalProgressPercent ?? selectedProject.physicalProgressPercent ?? 0) -
-                  selectedProject.governmentVerifiedPhysicalProgressPercent
-                ) > 15 && (
-                  <div className="flex items-center gap-2 p-2 bg-amber-50 border border-amber-200 rounded-lg text-amber-900 text-xs">
-                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-                    <span>
-                      <strong>Verification Variance Alert:</strong> Discrepancy of{' '}
-                      {Math.abs(
-                        (selectedProject.agencyReportedPhysicalProgressPercent ?? selectedProject.physicalProgressPercent ?? 0) -
-                        selectedProject.governmentVerifiedPhysicalProgressPercent
-                      )}
-                      % between Agency submission and official on-site inspection.
-                    </span>
+              {(() => {
+                const inspAnomaly = projectAnomalies.find(
+                  (a) =>
+                    a.type === 'INSPECTION_PROGRESS_DIVERGENCE' &&
+                    a.isConditionActive !== false &&
+                    a.status !== 'RESOLVED' &&
+                    a.status !== 'DISMISSED'
+                );
+                const hasDirectVariance =
+                  selectedProject.governmentVerifiedPhysicalProgressPercent !== undefined &&
+                  Math.abs(
+                    (selectedProject.agencyReportedPhysicalProgressPercent ?? selectedProject.physicalProgressPercent ?? 0) -
+                      selectedProject.governmentVerifiedPhysicalProgressPercent
+                  ) >= 15;
+
+                if (!inspAnomaly && !hasDirectVariance) return null;
+
+                const variance =
+                  inspAnomaly?.metrics?.divergencePercent ??
+                  Math.abs(
+                    (selectedProject.agencyReportedPhysicalProgressPercent ?? selectedProject.physicalProgressPercent ?? 0) -
+                      (selectedProject.governmentVerifiedPhysicalProgressPercent ?? 0)
+                  );
+
+                return (
+                  <div className="flex items-center justify-between gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-amber-900 text-xs">
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>
+                        <strong>Verification Variance Alert:</strong> Discrepancy of{' '}
+                        <span className="font-mono font-bold">{variance}%</span> between Agency submission and official on-site inspection.
+                      </span>
+                    </div>
+                    {inspAnomaly && (
+                      <span className="shrink-0 text-[10px] font-bold px-2 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300">
+                        {inspAnomaly.severity} Severity Anomaly
+                      </span>
+                    )}
                   </div>
-                )}
+                );
+              })()}
 
               <div>
                 <ProgressBar

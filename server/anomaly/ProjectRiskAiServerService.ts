@@ -35,7 +35,9 @@ CORE DIRECTIVES & MANDATES:
 3. STRICT TERMINOLOGY RULE: You are STRICTLY FORBIDDEN from declaring "Fraud Detected", "Fraud Confirmed", "Corruption Confirmed", "Illegal Activity Confirmed", or "Contractor is Fraudulent".
    Use institutional administrative terms: "Risk Indicator Requiring Administrative Verification", "Implementation Discrepancy", "High Risk Indicator", "Monitoring Variance", "Inspection Discrepancy".
 4. Base all statements exclusively on the provided project parameters, milestone progress, financial submissions, and official field inspection observations. Do NOT invent dates, people, or contract figures.
-5. Return ONLY valid, RFC 8259 JSON matching the exact schema requested.`;
+5. DETERMINISTIC SEVERITY PRESERVATION: When active deterministic anomalies are present in the prompt, any corresponding item in "priorityFindings" MUST preserve the EXACT anomaly type, title, and deterministic severity (e.g., a HIGH severity deterministic anomaly must remain HIGH; do NOT downgrade to MEDIUM or upgrade).
+6. If there are NO active deterministic anomalies, do NOT invent or manufacture phantom deterministic system anomalies.
+7. Return ONLY valid, RFC 8259 JSON matching the exact schema requested.`;
 
 export class ProjectRiskAiServerService {
   async analyzeProjectRisk(params: {
@@ -155,6 +157,10 @@ ${
         .join('\n')
 }
 
+CRITICAL INSTRUCTIONS FOR priorityFindings:
+- When ACTIVE ANOMALIES DETECTED BY DETERMINISTIC SYSTEM RULES are present above, your priorityFindings MUST directly include them and reflect their EXACT deterministic severity (e.g. HIGH must be "HIGH"). You must NOT downgrade, upgrade, or alter the deterministic severity.
+- If there are NO active deterministic anomalies, do NOT invent phantom deterministic system anomalies.
+
 RESPONSE SCHEMA REQUIRED:
 Return a single JSON object with these keys:
 {
@@ -162,7 +168,7 @@ Return a single JSON object with these keys:
   "overallRiskLevel": "LOW" | "MODERATE" | "HIGH" | "CRITICAL",
   "priorityFindings": [
     {
-      "title": "Finding title",
+      "title": "Finding title matching or derived from the deterministic indicator",
       "explanation": "Clear factual explanation citing specific numbers/dates from the data",
       "severity": "LOW" | "MEDIUM" | "HIGH" | "CRITICAL",
       "reviewRecommendation": "Specific administrative action for the Nodal Officer"
@@ -187,14 +193,38 @@ Return a single JSON object with these keys:
       const raw = response.text || '';
       const parsed = JSON.parse(raw);
 
-      // Sanitize output to guarantee anti-slop and forbidden phrase enforcement
+      // Sanitize output to guarantee anti-slop, forbidden phrase enforcement, and authoritative severity preservation
       const sanitizedSummary = this.sanitizeTerminology(parsed.summary || '');
-      const sanitizedFindings = (parsed.priorityFindings || []).map((f: any) => ({
-        title: this.sanitizeTerminology(f.title || 'Risk Indicator'),
-        explanation: this.sanitizeTerminology(f.explanation || ''),
-        severity: ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].includes(f.severity) ? f.severity : 'MEDIUM',
-        reviewRecommendation: this.sanitizeTerminology(f.reviewRecommendation || 'Review project measurement book.'),
-      }));
+      const sanitizedFindings = (parsed.priorityFindings || []).map((f: any) => {
+        const title = this.sanitizeTerminology(f.title || 'Risk Indicator');
+        const explanation = this.sanitizeTerminology(f.explanation || '');
+
+        // Match against deterministic anomalies to enforce authoritative severity
+        const matchedAnomaly = anomalies.find(
+          (a: any) =>
+            (a.title && title.toLowerCase().includes(a.title.toLowerCase())) ||
+            (a.title && a.title.toLowerCase().includes(title.toLowerCase())) ||
+            (a.type && title.toLowerCase().includes(a.type.toLowerCase().replace(/_/g, ' '))) ||
+            (a.type === 'INSPECTION_PROGRESS_DIVERGENCE' &&
+              (title.toLowerCase().includes('inspection') ||
+                title.toLowerCase().includes('verification') ||
+                title.toLowerCase().includes('progress discrepancy') ||
+                explanation.toLowerCase().includes('official on-site inspection')))
+        );
+
+        const severity = matchedAnomaly
+          ? matchedAnomaly.severity
+          : ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].includes(f.severity)
+          ? f.severity
+          : 'MEDIUM';
+
+        return {
+          title,
+          explanation,
+          severity,
+          reviewRecommendation: this.sanitizeTerminology(f.reviewRecommendation || 'Review project measurement book.'),
+        };
+      });
 
       return {
         assessmentId: `risk-ai-${projectId}-${Date.now()}`,
@@ -348,8 +378,6 @@ Return a single JSON object with these keys:
     reason: string
   ): RiskIntelligenceResult {
     const authoritativeRiskScore = Number(project.riskScore ?? 0);
-    const hasCritical = anomalies.some((a: any) => a.severity === 'CRITICAL');
-    const hasHigh = anomalies.some((a: any) => a.severity === 'HIGH');
     const authoritativeRiskLevel: RiskLevel =
       project.riskLevel ||
       (authoritativeRiskScore >= 80
@@ -358,10 +386,6 @@ Return a single JSON object with these keys:
         ? 'HIGH'
         : authoritativeRiskScore >= 30
         ? 'MODERATE'
-        : hasCritical
-        ? 'CRITICAL'
-        : hasHigh
-        ? 'HIGH'
         : 'LOW');
 
     const activeCount = anomalies.filter((a: any) => a.status === 'OPEN' && a.isConditionActive !== false).length;

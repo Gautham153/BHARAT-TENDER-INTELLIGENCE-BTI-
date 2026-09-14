@@ -82,6 +82,15 @@ export class AnomalyDetectionService {
    * Returns all detected anomalies across all projects for government intelligence view.
    */
   static async getAllAnomalies(): Promise<ProjectAnomaly[]> {
+    try {
+      const demoProjects = await ProjectService.getProjects();
+      for (const p of demoProjects) {
+        await this.runDeterministicAnomalyChecks(p.id);
+      }
+    } catch (err) {
+      console.warn('[AnomalyDetectionService] Error evaluating live project anomalies in getAllAnomalies:', err);
+    }
+
     let list: ProjectAnomaly[] = [];
 
     if (isLiveFirestoreSession() && db) {
@@ -95,15 +104,6 @@ export class AnomalyDetectionService {
 
     if (list.length === 0) {
       list = getLocalItems<ProjectAnomaly>(LOCAL_STORAGE_ANOMALIES_KEY, []);
-    }
-
-    // If local cache is empty, automatically evaluate anomalies across demonstration projects
-    if (list.length === 0) {
-      const demoProjects = await ProjectService.getProjects();
-      for (const p of demoProjects) {
-        const pAnomalies = await this.runDeterministicAnomalyChecks(p.id);
-        list.push(...pAnomalies);
-      }
     }
 
     return list;
@@ -560,19 +560,32 @@ export class AnomalyDetectionService {
     // -------------------------------------------------------------
     // RULE G: INSPECTION VS REPORTED PROGRESS DIVERGENCE
     // -------------------------------------------------------------
-    if (inspections.length > 0) {
-      const sortedInspections = [...inspections].sort(
-        (a, b) => new Date(b.inspectionDate || b.createdAt).getTime() - new Date(a.inspectionDate || a.createdAt).getTime()
-      );
-      const latestInspection = sortedInspections[0];
-      const inspectedProgress = Number(
-        latestInspection.governmentVerifiedPhysicalProgressPercent ??
-          latestInspection.physicalProgressObserved ??
-          0
-      );
-      const reportedProgress = Number(project.agencyReportedPhysicalProgressPercent ?? project.physicalProgressPercent ?? 0);
+    const hasInspections = inspections.length > 0;
+    const sortedInspections = hasInspections
+      ? [...inspections].sort(
+          (a, b) => new Date(b.inspectionDate || b.createdAt).getTime() - new Date(a.inspectionDate || a.createdAt).getTime()
+        )
+      : [];
+    const latestInspection = sortedInspections[0];
+    const inspectedProgress = Number(
+      latestInspection?.governmentVerifiedPhysicalProgressPercent ??
+        latestInspection?.physicalProgressObserved ??
+        project.governmentVerifiedPhysicalProgressPercent ??
+        0
+    );
+    const hasInspectedValue =
+      (latestInspection &&
+        (latestInspection.governmentVerifiedPhysicalProgressPercent !== undefined ||
+          latestInspection.physicalProgressObserved !== undefined)) ||
+      (project.governmentVerifiedPhysicalProgressPercent !== undefined &&
+        project.governmentVerifiedPhysicalProgressPercent !== null);
 
-      const inspectionDiscrepancy = reportedProgress - inspectedProgress;
+    if (hasInspectedValue) {
+      const reportedProgress = Number(
+        project.agencyReportedPhysicalProgressPercent ?? project.physicalProgressPercent ?? 0
+      );
+
+      const inspectionDiscrepancy = Math.abs(reportedProgress - inspectedProgress);
       if (inspectionDiscrepancy >= 15) {
         const inspAnomalyId = `anom-insp-div-${projectId}`;
         const existingInsp = existingMap.get(inspAnomalyId);
@@ -590,15 +603,27 @@ export class AnomalyDetectionService {
           explanation: `Official on-site inspection observed ${inspectedProgress}% physical progress, diverging by ${inspectionDiscrepancy}% from agency self-reported progress of ${reportedProgress}%.`,
           detectedAt: existingInsp?.detectedAt || now.toISOString(),
           status: existingInsp?.status || 'OPEN',
-          evidence: [
-            {
-              entityType: 'INSPECTION',
-              entityId: latestInspection.id,
-              label: `Official Inspection by ${latestInspection.officerName} (${latestInspection.officerDesignation || 'Engineer'})`,
-              detail: latestInspection.observations,
-              date: latestInspection.inspectionDate,
-            },
-          ],
+          evidence: latestInspection
+            ? [
+                {
+                  entityType: 'INSPECTION',
+                  entityId: latestInspection.id,
+                  label: `Official Inspection by ${latestInspection.officerName || 'Government Officer'} (${
+                    latestInspection.officerDesignation || 'Engineer'
+                  })`,
+                  detail: latestInspection.observations || `Observed physical progress: ${inspectedProgress}%`,
+                  date: latestInspection.inspectionDate || latestInspection.createdAt || now.toISOString(),
+                },
+              ]
+            : [
+                {
+                  entityType: 'PROJECT',
+                  entityId: project.id,
+                  label: 'Authoritative Government Verification Record',
+                  detail: `Official government verified progress is ${inspectedProgress}% vs agency self-reported progress of ${reportedProgress}%.`,
+                  date: project.updatedAt || now.toISOString(),
+                },
+              ],
           metrics: {
             inspectedProgressPercent: inspectedProgress,
             reportedProgressPercent: reportedProgress,
