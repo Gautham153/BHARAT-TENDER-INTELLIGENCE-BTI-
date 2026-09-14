@@ -26,6 +26,7 @@ import {
   ProjectInspection,
   ProjectInspectionMilestoneObservation,
   ProjectException,
+  ProjectExceptionSeverity,
   ProjectExceptionExplanationRequest,
   ProjectSupportingDocument,
   ProjectAuditEvent,
@@ -35,6 +36,7 @@ import {
   FinancialVerificationStatus,
   InspectionType,
 } from '../../types/project';
+import { PriorityFinding } from '../../types/anomaly';
 import { Proposal, CanonicalProposalStatus } from '../../types/proposal';
 import { Tender } from '../../types/tender';
 import { Organization } from '../../types/organization';
@@ -2363,6 +2365,132 @@ export class ProjectService {
     }
 
     return this.getExceptions(projectId);
+  }
+
+  /**
+   * Actionable AI Intelligence Governance:
+   * Record an official monitoring exception based on a reviewed AI Priority Observation.
+   * Ensures:
+   * 1. Government authorization check.
+   * 2. Idempotent check (avoids duplicate open exceptions for the same observation).
+   * 3. Clear link to originating observation, explanation, and reporting officer.
+   * 4. Enters standard exception lifecycle (Open -> Acknowledged / Explanation -> Resolved).
+   * 5. Immutable audit trail logging.
+   */
+  static async reportExceptionFromObservation(params: {
+    projectId: string;
+    finding: PriorityFinding;
+    user: AuthUser;
+  }): Promise<ProjectException> {
+    const { projectId, finding, user } = params;
+
+    const userRole = (user.role || '').toLowerCase();
+    if (!userRole.includes('gov')) {
+      throw new Error('Access Denied: Only authorized government officers can record monitoring exceptions.');
+    }
+
+    const project = await this.getProjectById(projectId);
+    if (!project) {
+      throw new Error(`Project ${projectId} not found.`);
+    }
+
+    const existingExceptions = await this.getExceptions(projectId);
+    const existing = existingExceptions.find(
+      (e) =>
+        e.status !== 'RESOLVED' &&
+        (e.title === finding.title ||
+          e.originatingObservationTitle === finding.title ||
+          (finding.supportingIndicator && e.originatingIndicator === finding.supportingIndicator) ||
+          (e.description && e.description.includes(finding.title)))
+    );
+
+    if (existing) {
+      return existing;
+    }
+
+    // Map observation domain to valid authoritative exception types
+    let exceptionType: string = 'PROGRESS_VERIFICATION_VARIANCE';
+    const contextText = `${finding.title} ${finding.supportingIndicator || ''} ${finding.explanation}`.toLowerCase();
+
+    if (contextText.includes('milestone') || contextText.includes('delay') || contextText.includes('schedule') || contextText.includes('timeline')) {
+      exceptionType = 'SCHEDULE_DELAY';
+    } else if (contextText.includes('financial') || contextText.includes('divergence') || contextText.includes('disburs') || contextText.includes('expenditure')) {
+      exceptionType = 'FINANCIAL_PROGRESS_MISMATCH';
+    } else if (contextText.includes('inspection') || contextText.includes('field') || contextText.includes('discrepancy')) {
+      exceptionType = 'PROGRESS_VERIFICATION_VARIANCE';
+    } else if (contextText.includes('gap') || contextText.includes('stagnat') || contextText.includes('inactivity')) {
+      exceptionType = 'STALLED_PROJECT';
+    } else if (contextText.includes('overrun') || contextText.includes('award')) {
+      exceptionType = 'EXPENDITURE_OVER_AWARD';
+    } else if (contextText.includes('physical') || contextText.includes('progress')) {
+      exceptionType = 'PHYSICAL_PROGRESS_DELAY';
+    }
+
+    const severity: ProjectExceptionSeverity =
+      finding.severity === 'CRITICAL' || finding.severity === 'HIGH'
+        ? 'HIGH'
+        : finding.severity === 'LOW'
+        ? 'LOW'
+        : 'MEDIUM';
+
+    const id = `exc-ai-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    const nowIso = new Date().toISOString();
+
+    const newException: ProjectException = {
+      id,
+      projectId,
+      type: exceptionType,
+      severity,
+      title: finding.title,
+      description: `[Official Exception logged by ${user.name || 'Authorized Officer'} upon AI Observation review]: ${finding.explanation}${finding.reviewRecommendation ? ` Recommended Review: ${finding.reviewRecommendation}` : ''}`,
+      detectedAt: nowIso,
+      source: 'SYSTEM_RULE',
+      status: 'OPEN',
+      originatingObservationTitle: finding.title,
+      originatingIndicator: finding.supportingIndicator,
+      reportedByOfficerId: getAuthoritativeUid(user),
+      reportedByOfficerName: user.name || 'Authorized Officer',
+    };
+
+    const eventId = `evt-exc-detect-${id}`;
+    const auditEvent: ProjectAuditEvent = {
+      eventId,
+      projectId,
+      action: 'EXCEPTION_DETECTED',
+      actorId: getAuthoritativeUid(user),
+      actorRole: 'government',
+      actorName: user.name || 'Authorized Officer',
+      timestamp: nowIso,
+      newState: {
+        exceptionId: id,
+        type: exceptionType,
+        severity,
+        status: 'OPEN',
+      },
+      metadata: {
+        source: 'GOVERNMENT_OBSERVATION_REPORT',
+        observationTitle: finding.title,
+        severity: finding.severity,
+      },
+      notes: `Official monitoring exception logged by ${user.name || 'Authorized Officer'} from AI Observation: "${finding.title}"`,
+    };
+
+    if (isLiveFirestoreSession() && db) {
+      const batch = writeBatch(db);
+      batch.set(doc(db, EXCEPTIONS_COLLECTION, id), sanitizeFirestorePayload(newException));
+      batch.set(doc(db, AUDIT_EVENTS_COLLECTION, eventId), sanitizeFirestorePayload(auditEvent));
+      await batch.commit();
+    } else {
+      const local = getLocalItems<ProjectException>(LOCAL_STORAGE_EXCEPTIONS_KEY, []);
+      local.unshift(newException);
+      saveLocalItems(LOCAL_STORAGE_EXCEPTIONS_KEY, local);
+
+      const localEvents = getLocalItems<ProjectAuditEvent>(LOCAL_STORAGE_EVENTS_KEY, INITIAL_DEMO_EVENTS);
+      localEvents.unshift(auditEvent);
+      saveLocalItems(LOCAL_STORAGE_EVENTS_KEY, localEvents);
+    }
+
+    return newException;
   }
 
   static async getExceptionRequests(projectId: string): Promise<ProjectExceptionExplanationRequest[]> {

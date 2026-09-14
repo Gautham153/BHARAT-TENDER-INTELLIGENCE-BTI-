@@ -297,6 +297,12 @@ export interface ProjectException {
   resolutionNote?: string;
 
   explanationRequest?: ProjectExceptionExplanationRequest;
+
+  // Originating AI Priority Observation / Officer Reporting Metadata
+  originatingObservationTitle?: string;
+  originatingIndicator?: string;
+  reportedByOfficerId?: string;
+  reportedByOfficerName?: string;
 }
 
 /**

@@ -33,6 +33,7 @@ import {
   MessageSquare,
   ShieldAlert,
   Sparkles,
+  ExternalLink,
 } from 'lucide-react';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { Table, Column } from '../../components/ui/Table';
@@ -55,6 +56,7 @@ import {
   ProjectAnomaly,
   ProjectRiskAssessment,
   RiskIntelligenceResult,
+  PriorityFinding,
   SEVERITY_COLORS,
   STATUS_COLORS,
 } from '../../types/anomaly';
@@ -711,8 +713,8 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
       if (updatedAssess) {
         setProjectAssessment(updatedAssess);
       }
-      showToast('AI Advisory Generated', {
-        message: `Analysis completed with confidence: ${data.confidenceScore ?? 92}%.`,
+      showToast('AI Risk Advisory Generated', {
+        message: 'Administrative risk advisory and actionable priority review observations generated.',
         type: 'success',
       });
     } catch (err) {
@@ -723,6 +725,107 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
       });
     } finally {
       setAiRunning(false);
+    }
+  };
+
+  // Helper to map AI Priority Observation to the most relevant existing BTI workflow tab
+  const getObservationReviewTarget = (finding: PriorityFinding): {
+    tab: ActiveTab;
+    label: string;
+    actionText: string;
+  } => {
+    const text = `${finding.title} ${finding.explanation} ${finding.reviewRecommendation || ''} ${finding.supportingIndicator || ''}`.toLowerCase();
+
+    if (
+      text.includes('inspection') ||
+      text.includes('field observation') ||
+      text.includes('site visit') ||
+      text.includes('physical vs agency') ||
+      text.includes('geo-tagged') ||
+      text.includes('discrepancy')
+    ) {
+      return {
+        tab: 'inspections',
+        label: 'Field Inspections',
+        actionText: 'Review Inspection Records',
+      };
+    }
+    if (
+      text.includes('milestone') ||
+      text.includes('schedule') ||
+      text.includes('timeline') ||
+      text.includes('delay') ||
+      text.includes('completion date')
+    ) {
+      return {
+        tab: 'milestones',
+        label: 'Milestones & Schedule',
+        actionText: 'Review Milestone Schedule',
+      };
+    }
+    if (
+      text.includes('financial') ||
+      text.includes('disburs') ||
+      text.includes('expenditure') ||
+      text.includes('claim') ||
+      text.includes('voucher') ||
+      text.includes('divergence') ||
+      text.includes('budget') ||
+      text.includes('allocation') ||
+      text.includes('overrun')
+    ) {
+      return {
+        tab: 'financials',
+        label: 'Financial Records',
+        actionText: 'Review Financial Claims',
+      };
+    }
+    if (
+      text.includes('gap') ||
+      text.includes('inactivity') ||
+      text.includes('progress update') ||
+      text.includes('site update') ||
+      text.includes('stagnat') ||
+      text.includes('reporting')
+    ) {
+      return {
+        tab: 'progress',
+        label: 'Site Updates',
+        actionText: 'Review Site Updates',
+      };
+    }
+    return {
+      tab: 'overview',
+      label: 'Project Overview',
+      actionText: 'Review Project Records',
+    };
+  };
+
+  // Actionable AI Intelligence Governance: Report an AI Observation as an Official Exception
+  const handleReportObservationAsException = async (finding: PriorityFinding) => {
+    if (!selectedProject || !user) return;
+    setActionProcessing(true);
+    try {
+      await ProjectService.reportExceptionFromObservation({
+        projectId: selectedProject.id,
+        finding,
+        user,
+      });
+
+      showToast('Exception Logged', {
+        message: `Official monitoring exception created for "${finding.title}". Linked to project records.`,
+        type: 'success',
+      });
+
+      await loadProjectDetails(selectedProject.id);
+    } catch (err: any) {
+      console.error('Report observation error:', err);
+      showToast('Reporting Failed', {
+        message: err.message || 'Could not record exception from observation.',
+        type: 'error',
+      });
+    } finally {
+      setActionProcessing(false);
     }
   };
 
@@ -1995,15 +2098,28 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
 
                 {/* AI Advisory Panel (if generated) */}
                 {projectAiResult && (
-                  <div className="p-4 bg-indigo-50/70 border border-indigo-200 rounded-xl space-y-3">
-                    <div className="flex items-center justify-between">
+                  <div className="p-4 bg-indigo-50/70 border border-indigo-200 rounded-xl space-y-3.5 shadow-xs">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex items-center gap-2 text-indigo-900 font-bold text-xs uppercase tracking-wider">
-                        <Sparkles className="w-4 h-4 text-indigo-600" />
+                        <Sparkles className="w-4 h-4 text-indigo-600 shrink-0" />
                         Grounded AI Administrative Risk Advisory
                       </div>
-                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-100 text-indigo-800 border border-indigo-200">
-                        Model Confidence: {projectAiResult.confidenceScore ?? 92}%
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
+                            projectAiResult.riskLevel === 'CRITICAL' || projectAiResult.riskLevel === 'HIGH'
+                              ? 'bg-rose-100 text-rose-900 border-rose-300'
+                              : projectAiResult.riskLevel === 'MODERATE'
+                              ? 'bg-amber-100 text-amber-900 border-amber-300'
+                              : 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                          }`}
+                        >
+                          Risk Level: {projectAiResult.riskLevel || projectAssessment?.riskLevel || 'MODERATE'}
+                        </span>
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white text-indigo-950 border border-indigo-200 font-bold">
+                          Risk Score: {projectAssessment?.riskScore ?? projectAiResult.riskScore ?? selectedProject.riskScore ?? 0}/100
+                        </span>
+                      </div>
                     </div>
 
                     <p className="text-xs text-indigo-950 leading-relaxed font-medium">
@@ -2023,25 +2139,128 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
                     )}
 
                     {projectAiResult.priorityFindings && projectAiResult.priorityFindings.length > 0 && (
-                      <div className="space-y-1.5 pt-1">
-                        <span className="text-[11px] font-bold text-indigo-900">Priority Review Observations:</span>
-                        <div className="space-y-1.5">
-                          {projectAiResult.priorityFindings.map((finding, idx) => (
-                            <div key={idx} className="p-2 bg-white/80 border border-indigo-100 rounded-lg text-xs space-y-0.5">
-                              <div className="font-semibold text-indigo-950 flex items-center justify-between">
-                                <span>{finding.title}</span>
-                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold">
-                                  {finding.severity}
-                                </span>
+                      <div className="space-y-2 pt-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-bold text-indigo-950 uppercase tracking-wider">
+                            Priority Review Observations ({projectAiResult.priorityFindings.length})
+                          </span>
+                          <span className="text-[10px] text-indigo-700 font-medium">
+                            Investigate underlying records or optionally log official exceptions
+                          </span>
+                        </div>
+
+                        <div className="space-y-2.5">
+                          {projectAiResult.priorityFindings.map((finding, idx) => {
+                            const reviewTarget = getObservationReviewTarget(finding);
+                            const matchingException = exceptions.find(
+                              (e) =>
+                                e.title === finding.title ||
+                                e.originatingObservationTitle === finding.title ||
+                                (finding.supportingIndicator && e.originatingIndicator === finding.supportingIndicator) ||
+                                (e.description && e.description.includes(finding.title))
+                            );
+                            const isReported = Boolean(matchingException && matchingException.status !== 'RESOLVED');
+                            const isResolved = Boolean(matchingException && matchingException.status === 'RESOLVED');
+
+                            return (
+                              <div
+                                key={idx}
+                                className="p-3 bg-white border border-indigo-100 rounded-xl text-xs space-y-2.5 shadow-2xs hover:border-indigo-200 transition-colors"
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="space-y-0.5">
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-bold text-indigo-950 text-xs">{finding.title}</span>
+                                      <span
+                                        className={`text-[10px] px-2 py-0.5 rounded font-bold border ${
+                                          SEVERITY_COLORS[finding.severity] || 'bg-amber-50 text-amber-800 border-amber-200'
+                                        }`}
+                                      >
+                                        {finding.severity}
+                                      </span>
+                                    </div>
+                                    {finding.supportingIndicator && (
+                                      <span className="font-mono text-[10px] text-slate-400 block">
+                                        Indicator: {finding.supportingIndicator}
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  {isReported && (
+                                    <span className="shrink-0 text-[10px] font-bold px-2 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300 flex items-center gap-1">
+                                      <AlertTriangle className="w-3 h-3 text-amber-700" />
+                                      Exception {matchingException?.status === 'ACKNOWLEDGED' ? 'Acknowledged' : 'Open'}
+                                    </span>
+                                  )}
+                                  {isResolved && (
+                                    <span className="shrink-0 text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
+                                      <CheckCircle2 className="w-3 h-3 text-emerald-700" />
+                                      Exception Resolved
+                                    </span>
+                                  )}
+                                </div>
+
+                                <p className="text-slate-700 text-xs leading-relaxed">{finding.explanation}</p>
+
+                                {finding.reviewRecommendation && (
+                                  <div className="p-2 bg-indigo-50/60 rounded-lg border border-indigo-100/80 text-[11px] text-indigo-950">
+                                    <span className="font-bold text-indigo-900">Recommended Action: </span>
+                                    {finding.reviewRecommendation}
+                                  </div>
+                                )}
+
+                                {/* Action Buttons: 1. REVIEW  2. REPORT AS EXCEPTION */}
+                                <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-slate-100">
+                                  <div className="flex items-center gap-2">
+                                    {/* 1. REVIEW ACTION */}
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      icon={ExternalLink}
+                                      onClick={() => {
+                                        setActiveTab(reviewTarget.tab);
+                                        showToast(`Navigated to ${reviewTarget.label}`, {
+                                          message: `Opened records to investigate: "${finding.title}".`,
+                                          type: 'info',
+                                        });
+                                      }}
+                                      className="text-xs font-semibold text-indigo-900 border-indigo-200 bg-indigo-50/40 hover:bg-indigo-100 hover:text-indigo-950 cursor-pointer"
+                                    >
+                                      {reviewTarget.actionText}
+                                    </Button>
+                                  </div>
+
+                                  <div className="flex items-center gap-2">
+                                    {/* 2. REPORT AS EXCEPTION ACTION */}
+                                    {isReported ? (
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        icon={AlertTriangle}
+                                        onClick={() => {
+                                          setActiveTab('exceptions');
+                                        }}
+                                        className="text-xs text-amber-900 border-amber-300 bg-amber-50 hover:bg-amber-100 font-semibold cursor-pointer"
+                                      >
+                                        View in Exceptions ({matchingException?.status})
+                                      </Button>
+                                    ) : (
+                                      <Button
+                                        variant="gov"
+                                        size="sm"
+                                        icon={AlertTriangle}
+                                        onClick={() => handleReportObservationAsException(finding)}
+                                        disabled={actionProcessing}
+                                        className="text-xs bg-amber-600 hover:bg-amber-700 text-white font-semibold border-0 shadow-xs cursor-pointer"
+                                      >
+                                        Report as Exception
+                                      </Button>
+                                    )}
+                                  </div>
+                                </div>
                               </div>
-                              <p className="text-slate-600 text-[11px] leading-normal">{finding.explanation}</p>
-                              {finding.reviewRecommendation && (
-                                <p className="text-indigo-800 text-[11px] font-medium">
-                                  <span className="font-bold">Action:</span> {finding.reviewRecommendation}
-                                </p>
-                              )}
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       </div>
                     )}
