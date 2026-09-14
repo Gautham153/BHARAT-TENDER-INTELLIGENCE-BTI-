@@ -2395,16 +2395,17 @@ export class ProjectService {
     }
 
     const existingExceptions = await this.getExceptions(projectId);
-    const existing = existingExceptions.find(
+    const existingActive = existingExceptions.find(
       (e) =>
-        e.title === finding.title ||
-        e.originatingObservationTitle === finding.title ||
-        (finding.supportingIndicator && e.originatingIndicator === finding.supportingIndicator) ||
-        (e.description && e.description.includes(finding.title))
+        e.status !== 'RESOLVED' &&
+        (e.title === finding.title ||
+          e.originatingObservationTitle === finding.title ||
+          (finding.supportingIndicator && e.originatingIndicator === finding.supportingIndicator) ||
+          (e.description && e.description.includes(finding.title)))
     );
 
-    if (existing) {
-      return existing;
+    if (existingActive) {
+      return existingActive;
     }
 
     // Map observation domain to valid authoritative exception types

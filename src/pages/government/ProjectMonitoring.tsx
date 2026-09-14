@@ -2185,15 +2185,46 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
                         <div className="space-y-2.5">
                           {projectAiResult.priorityFindings.map((finding, idx) => {
                             const reviewTarget = getObservationReviewTarget(finding);
-                            const matchingException = exceptions.find(
+                            const unresolvedException = exceptions.find(
                               (e) =>
-                                e.title === finding.title ||
-                                e.originatingObservationTitle === finding.title ||
-                                (finding.supportingIndicator && e.originatingIndicator === finding.supportingIndicator) ||
-                                (e.description && e.description.includes(finding.title))
+                                e.status !== 'RESOLVED' &&
+                                (e.title === finding.title ||
+                                  e.originatingObservationTitle === finding.title ||
+                                  (finding.supportingIndicator && e.originatingIndicator === finding.supportingIndicator) ||
+                                  (e.description && e.description.includes(finding.title)))
                             );
-                            const isReported = Boolean(matchingException && matchingException.status !== 'RESOLVED');
-                            const isResolved = Boolean(matchingException && matchingException.status === 'RESOLVED');
+                            const resolvedException = exceptions.find(
+                              (e) =>
+                                e.status === 'RESOLVED' &&
+                                (e.title === finding.title ||
+                                  e.originatingObservationTitle === finding.title ||
+                                  (finding.supportingIndicator && e.originatingIndicator === finding.supportingIndicator) ||
+                                  (e.description && e.description.includes(finding.title)))
+                            );
+
+                            // Match with deterministic project anomalies to verify live active condition
+                            const matchingAnomaly = projectAnomalies.find((a) => {
+                              const fTitle = (finding.title || '').toLowerCase();
+                              const aTitle = (a.title || '').toLowerCase();
+                              const fInd = (finding.supportingIndicator || '').toLowerCase();
+                              const aType = (a.type || '').toLowerCase();
+
+                              return (
+                                (a.title && (fTitle.includes(aTitle) || aTitle.includes(fTitle))) ||
+                                (a.type && (fInd.includes(aType) || aType.includes(fInd) || fTitle.includes(aType.replace(/_/g, ' ')))) ||
+                                (finding.supportingIndicator && (a.id === finding.supportingIndicator || a.title.includes(finding.supportingIndicator))) ||
+                                (a.type === 'INSPECTION_PROGRESS_DIVERGENCE' &&
+                                  (fTitle.includes('inspection') || fTitle.includes('verification') || fTitle.includes('progress discrepancy')))
+                              );
+                            });
+
+                            const isAnomalyActive = matchingAnomaly
+                              ? matchingAnomaly.isConditionActive !== false && matchingAnomaly.status !== 'RESOLVED' && matchingAnomaly.status !== 'DISMISSED'
+                              : true;
+
+                            const isReported = Boolean(unresolvedException);
+                            const isResolved = Boolean(!unresolvedException && resolvedException && !isAnomalyActive);
+                            const displayException = unresolvedException || (isResolved ? resolvedException : null);
 
                             return (
                               <div
@@ -2222,7 +2253,7 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
                                   {isReported && (
                                     <span className="shrink-0 text-[10px] font-bold px-2 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300 flex items-center gap-1">
                                       <AlertTriangle className="w-3 h-3 text-amber-700" />
-                                      Exception {matchingException?.status === 'ACKNOWLEDGED' ? 'Acknowledged' : 'Open'}
+                                      Exception {unresolvedException?.status === 'ACKNOWLEDGED' ? 'Acknowledged' : 'Open'}
                                     </span>
                                   )}
                                   {isResolved && (
@@ -2265,7 +2296,7 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
 
                                   <div className="flex items-center gap-2">
                                     {/* 2. REPORT AS EXCEPTION ACTION */}
-                                    {matchingException ? (
+                                    {displayException ? (
                                       <Button
                                         variant="outline"
                                         size="sm"
@@ -2279,7 +2310,7 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
                                             : 'text-amber-900 border-amber-300 bg-amber-50 hover:bg-amber-100'
                                         }`}
                                       >
-                                        View in Exceptions ({matchingException.status})
+                                        View in Exceptions ({displayException.status})
                                       </Button>
                                     ) : (
                                       <Button
