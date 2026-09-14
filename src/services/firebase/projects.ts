@@ -468,7 +468,7 @@ export function evaluateExceptionCurrentCondition(
         historicalSnapshotSummary: exc.description,
       };
     }
-    const diff = agencyReportedProg - govVerifiedProg;
+    const diff = Math.abs(agencyReportedProg - govVerifiedProg);
     const isVariance = diff > 15;
     return {
       isStillActive: isVariance,
@@ -2412,12 +2412,19 @@ export class ProjectService {
     let exceptionType: string = 'PROGRESS_VERIFICATION_VARIANCE';
     const contextText = `${finding.title} ${finding.supportingIndicator || ''} ${finding.explanation}`.toLowerCase();
 
-    if (contextText.includes('milestone') || contextText.includes('delay') || contextText.includes('schedule') || contextText.includes('timeline')) {
-      exceptionType = 'SCHEDULE_DELAY';
-    } else if (contextText.includes('financial') || contextText.includes('divergence') || contextText.includes('disburs') || contextText.includes('expenditure')) {
-      exceptionType = 'FINANCIAL_PROGRESS_MISMATCH';
-    } else if (contextText.includes('inspection') || contextText.includes('field') || contextText.includes('discrepancy')) {
+    // 1. Explicit Inspection / Verification Divergence takes highest precedence
+    if (
+      contextText.includes('inspection_progress_divergence') ||
+      contextText.includes('inspection') ||
+      contextText.includes('verification') ||
+      contextText.includes('field') ||
+      contextText.includes('discrepancy')
+    ) {
       exceptionType = 'PROGRESS_VERIFICATION_VARIANCE';
+    } else if (contextText.includes('milestone') || contextText.includes('delay') || contextText.includes('schedule') || contextText.includes('timeline')) {
+      exceptionType = 'SCHEDULE_DELAY';
+    } else if (contextText.includes('financial') || contextText.includes('disburs') || contextText.includes('expenditure') || contextText.includes('divergence')) {
+      exceptionType = 'FINANCIAL_PROGRESS_MISMATCH';
     } else if (contextText.includes('gap') || contextText.includes('stagnat') || contextText.includes('inactivity')) {
       exceptionType = 'STALLED_PROJECT';
     } else if (contextText.includes('overrun') || contextText.includes('award')) {
