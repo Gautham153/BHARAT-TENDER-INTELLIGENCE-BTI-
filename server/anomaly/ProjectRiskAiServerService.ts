@@ -13,7 +13,7 @@ import {
   DEMONSTRATION_INSPECTIONS,
 } from '../../src/data/demonstrationProjects.js';
 
-const GEMINI_MODEL = 'gemini-2.5-flash';
+const GEMINI_MODEL = 'gemini-3.5-flash';
 let geminiClientInstance: GoogleGenAI | null = null;
 
 function getGeminiClient(): GoogleGenAI | null {
