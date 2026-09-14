@@ -2265,17 +2265,21 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
 
                                   <div className="flex items-center gap-2">
                                     {/* 2. REPORT AS EXCEPTION ACTION */}
-                                    {isReported ? (
+                                    {matchingException ? (
                                       <Button
                                         variant="outline"
                                         size="sm"
-                                        icon={AlertTriangle}
+                                        icon={isResolved ? CheckCircle2 : AlertTriangle}
                                         onClick={() => {
                                           setActiveTab('exceptions');
                                         }}
-                                        className="text-xs text-amber-900 border-amber-300 bg-amber-50 hover:bg-amber-100 font-semibold cursor-pointer"
+                                        className={`text-xs font-semibold cursor-pointer ${
+                                          isResolved
+                                            ? 'text-emerald-900 border-emerald-300 bg-emerald-50 hover:bg-emerald-100'
+                                            : 'text-amber-900 border-amber-300 bg-amber-50 hover:bg-amber-100'
+                                        }`}
                                       >
-                                        View in Exceptions ({matchingException?.status})
+                                        View in Exceptions ({matchingException.status})
                                       </Button>
                                     ) : (
                                       <Button

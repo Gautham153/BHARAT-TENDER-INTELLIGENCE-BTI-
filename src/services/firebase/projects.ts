@@ -2397,11 +2397,10 @@ export class ProjectService {
     const existingExceptions = await this.getExceptions(projectId);
     const existing = existingExceptions.find(
       (e) =>
-        e.status !== 'RESOLVED' &&
-        (e.title === finding.title ||
-          e.originatingObservationTitle === finding.title ||
-          (finding.supportingIndicator && e.originatingIndicator === finding.supportingIndicator) ||
-          (e.description && e.description.includes(finding.title)))
+        e.title === finding.title ||
+        e.originatingObservationTitle === finding.title ||
+        (finding.supportingIndicator && e.originatingIndicator === finding.supportingIndicator) ||
+        (e.description && e.description.includes(finding.title))
     );
 
     if (existing) {
