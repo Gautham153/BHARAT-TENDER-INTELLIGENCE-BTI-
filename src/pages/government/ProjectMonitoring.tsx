@@ -216,7 +216,7 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
       setAuditEvents(a);
       setProjectAnomalies(anoms);
       setProjectAssessment(assess);
-      setProjectAiResult(null);
+      setProjectAiResult(assess?.aiAssessment || null);
     } catch (err) {
       console.error('[ProjectMonitoring] Failed to fetch project sub-records:', err);
       showToast('Error Loading Details', {
@@ -674,6 +674,9 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
       const assessment = await AnomalyDetectionService.getProjectRiskAssessment(selectedProject.id);
       setProjectAnomalies(detected);
       setProjectAssessment(assessment);
+      if (assessment?.aiAssessment) {
+        setProjectAiResult(assessment.aiAssessment);
+      }
       showToast('Anomaly Scan Completed', {
         message: `Evaluated 7 intelligence rules. Found ${detected.length} indicator(s).`,
         type: detected.length > 0 ? 'warning' : 'success',
@@ -704,6 +707,10 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
     try {
       const data = await AnomalyDetectionService.runAiRiskAnalysis(selectedProject.id, user);
       setProjectAiResult(data);
+      const updatedAssess = await AnomalyDetectionService.getProjectRiskAssessment(selectedProject.id);
+      if (updatedAssess) {
+        setProjectAssessment(updatedAssess);
+      }
       showToast('AI Advisory Generated', {
         message: `Analysis completed with confidence: ${data.confidenceScore ?? 92}%.`,
         type: 'success',

@@ -1302,7 +1302,14 @@ export class AnomalyDetectionService {
     }
 
     // Attach to stored ProjectRiskAssessment
-    const currentAssessment = await this.getProjectRiskAssessment(projectId);
+    let currentAssessment = await this.getProjectRiskAssessment(projectId);
+    if (!currentAssessment) {
+      const project = await ProjectService.getProjectById(projectId);
+      if (project) {
+        currentAssessment = await this.calculateAndPersistRiskScore(projectId, anomalies, project);
+      }
+    }
+
     if (currentAssessment) {
       const updatedAssessment: ProjectRiskAssessment = {
         ...currentAssessment,
