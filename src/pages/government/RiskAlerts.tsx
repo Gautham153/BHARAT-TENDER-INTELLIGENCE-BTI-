@@ -27,6 +27,7 @@ import { useAuth } from '../../context/AuthContext';
 import { AnomalyDetectionService } from '../../services/anomaly/anomalyDetectionService';
 import { ProjectService } from '../../services/firebase/projects';
 import { EvidenceChainService } from '../../services/evidence/evidenceChainService';
+import { InvestigationAdvisory } from '../../types/evidence';
 import {
   ProjectAnomaly,
   AnomalySeverity,
@@ -62,6 +63,9 @@ export const RiskAlerts: React.FC<RiskAlertsProps> = ({ onNavigate }) => {
 
   // Selected Anomaly for Drawer Inspection
   const [selectedAnomaly, setSelectedAnomaly] = useState<ProjectAnomaly | null>(null);
+
+  // PHASE 8: Investigation AI Advisory keyed by findingId / anomalyId to persist across drawer toggles
+  const [advisoriesByFinding, setAdvisoriesByFinding] = useState<Record<string, InvestigationAdvisory>>({});
 
   // Administrative Investigation Modal State
   const [investigatingAnomaly, setInvestigatingAnomaly] = useState<ProjectAnomaly | null>(null);
@@ -470,6 +474,10 @@ export const RiskAlerts: React.FC<RiskAlertsProps> = ({ onNavigate }) => {
         onClose={() => setSelectedAnomaly(null)}
         anomaly={selectedAnomaly}
         allAnomalies={anomalies}
+        advisories={advisoriesByFinding}
+        onSaveAdvisory={(key, adv) => {
+          setAdvisoriesByFinding((prev) => ({ ...prev, [key]: adv }));
+        }}
         onSelectAnomaly={(anom) => setSelectedAnomaly(anom)}
         onTakeAction={(anom) => {
           const allowed = VALID_ANOMALY_STATUS_TRANSITIONS[anom.status] || [];

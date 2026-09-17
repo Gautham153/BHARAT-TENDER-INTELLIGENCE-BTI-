@@ -18,6 +18,7 @@ import {
   EvidenceReference,
   InvestigationNote,
   InvestigationAdvisory,
+  getStableFindingId,
 } from '../../types/evidence';
 import {
   ShieldAlert,
@@ -48,6 +49,8 @@ interface InvestigationWorkstationProps {
   onTakeAction: (anomaly: ProjectAnomaly) => void;
   onSelectAnomaly: (anomaly: ProjectAnomaly) => void;
   allAnomalies: ProjectAnomaly[];
+  advisories?: Record<string, InvestigationAdvisory>;
+  onSaveAdvisory?: (findingKey: string, advisory: InvestigationAdvisory) => void;
 }
 
 export const InvestigationWorkstation: React.FC<InvestigationWorkstationProps> = ({
@@ -57,12 +60,15 @@ export const InvestigationWorkstation: React.FC<InvestigationWorkstationProps> =
   onTakeAction,
   onSelectAnomaly,
   allAnomalies,
+  advisories,
+  onSaveAdvisory,
 }) => {
   const { showToast } = useToast();
   const { user } = useAuth();
 
   const [evidenceChain, setEvidenceChain] = useState<EvidenceChain | null>(null);
   const [loadingChain, setLoadingChain] = useState<boolean>(true);
+  const [internalAdvisories, setInternalAdvisories] = useState<Record<string, InvestigationAdvisory>>({});
   const [aiAdvisory, setAiAdvisory] = useState<InvestigationAdvisory | null>(null);
   const [loadingAi, setLoadingAi] = useState<boolean>(false);
 
@@ -81,23 +87,60 @@ export const InvestigationWorkstation: React.FC<InvestigationWorkstationProps> =
     'ALL' | 'WHY_FLAGGED' | 'EVIDENCE' | 'TIMELINE' | 'ADVISORY' | 'NOTES_AUDIT'
   >('ALL');
 
+  // Resolve existing advisory from parent or internal keyed cache
+  const getExistingAdvisory = useCallback(
+    (targetAnomaly: ProjectAnomaly, chainFindingId?: string): InvestigationAdvisory | null => {
+      const stableId = getStableFindingId(targetAnomaly);
+      const possibleKeys = [
+        chainFindingId,
+        stableId,
+        targetAnomaly.id,
+        (targetAnomaly as any).findingId,
+        `${targetAnomaly.projectId}_${targetAnomaly.type}`,
+      ].filter(Boolean) as string[];
+
+      for (const key of possibleKeys) {
+        if (advisories && advisories[key]) {
+          return advisories[key];
+        }
+        if (internalAdvisories[key]) {
+          return internalAdvisories[key];
+        }
+      }
+      return null;
+    },
+    [advisories, internalAdvisories]
+  );
+
   // Load Evidence Chain on Anomaly Selection
-  const loadChain = useCallback(async (targetAnomaly: ProjectAnomaly) => {
-    setLoadingChain(true);
-    setAiAdvisory(null);
-    try {
-      const chain = await EvidenceChainService.buildEvidenceChain(targetAnomaly);
-      setEvidenceChain(chain);
-    } catch (err: any) {
-      console.error('[InvestigationWorkstation] Error building evidence chain:', err);
-      showToast('Error Loading Evidence Chain', {
-        message: err?.message || 'Could not assemble authoritative evidence chain.',
-        type: 'error',
-      });
-    } finally {
-      setLoadingChain(false);
-    }
-  }, [showToast]);
+  const loadChain = useCallback(
+    async (targetAnomaly: ProjectAnomaly) => {
+      setLoadingChain(true);
+      // Restore previously generated advisory for this specific finding if available
+      const existing = getExistingAdvisory(targetAnomaly);
+      setAiAdvisory(existing);
+
+      try {
+        const chain = await EvidenceChainService.buildEvidenceChain(targetAnomaly);
+        setEvidenceChain(chain);
+        if (!existing && chain?.findingId) {
+          const chainAdvisory = getExistingAdvisory(targetAnomaly, chain.findingId);
+          if (chainAdvisory) {
+            setAiAdvisory(chainAdvisory);
+          }
+        }
+      } catch (err: any) {
+        console.error('[InvestigationWorkstation] Error building evidence chain:', err);
+        showToast('Error Loading Evidence Chain', {
+          message: err?.message || 'Could not assemble authoritative evidence chain.',
+          type: 'error',
+        });
+      } finally {
+        setLoadingChain(false);
+      }
+    },
+    [showToast, getExistingAdvisory]
+  );
 
   useEffect(() => {
     if (anomaly && isOpen) {
@@ -119,6 +162,31 @@ export const InvestigationWorkstation: React.FC<InvestigationWorkstationProps> =
         projectId: anomaly.projectId,
       });
       setAiAdvisory(advisory);
+
+      // Persist advisory keyed by findingId and anomalyId so closing drawer does not clear it
+      const stableId = getStableFindingId(anomaly);
+      const keysToSave = [
+        evidenceChain.findingId,
+        stableId,
+        anomaly.id,
+        (anomaly as any).findingId,
+        `${anomaly.projectId}_${anomaly.type}`,
+      ].filter(Boolean) as string[];
+
+      setInternalAdvisories((prev) => {
+        const next = { ...prev };
+        keysToSave.forEach((k) => {
+          next[k] = advisory;
+        });
+        return next;
+      });
+
+      if (onSaveAdvisory) {
+        keysToSave.forEach((k) => {
+          onSaveAdvisory(k, advisory);
+        });
+      }
+
       showToast('AI Advisory Generated', {
         message: 'Grounded investigation intelligence synthesized successfully.',
         type: 'success',
@@ -729,7 +797,7 @@ export const InvestigationWorkstation: React.FC<InvestigationWorkstationProps> =
                   {loadingAi ? (
                     <div className="p-8 bg-white border border-slate-200 rounded-xl text-center text-slate-500 text-xs space-y-2">
                       <RefreshCw className="w-6 h-6 animate-spin mx-auto text-indigo-700" />
-                      <span>Synthesizing grounded investigation advisory via Gemini 3.8 Flash...</span>
+                      <span>Synthesizing grounded investigation advisory via Gemini 3.5 Flash...</span>
                     </div>
                   ) : aiAdvisory ? (
                     <div className="p-4 bg-white border border-indigo-100 rounded-xl space-y-4 text-xs">

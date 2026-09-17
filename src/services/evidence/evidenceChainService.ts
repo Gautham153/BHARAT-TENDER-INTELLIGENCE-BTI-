@@ -1617,8 +1617,8 @@ export class EvidenceChainService {
             recommendedReviewAreas: data.assessment.recommendedReviewAreas || [],
             missingEvidence: evidenceItems.filter((e) => e.classification === 'MISSING').map((e) => e.title),
             limitations: data.assessment.limitations || 'Advisory decision support grounded strictly in project records.',
-            provider: data.assessment.provider || 'Gemini 3.8 Flash',
-            model: data.assessment.model || 'gemini-3.8-flash',
+            provider: data.assessment.provider || 'Gemini 3.5 Flash',
+            model: data.assessment.model || 'gemini-3.5-flash',
             version: data.assessment.version || '1.0',
             timestamp: new Date().toISOString(),
           };

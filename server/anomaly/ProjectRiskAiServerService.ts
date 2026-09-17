@@ -15,6 +15,7 @@ import {
 } from '../../src/data/demonstrationProjects.js';
 
 const GEMINI_MODEL = 'gemini-3.8-flash';
+const ADVISORY_GEMINI_MODEL = 'gemini-3.5-flash';
 let geminiClientInstance: GoogleGenAI | null = null;
 
 function getGeminiClient(): GoogleGenAI | null {
@@ -657,15 +658,15 @@ RESPONSE SCHEMA (RFC 8259 JSON ONLY):
   "recommendedReviewAreas": ["Question/area 1 to verify", "Question/area 2 to verify", "Question/area 3 to verify"],
   "missingEvidence": ["Missing item 1", ...],
   "limitations": "Advisory decision support grounded strictly in project records; does not constitute a legal or forensic finding.",
-  "provider": "Gemini 3.8 Flash via Google GenAI SDK",
-  "model": "gemini-3.8-flash",
+  "provider": "Gemini 3.5 Flash via Google GenAI SDK",
+  "model": "gemini-3.5-flash",
   "version": "1.0",
   "timestamp": "${new Date().toISOString()}"
 }`;
 
     try {
       const response = await client.models.generateContent({
-        model: GEMINI_MODEL,
+        model: ADVISORY_GEMINI_MODEL,
         contents: prompt,
         config: {
           systemInstruction: SYSTEM_INSTRUCTION,
@@ -683,8 +684,8 @@ RESPONSE SCHEMA (RFC 8259 JSON ONLY):
         recommendedReviewAreas: Array.isArray(parsed.recommendedReviewAreas) ? parsed.recommendedReviewAreas.map((r: string) => this.sanitizeTerminology(r)) : [],
         missingEvidence: Array.isArray(parsed.missingEvidence) ? parsed.missingEvidence : missingItems.map((m: any) => m.title),
         limitations: parsed.limitations || 'Advisory decision support grounded strictly in project records.',
-        provider: 'Gemini 3.8 Flash via Google GenAI SDK',
-        model: GEMINI_MODEL,
+        provider: 'Gemini 3.5 Flash via Google GenAI SDK',
+        model: ADVISORY_GEMINI_MODEL,
         version: '1.0',
         timestamp: new Date().toISOString(),
       };
