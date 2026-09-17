@@ -21,10 +21,12 @@ import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
 import { Drawer } from '../../components/ui/Drawer';
 import { StatCard } from '../../components/ui/StatCard';
+import { InvestigationWorkstation } from '../../components/investigation/InvestigationWorkstation';
 import { useToast } from '../../context/ToastContext';
 import { useAuth } from '../../context/AuthContext';
 import { AnomalyDetectionService } from '../../services/anomaly/anomalyDetectionService';
 import { ProjectService } from '../../services/firebase/projects';
+import { EvidenceChainService } from '../../services/evidence/evidenceChainService';
 import {
   ProjectAnomaly,
   AnomalySeverity,
@@ -155,9 +157,9 @@ export const RiskAlerts: React.FC<RiskAlertsProps> = ({ onNavigate }) => {
       return;
     }
 
-    if ((actionType === 'RESOLVED' || actionType === 'DISMISSED') && actionNotes.trim().length < 8) {
+    if ((actionType === 'ACKNOWLEDGED' || actionType === 'RESOLVED' || actionType === 'DISMISSED') && actionNotes.trim().length < 8) {
       showToast('Officer Notes Mandatory', {
-        message: 'A formal observation of at least 8 characters is required to resolve or dismiss an anomaly.',
+        message: `A formal observation of at least 8 characters is required to ${actionType.toLowerCase().replace('_', ' ')} an anomaly.`,
         type: 'warning',
       });
       return;
@@ -169,10 +171,27 @@ export const RiskAlerts: React.FC<RiskAlertsProps> = ({ onNavigate }) => {
         projectId: investigatingAnomaly.projectId,
         anomalyId: investigatingAnomaly.id,
         status: actionType,
+        acknowledgementNote: actionType === 'ACKNOWLEDGED' ? actionNotes.trim() : undefined,
         resolutionNote: actionType === 'RESOLVED' ? actionNotes.trim() : undefined,
         dismissalReason: actionType === 'DISMISSED' ? actionNotes.trim() : undefined,
         user,
       });
+
+      // Persist to append-only investigation notes log if note provided
+      if (actionNotes.trim().length > 0) {
+        try {
+          await EvidenceChainService.addInvestigationNote({
+            findingId: EvidenceChainService.getStableFindingId(investigatingAnomaly),
+            occurrenceId: investigatingAnomaly.id,
+            projectId: investigatingAnomaly.projectId,
+            note: actionNotes.trim(),
+            actionReference: actionType,
+            user,
+          });
+        } catch (noteErr) {
+          console.warn('[RiskAlerts] Secondary investigation note log failed:', noteErr);
+        }
+      }
 
       setAnomalies((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
 
@@ -402,7 +421,7 @@ export const RiskAlerts: React.FC<RiskAlertsProps> = ({ onNavigate }) => {
                         className="gap-1 text-xs"
                       >
                         <Eye className="w-3.5 h-3.5" />
-                        <span>Inspect Evidence</span>
+                        <span>Investigate Finding</span>
                       </Button>
                       <Button
                         variant="primary"
@@ -445,166 +464,20 @@ export const RiskAlerts: React.FC<RiskAlertsProps> = ({ onNavigate }) => {
         )}
       </Card>
 
-      {/* ANOMALY EVIDENCE INSPECTION DRAWER */}
-      <Drawer
+      {/* PHASE 8: INVESTIGATION WORKSTATION & EVIDENCE CHAIN DOSSIER */}
+      <InvestigationWorkstation
         isOpen={Boolean(selectedAnomaly)}
         onClose={() => setSelectedAnomaly(null)}
-        width="xl"
-        title={
-          selectedAnomaly && (
-            <div className="flex items-center gap-2.5">
-              <ShieldAlert className="w-5 h-5 text-rose-600" />
-              <span>Anomaly Investigation Dossier: {selectedAnomaly.id}</span>
-            </div>
-          )
-        }
-        footer={
-          selectedAnomaly && (
-            <div className="flex items-center justify-end gap-2 w-full">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setSelectedAnomaly(null)}
-              >
-                Close Dossier
-              </Button>
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={() => {
-                  const allowed = VALID_ANOMALY_STATUS_TRANSITIONS[selectedAnomaly.status] || [];
-                  setInvestigatingAnomaly(selectedAnomaly);
-                  setActionType(allowed[0] || null);
-                  setActionNotes(selectedAnomaly.resolutionNote || selectedAnomaly.dismissalReason || '');
-                }}
-                className="bg-[#002B49] hover:bg-[#001D32] text-white"
-              >
-                <span>Record Status Action</span>
-              </Button>
-            </div>
-          )
-        }
-      >
-        {selectedAnomaly && (
-          <div className="space-y-6">
-            {/* Header Box */}
-            <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
-              <div className="flex items-center justify-between">
-                <span className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold border ${getSeverityBadgeClass(selectedAnomaly.severity)}`}>
-                  {selectedAnomaly.severity} Severity
-                </span>
-                <span className={`text-[10px] px-2.5 py-0.5 rounded-full font-medium border ${getStatusBadgeClass(selectedAnomaly.status)}`}>
-                  Status: {(selectedAnomaly.status || 'OPEN').replace('_', ' ')}
-                </span>
-              </div>
-              <h3 className="text-sm font-bold text-slate-900">{selectedAnomaly.title}</h3>
-              <p className="text-xs text-slate-600 leading-relaxed">{selectedAnomaly.explanation}</p>
-            </div>
-
-            {/* Key Metrics Grid */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="p-3 bg-white border border-slate-200 rounded-xl">
-                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Anomaly Type</span>
-                <div className="text-xs font-bold text-slate-900 mt-1">{ANOMALY_TYPE_LABELS[selectedAnomaly.type] || selectedAnomaly.type}</div>
-              </div>
-              <div className="p-3 bg-white border border-slate-200 rounded-xl">
-                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Detection Engine</span>
-                <div className="text-xs font-bold text-indigo-700 font-mono mt-1">{selectedAnomaly.detectionSource} (v{selectedAnomaly.ruleVersion})</div>
-              </div>
-              <div className="p-3 bg-white border border-slate-200 rounded-xl">
-                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Initial Detection</span>
-                <div className="text-xs font-medium text-slate-800 mt-1">{new Date(selectedAnomaly.detectedAt).toLocaleString('en-IN')}</div>
-              </div>
-              <div className="p-3 bg-white border border-slate-200 rounded-xl">
-                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Condition Evaluation</span>
-                <div className="text-xs font-medium text-slate-800 mt-1">
-                  {selectedAnomaly.conditionEvaluatedAt
-                    ? new Date(selectedAnomaly.conditionEvaluatedAt).toLocaleString('en-IN')
-                    : 'Current Evaluated'}
-                </div>
-              </div>
-            </div>
-
-            {/* Evidence References */}
-            {selectedAnomaly.evidence && selectedAnomaly.evidence.length > 0 && (
-              <div>
-                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-800 mb-2">
-                  Corroborating Evidence Artifacts
-                </h4>
-                <div className="space-y-2">
-                  {selectedAnomaly.evidence.map((ev, idx) => (
-                    <div
-                      key={idx}
-                      className="p-3 bg-white border border-slate-200 rounded-lg flex items-start gap-2.5 text-xs text-slate-700"
-                    >
-                      <Layers className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
-                      <div>
-                        <div className="font-bold text-slate-900">{ev.label}</div>
-                        <div className="text-slate-600 text-[11px] mt-0.5">{ev.detail}</div>
-                        <div className="text-[10px] text-slate-400 font-mono mt-1">
-                          Ref: {ev.entityType} {ev.entityId ? `(#${ev.entityId})` : ''}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Quantitative Divergence Metrics */}
-            {selectedAnomaly.metrics && Object.keys(selectedAnomaly.metrics).length > 0 && (
-              <div>
-                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-800 mb-2">
-                  Quantitative Supporting Metrics
-                </h4>
-                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2 font-mono text-xs">
-                  {Object.entries(selectedAnomaly.metrics).map(([k, v]) => (
-                    <div key={k} className="flex items-center justify-between border-b border-slate-200/60 pb-1.5 last:border-0 last:pb-0">
-                      <span className="text-slate-600">{k}:</span>
-                      <span className="font-bold text-slate-900">{typeof v === 'number' ? v.toLocaleString('en-IN') : String(v)}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Historical Officer Notes / Action Records */}
-            {(selectedAnomaly.resolutionNote || selectedAnomaly.dismissalReason || selectedAnomaly.acknowledgedBy || selectedAnomaly.underReviewBy) && (
-              <div className="p-4 bg-amber-50/70 border border-amber-200 rounded-xl space-y-1.5 text-xs text-amber-950">
-                <div className="font-bold flex items-center gap-1.5 text-amber-900">
-                  <ShieldCheck className="w-4 h-4 text-amber-700" />
-                  <span>Recorded Officer Observation & Audit Notes</span>
-                </div>
-                {selectedAnomaly.resolutionNote && (
-                  <p className="leading-relaxed text-amber-900 font-sans">
-                    <strong>Resolution Note:</strong> {selectedAnomaly.resolutionNote}
-                  </p>
-                )}
-                {selectedAnomaly.dismissalReason && (
-                  <p className="leading-relaxed text-amber-900 font-sans">
-                    <strong>Dismissal Reason:</strong> {selectedAnomaly.dismissalReason}
-                  </p>
-                )}
-                {selectedAnomaly.resolvedByName && (
-                  <div className="text-[10px] text-amber-800/80 pt-1">
-                    Resolved by: <span className="font-semibold">{selectedAnomaly.resolvedByName}</span> on {selectedAnomaly.resolvedAt ? new Date(selectedAnomaly.resolvedAt).toLocaleString('en-IN') : 'N/A'}
-                  </div>
-                )}
-                {selectedAnomaly.dismissedByName && (
-                  <div className="text-[10px] text-amber-800/80 pt-1">
-                    Dismissed by: <span className="font-semibold">{selectedAnomaly.dismissedByName}</span> on {selectedAnomaly.dismissedAt ? new Date(selectedAnomaly.dismissedAt).toLocaleString('en-IN') : 'N/A'}
-                  </div>
-                )}
-                {selectedAnomaly.underReviewByName && !selectedAnomaly.resolvedByName && !selectedAnomaly.dismissedByName && (
-                  <div className="text-[10px] text-amber-800/80 pt-1">
-                    Under Review by: <span className="font-semibold">{selectedAnomaly.underReviewByName}</span> on {selectedAnomaly.underReviewAt ? new Date(selectedAnomaly.underReviewAt).toLocaleString('en-IN') : 'N/A'}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-      </Drawer>
+        anomaly={selectedAnomaly}
+        allAnomalies={anomalies}
+        onSelectAnomaly={(anom) => setSelectedAnomaly(anom)}
+        onTakeAction={(anom) => {
+          const allowed = VALID_ANOMALY_STATUS_TRANSITIONS[anom.status] || [];
+          setInvestigatingAnomaly(anom);
+          setActionType(allowed[0] || null);
+          setActionNotes(anom.resolutionNote || anom.dismissalReason || '');
+        }}
+      />
 
       {/* ADMINISTRATIVE INVESTIGATION STATUS MODAL */}
       {investigatingAnomaly && (
@@ -677,12 +550,12 @@ export const RiskAlerts: React.FC<RiskAlertsProps> = ({ onNavigate }) => {
               <textarea
                 value={actionNotes}
                 onChange={(e) => setActionNotes(e.target.value)}
-                placeholder="Enter official observation, measurement verification, or reason for resolution/dismissal..."
+                placeholder="Enter official observation, measurement verification, or reason for acknowledgement, resolution, or dismissal..."
                 rows={4}
                 className="w-full text-xs p-2.5 border border-slate-300 rounded-lg focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
               />
               <span className="text-[10px] text-slate-400">
-                Minimum 8 characters required for resolution or dismissal actions.
+                Minimum 8 characters required for acknowledgement, resolution, or dismissal actions.
               </span>
             </div>
 

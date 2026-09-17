@@ -331,7 +331,9 @@ export type ProjectAuditAction =
   | 'ANOMALY_ACKNOWLEDGED'
   | 'ANOMALY_UNDER_REVIEW'
   | 'ANOMALY_RESOLVED'
-  | 'ANOMALY_DISMISSED';
+  | 'ANOMALY_DISMISSED'
+  | 'INVESTIGATION_NOTE_ADDED'
+  | 'INVESTIGATION_ADVISORY_GENERATED';
 
 export interface ProjectAuditEvent {
   eventId: string;

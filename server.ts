@@ -36,11 +36,11 @@ async function startServer() {
     try {
       const authHeader = req.headers.authorization || (req.headers['authorization'] as string | undefined);
       const payload = req.body || {};
-      const assessment = await projectRiskAiServer.analyzeProjectRisk({
+      const result = await projectRiskAiServer.analyzeProjectRisk({
         ...payload,
         authHeader,
       });
-      res.status(200).json({ success: true, assessment });
+      res.status(200).json({ success: true, assessment: result, advisory: result });
     } catch (err: any) {
       const statusCode =
         err?.statusCode ||

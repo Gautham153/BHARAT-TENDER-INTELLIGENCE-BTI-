@@ -1199,12 +1199,17 @@ export class AnomalyDetectionService {
     user: AuthUser;
     resolutionNote?: string;
     dismissalReason?: string;
+    acknowledgementNote?: string;
   }): Promise<ProjectAnomaly> {
-    const { anomalyId, projectId, status, user, resolutionNote, dismissalReason } = params;
+    const { anomalyId, projectId, status, user, resolutionNote, dismissalReason, acknowledgementNote } = params;
 
     const userRole = (user.role || '').toLowerCase();
     if (!userRole.includes('gov')) {
       throw new Error('Unauthorized: Anomaly investigation actions are strictly restricted to government officials.');
+    }
+
+    if (status === 'ACKNOWLEDGED' && (!acknowledgementNote || acknowledgementNote.trim().length < 5)) {
+      throw new Error('Validation Error: Acknowledging an anomaly requires an initial investigation note or officer observation (minimum 5 characters).');
     }
 
     if (status === 'RESOLVED' && (!resolutionNote || resolutionNote.trim().length < 5)) {
@@ -1250,6 +1255,7 @@ export class AnomalyDetectionService {
       updated.acknowledgedBy = user.uid || user.id;
       updated.acknowledgedByName = user.name || 'Government Nodal Officer';
       updated.acknowledgedAt = nowIso;
+      updated.acknowledgementNote = acknowledgementNote?.trim();
       auditAction = 'ANOMALY_ACKNOWLEDGED';
     } else if (status === 'UNDER_REVIEW') {
       updated.underReviewBy = user.uid || user.id;
@@ -1283,6 +1289,7 @@ export class AnomalyDetectionService {
       newState: {
         anomalyId,
         status,
+        acknowledgementNote: updated.acknowledgementNote,
         resolutionNote: updated.resolutionNote,
         dismissalReason: updated.dismissalReason,
       },

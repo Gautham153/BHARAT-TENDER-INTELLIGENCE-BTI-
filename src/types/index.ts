@@ -9,6 +9,8 @@ export * from './tender.js';
 export * from './proposal.js';
 export * from './evaluation.js';
 export * from './project.js';
+export * from './anomaly.js';
+export * from './evidence.js';
 
 export type UserRole = 'government' | 'agency' | 'public' | 'government_admin' | 'government_officer' | 'agency_user' | 'public_citizen';
 

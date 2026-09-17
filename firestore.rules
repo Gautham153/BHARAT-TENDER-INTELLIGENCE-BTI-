@@ -1393,6 +1393,30 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // 14.8. Project Investigation Notes (/projectInvestigationNotes/{noteId}) — Phase 8
+    match /projectInvestigationNotes/{noteId} {
+      // Authorized government users only; agency and public strictly forbidden
+      allow get, list: if isSignedIn() && isGovernmentUser();
+
+      function isValidInvestigationNote() {
+        let d = incoming();
+        return isValidId(noteId)
+          && d.noteId == noteId
+          && d.findingId is string && d.findingId.size() > 0 && d.findingId.size() <= 200
+          && d.projectId is string && exists(/databases/$(database)/documents/projects/$(d.projectId))
+          && d.authorId == request.auth.uid
+          && d.timestamp is string && d.timestamp.size() > 0
+          && d.note is string && d.note.trim().size() >= 5 && d.note.size() <= 5000;
+      }
+
+      // Append-only: created by authorized government reviewers, immutable
+      allow create: if isSignedIn()
+        && isGovernmentUser()
+        && isValidInvestigationNote();
+
+      allow update, delete: if false;
+    }
+
     // 15. Project Audit Events (/projectAuditEvents/{eventId})
     match /projectAuditEvents/{eventId} {
       allow get, list: if isSignedIn() && (
@@ -1487,7 +1511,7 @@ service cloud.firestore {
            && exists(/databases/$(database)/documents/projects/$(incoming().projectId))
            && getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.updatedAt != get(/databases/$(database)/documents/projects/$(incoming().projectId)).data.updatedAt) ||
 
-          // Phase 7: ANOMALY & RISK INTELLIGENCE ACTIONS
+          // Phase 7 & 8: ANOMALY, RISK INTELLIGENCE & INVESTIGATION ACTIONS
           (incoming().action in [
             'ANOMALY_DETECTED',
             'AI_RISK_ANALYSIS_REQUESTED',
@@ -1496,7 +1520,8 @@ service cloud.firestore {
             'ANOMALY_ACKNOWLEDGED',
             'ANOMALY_UNDER_REVIEW',
             'ANOMALY_RESOLVED',
-            'ANOMALY_DISMISSED'
+            'ANOMALY_DISMISSED',
+            'INVESTIGATION_NOTE_ADDED'
           ] && exists(/databases/$(database)/documents/projects/$(incoming().projectId)))
         );
       }
@@ -1549,7 +1574,8 @@ service cloud.firestore {
               'ANOMALY_ACKNOWLEDGED',
               'ANOMALY_UNDER_REVIEW',
               'ANOMALY_RESOLVED',
-              'ANOMALY_DISMISSED'
+              'ANOMALY_DISMISSED',
+              'INVESTIGATION_NOTE_ADDED'
             ]
           )
         );

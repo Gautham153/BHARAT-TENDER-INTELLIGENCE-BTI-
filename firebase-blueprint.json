@@ -682,6 +682,24 @@
         "timestamp": { "type": "string", "maxLength": 50 }
       },
       "required": ["eventId", "projectId", "action", "actorId", "actorRole", "timestamp"]
+    },
+    "InvestigationNote": {
+      "title": "InvestigationNote",
+      "description": "Append-only investigation note recorded by authorized government reviewing officer",
+      "type": "object",
+      "properties": {
+        "noteId": { "type": "string", "maxLength": 128 },
+        "findingId": { "type": "string", "maxLength": 200 },
+        "occurrenceId": { "type": "string", "maxLength": 200 },
+        "projectId": { "type": "string", "maxLength": 128 },
+        "authorId": { "type": "string", "maxLength": 128 },
+        "authorName": { "type": "string", "maxLength": 200 },
+        "authorRole": { "type": "string", "enum": ["government"] },
+        "timestamp": { "type": "string", "maxLength": 50 },
+        "note": { "type": "string", "minLength": 5, "maxLength": 5000 },
+        "actionReference": { "type": "string", "maxLength": 100 }
+      },
+      "required": ["noteId", "findingId", "projectId", "authorId", "timestamp", "note"]
     }
   },
   "firestore": {
@@ -740,6 +758,10 @@
     "/projectExceptions/{exceptionId}": {
       "schema": "ProjectException",
       "description": "Deterministic monitoring exceptions requiring officer review"
+    },
+    "/projectInvestigationNotes/{noteId}": {
+      "schema": "InvestigationNote",
+      "description": "Append-only investigation notes recorded by authorized government reviewers"
     },
     "/projectAuditEvents/{eventId}": {
       "schema": "ProjectAuditEvent",

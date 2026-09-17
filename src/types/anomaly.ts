@@ -76,6 +76,7 @@ export interface ProjectAnomaly {
   acknowledgedBy?: string;
   acknowledgedByName?: string;
   acknowledgedAt?: string;
+  acknowledgementNote?: string;
 
   underReviewBy?: string;
   underReviewByName?: string;
