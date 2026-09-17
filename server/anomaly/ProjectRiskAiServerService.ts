@@ -67,7 +67,17 @@ export class ProjectRiskAiServerService {
     const authoritative = await this.resolveAuthoritativeProjectData(projectId, rawToken);
 
     const project = authoritative.project || params.project;
-    const anomalies = authoritative.anomalies ?? params.anomalies ?? [];
+    const riskAssessment = authoritative.riskAssessment;
+
+    // Filter to ensure ONLY current active anomalies are passed to Gemini and evaluation:
+    // isConditionActive !== false AND status in ['OPEN', 'UNDER_REVIEW', 'ACKNOWLEDGED']
+    const rawAnomalies = authoritative.anomalies ?? params.anomalies ?? [];
+    const anomalies = rawAnomalies.filter((a: any) => {
+      const isConditionActive = a.isConditionActive !== false;
+      const status = (a.status || 'OPEN').toUpperCase();
+      return isConditionActive && ['OPEN', 'UNDER_REVIEW', 'ACKNOWLEDGED'].includes(status);
+    });
+
     const milestonesSummary = authoritative.milestonesSummary ?? params.milestonesSummary ?? [];
     const financialSummary = authoritative.financialSummary ?? params.financialSummary;
     const inspectionSummary = authoritative.inspectionSummary ?? params.inspectionSummary ?? [];
@@ -78,9 +88,13 @@ export class ProjectRiskAiServerService {
       throw err;
     }
 
-    // Authoritative deterministic risk values remain ground truth
-    const authoritativeRiskScore = Number(project.riskScore ?? 0);
+    // Authoritative deterministic risk values remain ground truth:
+    // Prioritize projectRiskAssessments/{projectId}, then project.riskScore/riskLevel, then safe derivation
+    const authoritativeRiskScore = Number(
+      riskAssessment?.riskScore ?? project.riskScore ?? 0
+    );
     const authoritativeRiskLevel: RiskLevel =
+      riskAssessment?.riskLevel ||
       project.riskLevel ||
       (authoritativeRiskScore >= 80
         ? 'CRITICAL'
@@ -99,7 +113,8 @@ export class ProjectRiskAiServerService {
         projectId,
         project,
         anomalies,
-        'BTI Deterministic Fallback (No Gemini API Key configured)'
+        'BTI Deterministic Fallback (No Gemini API Key configured)',
+        riskAssessment
       );
     }
 
@@ -249,7 +264,8 @@ Return a single JSON object with these keys:
         projectId,
         project,
         anomalies,
-        `Deterministic Fallback (Gemini call exception: ${err.message || 'API error'})`
+        `Deterministic Fallback (Gemini call exception: ${err.message || 'API error'})`,
+        riskAssessment
       );
     }
   }
@@ -263,6 +279,7 @@ Return a single JSON object with these keys:
     token?: string
   ): Promise<{
     project?: any;
+    riskAssessment?: any;
     anomalies?: any[];
     milestonesSummary?: any[];
     financialSummary?: any;
@@ -279,6 +296,21 @@ Return a single JSON object with these keys:
         if (projRes.ok) {
           const docJson = await projRes.json();
           const proj = parseFirestoreDoc(docJson);
+
+          // Load authoritative project risk assessment from projectRiskAssessments/{projectId}
+          let authoritativeRiskAssessment: any = null;
+          try {
+            const riskRes = await fetch(
+              `https://firestore.googleapis.com/v1/projects/${firebaseProjectId}/databases/(default)/documents/projectRiskAssessments/${projectId}`,
+              { headers: { Authorization: `Bearer ${token}` } }
+            );
+            if (riskRes.ok) {
+              const riskDocJson = await riskRes.json();
+              authoritativeRiskAssessment = parseFirestoreDoc(riskDocJson);
+            }
+          } catch {
+            // Non-fatal fallback
+          }
 
           // Query authoritative anomalies for this project
           let authoritativeAnomalies: any[] = [];
@@ -307,9 +339,17 @@ Return a single JSON object with these keys:
             );
             if (anomQueryRes.ok) {
               const anomResults = await anomQueryRes.json();
-              authoritativeAnomalies = anomResults
+              const allFetched = anomResults
                 .filter((r: any) => r.document)
                 .map((r: any) => parseFirestoreDoc(r.document));
+
+              // Filter to strictly current active anomalies:
+              // isConditionActive !== false AND status is OPEN, UNDER_REVIEW, or ACKNOWLEDGED
+              authoritativeAnomalies = allFetched.filter((a: any) => {
+                const isConditionActive = a.isConditionActive !== false;
+                const status = (a.status || 'OPEN').toUpperCase();
+                return isConditionActive && ['OPEN', 'UNDER_REVIEW', 'ACKNOWLEDGED'].includes(status);
+              });
             }
           } catch {
             // Non-fatal query fallback
@@ -317,6 +357,7 @@ Return a single JSON object with these keys:
 
           return {
             project: proj,
+            riskAssessment: authoritativeRiskAssessment,
             anomalies: authoritativeAnomalies,
           };
         }
@@ -375,10 +416,21 @@ Return a single JSON object with these keys:
     projectId: string,
     project: any,
     anomalies: any[],
-    reason: string
+    reason: string,
+    riskAssessment?: any
   ): RiskIntelligenceResult {
-    const authoritativeRiskScore = Number(project.riskScore ?? 0);
+    // Ensure deterministic fallback advisory only uses current active anomalies
+    const currentActiveAnomalies = (anomalies || []).filter((a: any) => {
+      const isConditionActive = a.isConditionActive !== false;
+      const status = (a.status || 'OPEN').toUpperCase();
+      return isConditionActive && ['OPEN', 'UNDER_REVIEW', 'ACKNOWLEDGED'].includes(status);
+    });
+
+    const authoritativeRiskScore = Number(
+      riskAssessment?.riskScore ?? project.riskScore ?? 0
+    );
     const authoritativeRiskLevel: RiskLevel =
+      riskAssessment?.riskLevel ||
       project.riskLevel ||
       (authoritativeRiskScore >= 80
         ? 'CRITICAL'
@@ -388,7 +440,7 @@ Return a single JSON object with these keys:
         ? 'MODERATE'
         : 'LOW');
 
-    const activeCount = anomalies.filter((a: any) => a.status === 'OPEN' && a.isConditionActive !== false).length;
+    const activeCount = currentActiveAnomalies.length;
 
     return {
       assessmentId: `risk-ai-fallback-${projectId}-${Date.now()}`,
@@ -397,13 +449,13 @@ Return a single JSON object with these keys:
       overallRiskLevel: authoritativeRiskLevel,
       riskScore: authoritativeRiskScore,
       summary: `System analysis identifies a ${authoritativeRiskLevel.toLowerCase()} implementation risk posture for "${project.title || projectId}" based on ${activeCount} active deterministic monitoring indicators. Review recommended for physical execution divergence and milestone timelines. (${reason})`,
-      priorityFindings: anomalies.slice(0, 3).map((a: any) => ({
+      priorityFindings: currentActiveAnomalies.slice(0, 3).map((a: any) => ({
         title: a.title,
         explanation: a.explanation,
         severity: a.severity,
         reviewRecommendation: `Verify on-site execution against measurement book and request reconciliation explanation from executing agency (${project.implementingAgencyName || 'contractor'}).`,
       })),
-      contributingIndicators: anomalies.map((a: any) => a.title),
+      contributingIndicators: currentActiveAnomalies.map((a: any) => a.title),
       recommendedReviewAreas: [
         'Conduct physical site measurement joint inspection with Executive Engineer.',
         'Reconcile verified expenditure invoices against physical milestone deliverables.',

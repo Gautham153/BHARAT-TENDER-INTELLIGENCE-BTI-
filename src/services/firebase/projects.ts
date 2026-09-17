@@ -2293,11 +2293,11 @@ export class ProjectService {
       }
     }
 
-    // Rule G: Government Verification Below Agency Report (Agency reported vs Government verified)
+    // Rule G: Verification Variance (Agency reported vs Government verified)
     const agencyProgress = project.agencyReportedPhysicalProgressPercent ?? project.physicalProgressPercent ?? 0;
     if (project.governmentVerifiedPhysicalProgressPercent !== undefined && project.governmentVerifiedPhysicalProgressPercent !== null) {
       const govVerified = project.governmentVerifiedPhysicalProgressPercent;
-      const difference = agencyProgress - govVerified;
+      const difference = Math.abs(agencyProgress - govVerified);
       if (difference > 15) {
         const type = 'VERIFICATION_VARIANCE';
         if (!existingExceptions.some((e) => (e.type === type || e.type === 'PROGRESS_VERIFICATION_VARIANCE' || e.type === 'GOVERNMENT_VERIFICATION_BELOW_AGENCY') && e.status !== 'RESOLVED')) {
@@ -2306,8 +2306,8 @@ export class ProjectService {
             projectId,
             type,
             severity: difference > 30 ? 'HIGH' : 'MEDIUM',
-            title: 'Government Verification Below Agency Report',
-            description: `Agency reported physical progress (${agencyProgress}%) exceeds government verified physical progress (${govVerified}%) by ${difference} percentage points. Requires review and field reconciliation.`,
+            title: 'Progress Verification Variance',
+            description: `Divergence of ${difference} percentage points identified between agency reported physical progress (${agencyProgress}%) and government verified physical progress (${govVerified}%). Requires review and field reconciliation.`,
             detectedAt: now.toISOString(),
             source: 'SYSTEM_RULE',
             status: 'OPEN',
@@ -2392,6 +2392,42 @@ export class ProjectService {
     const project = await this.getProjectById(projectId);
     if (!project) {
       throw new Error(`Project ${projectId} not found.`);
+    }
+
+    // Resolve project's existing authoritative deterministic anomalies and verify active condition
+    const { AnomalyDetectionService } = await import('../anomaly/anomalyDetectionService');
+    const anomalies = await AnomalyDetectionService.getProjectAnomalies(projectId);
+
+    const matchingAnomaly = anomalies.find((a) => {
+      const isActiveStatus = a.status === 'OPEN' || a.status === 'UNDER_REVIEW' || a.status === 'ACKNOWLEDGED';
+      const isConditionActive = a.isConditionActive !== false;
+      if (!isActiveStatus || !isConditionActive) {
+        return false;
+      }
+
+      const fTitle = (finding.title || '').toLowerCase();
+      const aTitle = (a.title || '').toLowerCase();
+      const fInd = (finding.supportingIndicator || '').toLowerCase();
+      const aType = (a.type || '').toLowerCase();
+
+      return (
+        (a.title && (fTitle.includes(aTitle) || aTitle.includes(fTitle))) ||
+        (a.type && (fInd.includes(aType) || aType.includes(fInd) || fTitle.includes(aType.replace(/_/g, ' ')))) ||
+        (Boolean(finding.supportingIndicator) && (
+          a.id === finding.supportingIndicator ||
+          a.ruleKey === finding.supportingIndicator ||
+          a.id.startsWith(`${finding.supportingIndicator}-`) ||
+          a.title.includes(finding.supportingIndicator)
+        )) ||
+        (a.type === 'INSPECTION_PROGRESS_DIVERGENCE' &&
+          (fTitle.includes('inspection') || fTitle.includes('verification') || fTitle.includes('progress discrepancy')))
+      );
+    });
+
+    if (!matchingAnomaly) {
+      throw new Error(
+        'Integrity Violation: Cannot create an official monitoring exception for an unverified AI observation. A matching active deterministic anomaly condition (OPEN, UNDER_REVIEW, or ACKNOWLEDGED with active condition) must exist.'
+      );
     }
 
     const existingExceptions = await this.getExceptions(projectId);

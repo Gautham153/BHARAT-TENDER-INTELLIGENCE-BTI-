@@ -9,6 +9,7 @@ export type AnomalyType =
   | 'PHYSICAL_FINANCIAL_DIVERGENCE'
   | 'MILESTONE_DELAY'
   | 'REPEATED_MILESTONE_DELAYS'
+  | 'MILESTONE_SCHEDULE_PRESSURE'
   | 'EXPENDITURE_ACCELERATION'
   | 'AWARDED_VALUE_OVERRUN'
   | 'LONG_REPORTING_GAP'
@@ -31,6 +32,8 @@ export interface AnomalySupportingMetrics {
   divergencePercent?: number;
   daysDelayed?: number;
   delayedMilestoneCount?: number;
+  daysRemaining?: number;
+  remainingWorkPercent?: number;
   reportingGapDays?: number;
   awardedAmount?: number;
   verifiedExpenditure?: number;
@@ -61,6 +64,7 @@ export interface ProjectAnomaly {
   evidence: AnomalyEvidenceReference[];
   metrics: AnomalySupportingMetrics;
   ruleVersion: string;
+  ruleKey?: string;
   detectionSource: 'SYSTEM_RULE' | 'AI_ASSISTED';
   createdBy?: string;
 
@@ -107,6 +111,7 @@ export const ANOMALY_TYPE_LABELS: Record<AnomalyType, string> = {
   PHYSICAL_FINANCIAL_DIVERGENCE: 'Financial vs Physical Divergence',
   MILESTONE_DELAY: 'Milestone Execution Delay',
   REPEATED_MILESTONE_DELAYS: 'Chronic / Repeated Milestone Delays',
+  MILESTONE_SCHEDULE_PRESSURE: 'Milestone Schedule Pressure (Pre-Deadline)',
   EXPENDITURE_ACCELERATION: 'Unusual Expenditure Acceleration',
   AWARDED_VALUE_OVERRUN: 'Disbursal Exceeds Awarded Value',
   LONG_REPORTING_GAP: 'Extended Reporting Inactivity Gap',

@@ -156,6 +156,56 @@ export class AnomalyDetectionService {
     const existingAnomalies = await this.fetchRawAnomalies(projectId);
     const existingMap = new Map<string, ProjectAnomaly>(existingAnomalies.map((a) => [a.id, a]));
 
+    // Occurrence resolution helper for deterministic anomalies.
+    // Enforces the lifecycle integrity rule:
+    // - RESOLVED and DISMISSED anomalies are terminal historical occurrences and must never transition back to active states.
+    // - If an existing occurrence is active / non-terminal (OPEN, UNDER_REVIEW, ACKNOWLEDGED), continue updating/reusing it.
+    // - If prior occurrences were terminal (RESOLVED or DISMISSED) and the condition becomes active again:
+    //    - preserve the old terminal document unchanged;
+    //    - create a NEW active anomaly occurrence with a unique occurrence ID;
+    //    - new occurrence status = OPEN, isConditionActive = true;
+    //    - preserve the existing deterministic anomaly type/indicator/category so the recurrence remains traceable to the same rule.
+    const resolveOccurrence = (baseRuleId: string): {
+      occurrenceId: string;
+      existing?: ProjectAnomaly;
+    } => {
+      const matching = existingAnomalies.filter(
+        (a) => a.id === baseRuleId || a.id.startsWith(`${baseRuleId}-`) || a.ruleKey === baseRuleId
+      );
+
+      // Prioritize most recent active/non-terminal occurrence (OPEN, UNDER_REVIEW, ACKNOWLEDGED)
+      const activeExisting = matching
+        .filter((a) => a.status !== 'RESOLVED' && a.status !== 'DISMISSED')
+        .sort((a, b) => new Date(b.detectedAt || 0).getTime() - new Date(a.detectedAt || 0).getTime())[0];
+
+      if (activeExisting) {
+        return {
+          occurrenceId: activeExisting.id,
+          existing: activeExisting,
+        };
+      }
+
+      // Check if there are previous terminal occurrences (RESOLVED or DISMISSED)
+      const hasTerminal = matching.some(
+        (a) => a.status === 'RESOLVED' || a.status === 'DISMISSED'
+      );
+
+      if (hasTerminal) {
+        // Recurrence after terminal state: create a NEW active occurrence with a unique occurrence ID
+        const newOccurrenceId = `${baseRuleId}-rec-${Date.now()}`;
+        return {
+          occurrenceId: newOccurrenceId,
+          existing: undefined,
+        };
+      }
+
+      // Initial occurrence (first time detected)
+      return {
+        occurrenceId: baseRuleId,
+        existing: undefined,
+      };
+    };
+
     const now = new Date();
     const evaluatedAnomalies: ProjectAnomaly[] = [];
 
@@ -164,11 +214,13 @@ export class AnomalyDetectionService {
     const totalVerifiedExpenditure = verifiedFinancialRecords.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
     const awardedBudget = Number(project.awardedAmount || project.sanctionedAmount || 1);
     const financialUtilizationPercent = Math.min(100, Math.round((totalVerifiedExpenditure / awardedBudget) * 100));
+
+    // Logical precedence: governmentVerifiedPhysicalProgressPercent takes precedence over agency/project reported progress
     const physicalProgressPercent = Number(
-      project.physicalProgressPercent ??
-        project.governmentVerifiedPhysicalProgressPercent ??
-        project.agencyReportedPhysicalProgressPercent ??
-        0
+      project.governmentVerifiedPhysicalProgressPercent !== undefined &&
+        project.governmentVerifiedPhysicalProgressPercent !== null
+        ? project.governmentVerifiedPhysicalProgressPercent
+        : (project.agencyReportedPhysicalProgressPercent ?? project.physicalProgressPercent ?? 0)
     );
 
     // -------------------------------------------------------------
@@ -181,8 +233,8 @@ export class AnomalyDetectionService {
       else if (divergencePercent >= 30) severity = 'HIGH';
       else if (divergencePercent >= 20) severity = 'MEDIUM';
 
-      const anomalyId = `anom-div-${projectId}`;
-      const existing = existingMap.get(anomalyId);
+      const baseRuleId = `anom-div-${projectId}`;
+      const { occurrenceId: anomalyId, existing } = resolveOccurrence(baseRuleId);
 
       const evidence: AnomalyEvidenceReference[] = [
         {
@@ -222,6 +274,7 @@ export class AnomalyDetectionService {
           verifiedExpenditure: totalVerifiedExpenditure,
         },
         ruleVersion: this.ENGINE_VERSION,
+        ruleKey: baseRuleId,
         detectionSource: 'SYSTEM_RULE',
         acknowledgedBy: existing?.acknowledgedBy,
         acknowledgedByName: existing?.acknowledgedByName,
@@ -241,66 +294,170 @@ export class AnomalyDetectionService {
     }
 
     // -------------------------------------------------------------
-    // RULE B & C: MILESTONE DELAYS & REPEATED MILESTONE DELAYS
+    // RULE B & C: MILESTONE DELAYS, PRE-DEADLINE PRESSURE & REPEATED DELAYS
     // -------------------------------------------------------------
     const delayedMilestones: { milestone: ProjectMilestone; daysDelayed: number }[] = [];
 
     for (const ms of milestones) {
       if (ms.status !== 'COMPLETED' && ms.plannedEndDate) {
         const plannedEnd = new Date(ms.plannedEndDate);
-        if (!isNaN(plannedEnd.getTime()) && now > plannedEnd) {
-          const daysOverdue = Math.floor((now.getTime() - plannedEnd.getTime()) / (1000 * 60 * 60 * 24));
-          if (daysOverdue > 7) {
-            delayedMilestones.push({ milestone: ms, daysDelayed: daysOverdue });
+        if (!isNaN(plannedEnd.getTime())) {
+          if (now > plannedEnd) {
+            const daysOverdue = Math.floor((now.getTime() - plannedEnd.getTime()) / (1000 * 60 * 60 * 24));
+            if (daysOverdue > 7) {
+              delayedMilestones.push({ milestone: ms, daysDelayed: daysOverdue });
 
-            // Rule B: Single Milestone Delay
-            const msAnomalyId = `anom-ms-delay-${ms.id}`;
-            const existingMs = existingMap.get(msAnomalyId);
-            const msSeverity: AnomalySeverity = daysOverdue > 60 ? 'HIGH' : daysOverdue > 30 ? 'MEDIUM' : 'LOW';
+              // Rule B: Single Milestone Delay
+              const msBaseRuleId = `anom-ms-delay-${ms.id}`;
+              const { occurrenceId: msAnomalyId, existing: existingMs } = resolveOccurrence(msBaseRuleId);
+              const msSeverity: AnomalySeverity = daysOverdue > 60 ? 'HIGH' : daysOverdue > 30 ? 'MEDIUM' : 'LOW';
 
-            evaluatedAnomalies.push({
-              id: msAnomalyId,
-              projectId,
-              projectNumber: project.projectNumber,
-              projectTitle: project.title,
-              organizationId: project.organizationId,
-              agencyName: project.implementingAgencyName || project.agencyName,
-              type: 'MILESTONE_DELAY',
-              severity: msSeverity,
-              title: `Milestone Overdue: ${ms.title}`,
-              explanation: `Milestone #${ms.sequence} is overdue by ${daysDelayedToReadable(daysOverdue)} relative to the planned schedule. Planned completion was ${plannedEnd.toLocaleDateString('en-IN')}; current progress is ${ms.progressPercent}%.`,
-              detectedAt: existingMs?.detectedAt || now.toISOString(),
-              status: existingMs?.status || 'OPEN',
-              evidence: [
-                {
-                  entityType: 'MILESTONE',
-                  entityId: ms.id,
-                  label: `Milestone #${ms.sequence}: ${ms.title}`,
-                  detail: `Weight: ${ms.weightPercent}%, Current Progress: ${ms.progressPercent}%`,
-                  date: ms.plannedEndDate,
+              evaluatedAnomalies.push({
+                id: msAnomalyId,
+                projectId,
+                projectNumber: project.projectNumber,
+                projectTitle: project.title,
+                organizationId: project.organizationId,
+                agencyName: project.implementingAgencyName || project.agencyName,
+                type: 'MILESTONE_DELAY',
+                severity: msSeverity,
+                title: `Milestone Overdue: ${ms.title}`,
+                explanation: `Milestone #${ms.sequence} is overdue by ${daysDelayedToReadable(daysOverdue)} relative to the planned schedule. Planned completion was ${plannedEnd.toLocaleDateString('en-IN')}; current progress is ${ms.progressPercent}%.`,
+                detectedAt: existingMs?.detectedAt || now.toISOString(),
+                status: existingMs?.status || 'OPEN',
+                evidence: [
+                  {
+                    entityType: 'MILESTONE',
+                    entityId: ms.id,
+                    label: `Milestone #${ms.sequence}: ${ms.title}`,
+                    detail: `Weight: ${ms.weightPercent}%, Current Progress: ${ms.progressPercent}%`,
+                    date: ms.plannedEndDate,
+                  },
+                ],
+                metrics: {
+                  daysDelayed: daysOverdue,
+                  physicalProgressPercent: ms.progressPercent,
                 },
-              ],
-              metrics: {
-                daysDelayed: daysOverdue,
-                physicalProgressPercent: ms.progressPercent,
-              },
-              ruleVersion: this.ENGINE_VERSION,
-              detectionSource: 'SYSTEM_RULE',
-              acknowledgedBy: existingMs?.acknowledgedBy,
-              acknowledgedByName: existingMs?.acknowledgedByName,
-              acknowledgedAt: existingMs?.acknowledgedAt,
-              underReviewBy: existingMs?.underReviewBy,
-              underReviewByName: existingMs?.underReviewByName,
-              underReviewAt: existingMs?.underReviewAt,
-              resolvedAt: existingMs?.resolvedAt,
-              resolvedBy: existingMs?.resolvedBy,
-              resolvedByName: existingMs?.resolvedByName,
-              resolutionNote: existingMs?.resolutionNote,
-              dismissedAt: existingMs?.dismissedAt,
-              dismissedBy: existingMs?.dismissedBy,
-              dismissedByName: existingMs?.dismissedByName,
-              dismissalReason: existingMs?.dismissalReason,
-            });
+                ruleVersion: this.ENGINE_VERSION,
+                ruleKey: msBaseRuleId,
+                detectionSource: 'SYSTEM_RULE',
+                acknowledgedBy: existingMs?.acknowledgedBy,
+                acknowledgedByName: existingMs?.acknowledgedByName,
+                acknowledgedAt: existingMs?.acknowledgedAt,
+                underReviewBy: existingMs?.underReviewBy,
+                underReviewByName: existingMs?.underReviewByName,
+                underReviewAt: existingMs?.underReviewAt,
+                resolvedAt: existingMs?.resolvedAt,
+                resolvedBy: existingMs?.resolvedBy,
+                resolvedByName: existingMs?.resolvedByName,
+                resolutionNote: existingMs?.resolutionNote,
+                dismissedAt: existingMs?.dismissedAt,
+                dismissedBy: existingMs?.dismissedBy,
+                dismissedByName: existingMs?.dismissedByName,
+                dismissalReason: existingMs?.dismissalReason,
+              });
+            }
+          } else {
+            // Pre-deadline Schedule Pressure Check for incomplete milestones approaching deadline
+            const remainingDays = Math.max(0, Math.ceil((plannedEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
+            const currentProgress = Math.max(0, Math.min(100, Number(ms.progressPercent ?? 0)));
+            const remainingWork = 100 - currentProgress;
+
+            if (currentProgress < 100 && remainingWork >= 20) {
+              let elapsedDurationRatio: number | null = null;
+              if (ms.plannedStartDate) {
+                const plannedStart = new Date(ms.plannedStartDate);
+                if (!isNaN(plannedStart.getTime()) && plannedEnd > plannedStart) {
+                  const totalPlannedDays = Math.max(1, (plannedEnd.getTime() - plannedStart.getTime()) / (1000 * 60 * 60 * 24));
+                  const elapsedDays = Math.max(0, (now.getTime() - plannedStart.getTime()) / (1000 * 60 * 60 * 24));
+                  elapsedDurationRatio = Math.min(1, elapsedDays / totalPlannedDays);
+                }
+              }
+
+              // Evaluate deterministic schedule pressure conditions
+              const isImminentPressure =
+                (remainingDays <= 1 && remainingWork >= 15) ||
+                (remainingDays <= 3 && remainingWork >= 20) ||
+                (remainingDays <= 7 && remainingWork >= 30) ||
+                (remainingDays <= 14 && remainingWork >= 40) ||
+                (remainingDays <= 30 && remainingWork >= 60);
+
+              const isDurationCompressionPressure =
+                elapsedDurationRatio !== null &&
+                elapsedDurationRatio >= 0.70 &&
+                remainingWork >= 40 &&
+                (currentProgress / 100) < (elapsedDurationRatio - 0.30);
+
+              if (isImminentPressure || isDurationCompressionPressure) {
+                const msPressureBaseRuleId = `anom-ms-pressure-${ms.id}`;
+                const { occurrenceId: msPressureAnomalyId, existing: existingPressure } = resolveOccurrence(msPressureBaseRuleId);
+
+                let pressureSeverity: AnomalySeverity = 'LOW';
+                if ((remainingDays <= 1 && remainingWork >= 50) || (remainingDays <= 3 && remainingWork >= 75)) {
+                  pressureSeverity = 'CRITICAL';
+                } else if (remainingDays <= 7 && remainingWork >= 50) {
+                  pressureSeverity = 'HIGH';
+                } else if (remainingDays <= 14 && remainingWork >= 40) {
+                  pressureSeverity = 'MEDIUM';
+                } else if (remainingDays <= 30 || remainingWork >= 30) {
+                  pressureSeverity = 'LOW';
+                }
+
+                const readableRemaining =
+                  remainingDays === 0
+                    ? 'less than 24 hours'
+                    : remainingDays === 1
+                    ? '1 day'
+                    : `${remainingDays} days`;
+
+                evaluatedAnomalies.push({
+                  id: msPressureAnomalyId,
+                  projectId,
+                  projectNumber: project.projectNumber,
+                  projectTitle: project.title,
+                  organizationId: project.organizationId,
+                  agencyName: project.implementingAgencyName || project.agencyName,
+                  type: 'MILESTONE_SCHEDULE_PRESSURE',
+                  severity: pressureSeverity,
+                  title: `Pre-Deadline Schedule Pressure: ${ms.title}`,
+                  explanation: `Milestone #${ms.sequence} ("${ms.title}") is approaching its planned completion date (${plannedEnd.toLocaleDateString('en-IN')}) with ${readableRemaining} remaining while ${remainingWork}% of physical scope remains incomplete (current progress: ${currentProgress}%). Proactive schedule acceleration and resource mobilization are advised prior to deadline breach.`,
+                  detectedAt: existingPressure?.detectedAt || now.toISOString(),
+                  status: existingPressure?.status || 'OPEN',
+                  evidence: [
+                    {
+                      entityType: 'MILESTONE',
+                      entityId: ms.id,
+                      label: `Milestone #${ms.sequence}: ${ms.title}`,
+                      detail: `Weight: ${ms.weightPercent}%, Current Progress: ${currentProgress}%, Incomplete Scope: ${remainingWork}%, Days to Deadline: ${remainingDays}`,
+                      date: ms.plannedEndDate,
+                    },
+                  ],
+                  metrics: {
+                    daysRemaining: remainingDays,
+                    physicalProgressPercent: currentProgress,
+                    remainingWorkPercent: remainingWork,
+                    plannedEndDate: ms.plannedEndDate,
+                  },
+                  ruleVersion: this.ENGINE_VERSION,
+                  ruleKey: msPressureBaseRuleId,
+                  detectionSource: 'SYSTEM_RULE',
+                  acknowledgedBy: existingPressure?.acknowledgedBy,
+                  acknowledgedByName: existingPressure?.acknowledgedByName,
+                  acknowledgedAt: existingPressure?.acknowledgedAt,
+                  underReviewBy: existingPressure?.underReviewBy,
+                  underReviewByName: existingPressure?.underReviewByName,
+                  underReviewAt: existingPressure?.underReviewAt,
+                  resolvedAt: existingPressure?.resolvedAt,
+                  resolvedBy: existingPressure?.resolvedBy,
+                  resolvedByName: existingPressure?.resolvedByName,
+                  resolutionNote: existingPressure?.resolutionNote,
+                  dismissedAt: existingPressure?.dismissedAt,
+                  dismissedBy: existingPressure?.dismissedBy,
+                  dismissedByName: existingPressure?.dismissedByName,
+                  dismissalReason: existingPressure?.dismissalReason,
+                });
+              }
+            }
           }
         }
       }
@@ -308,8 +465,8 @@ export class AnomalyDetectionService {
 
     // Rule C: Repeated Milestone Delays across project
     if (delayedMilestones.length >= 2) {
-      const repAnomalyId = `anom-rep-ms-${projectId}`;
-      const existingRep = existingMap.get(repAnomalyId);
+      const repBaseRuleId = `anom-rep-ms-${projectId}`;
+      const { occurrenceId: repAnomalyId, existing: existingRep } = resolveOccurrence(repBaseRuleId);
 
       evaluatedAnomalies.push({
         id: repAnomalyId,
@@ -336,6 +493,7 @@ export class AnomalyDetectionService {
           daysDelayed: Math.max(...delayedMilestones.map((d) => d.daysDelayed)),
         },
         ruleVersion: this.ENGINE_VERSION,
+        ruleKey: repBaseRuleId,
         detectionSource: 'SYSTEM_RULE',
         acknowledgedBy: existingRep?.acknowledgedBy,
         acknowledgedByName: existingRep?.acknowledgedByName,
@@ -382,8 +540,8 @@ export class AnomalyDetectionService {
 
         const accelerationPct = (windowAmount / awardedBudget) * 100;
         if (accelerationPct >= 35 && windowRecords.length >= 2) {
-          const accelAnomalyId = `anom-accel-${projectId}`;
-          const existingAccel = existingMap.get(accelAnomalyId);
+          const accelBaseRuleId = `anom-accel-${projectId}`;
+          const { occurrenceId: accelAnomalyId, existing: existingAccel } = resolveOccurrence(accelBaseRuleId);
 
           evaluatedAnomalies.push({
             id: accelAnomalyId,
@@ -412,6 +570,7 @@ export class AnomalyDetectionService {
               awardedAmount: awardedBudget,
             },
             ruleVersion: this.ENGINE_VERSION,
+            ruleKey: accelBaseRuleId,
             detectionSource: 'SYSTEM_RULE',
             acknowledgedBy: existingAccel?.acknowledgedBy,
             acknowledgedByName: existingAccel?.acknowledgedByName,
@@ -438,8 +597,8 @@ export class AnomalyDetectionService {
     // -------------------------------------------------------------
     if (totalVerifiedExpenditure > awardedBudget && awardedBudget > 0) {
       const overrunAmount = totalVerifiedExpenditure - awardedBudget;
-      const overrunAnomalyId = `anom-overrun-${projectId}`;
-      const existingOverrun = existingMap.get(overrunAnomalyId);
+      const overrunBaseRuleId = `anom-overrun-${projectId}`;
+      const { occurrenceId: overrunAnomalyId, existing: existingOverrun } = resolveOccurrence(overrunBaseRuleId);
 
       evaluatedAnomalies.push({
         id: overrunAnomalyId,
@@ -474,6 +633,7 @@ export class AnomalyDetectionService {
           overrunAmount,
         },
         ruleVersion: this.ENGINE_VERSION,
+        ruleKey: overrunBaseRuleId,
         detectionSource: 'SYSTEM_RULE',
         acknowledgedBy: existingOverrun?.acknowledgedBy,
         acknowledgedByName: existingOverrun?.acknowledgedByName,
@@ -503,15 +663,15 @@ export class AnomalyDetectionService {
           (a, b) => new Date(b.updateDate || b.createdAt).getTime() - new Date(a.updateDate || a.createdAt).getTime()
         );
         lastReportDate = new Date(sortedUpdates[0].updateDate || sortedUpdates[0].createdAt);
-      } else if (project.updatedAt || project.implementationStartDate || project.startDate) {
-        lastReportDate = new Date(project.updatedAt || project.implementationStartDate || project.startDate!);
+      } else if (project.implementationStartDate || project.startDate) {
+        lastReportDate = new Date(project.implementationStartDate || project.startDate!);
       }
 
       if (lastReportDate && !isNaN(lastReportDate.getTime())) {
         const gapDays = Math.floor((now.getTime() - lastReportDate.getTime()) / (1000 * 60 * 60 * 24));
         if (gapDays >= 45) {
-          const gapAnomalyId = `anom-gap-${projectId}`;
-          const existingGap = existingMap.get(gapAnomalyId);
+          const gapBaseRuleId = `anom-gap-${projectId}`;
+          const { occurrenceId: gapAnomalyId, existing: existingGap } = resolveOccurrence(gapBaseRuleId);
 
           evaluatedAnomalies.push({
             id: gapAnomalyId,
@@ -537,6 +697,7 @@ export class AnomalyDetectionService {
               reportingGapDays: gapDays,
             },
             ruleVersion: this.ENGINE_VERSION,
+            ruleKey: gapBaseRuleId,
             detectionSource: 'SYSTEM_RULE',
             acknowledgedBy: existingGap?.acknowledgedBy,
             acknowledgedByName: existingGap?.acknowledgedByName,
@@ -587,8 +748,8 @@ export class AnomalyDetectionService {
 
       const inspectionDiscrepancy = Math.abs(reportedProgress - inspectedProgress);
       if (inspectionDiscrepancy >= 15) {
-        const inspAnomalyId = `anom-insp-div-${projectId}`;
-        const existingInsp = existingMap.get(inspAnomalyId);
+        const inspBaseRuleId = `anom-insp-div-${projectId}`;
+        const { occurrenceId: inspAnomalyId, existing: existingInsp } = resolveOccurrence(inspBaseRuleId);
 
         evaluatedAnomalies.push({
           id: inspAnomalyId,
@@ -630,6 +791,7 @@ export class AnomalyDetectionService {
             divergencePercent: inspectionDiscrepancy,
           },
           ruleVersion: this.ENGINE_VERSION,
+          ruleKey: inspBaseRuleId,
           detectionSource: 'SYSTEM_RULE',
           acknowledgedBy: existingInsp?.acknowledgedBy,
           acknowledgedByName: existingInsp?.acknowledgedByName,
@@ -652,18 +814,18 @@ export class AnomalyDetectionService {
     // -------------------------------------------------------------
     // RULE H: REPEATED CORRECTIVE ACTIONS
     // -------------------------------------------------------------
-    const inspectionsWithDirectives = inspections.filter(
-      (insp) => (insp.correctiveActions && insp.correctiveActions.length > 0) || (insp.issues && insp.issues.length > 0)
+    const inspectionsWithCorrectiveActions = inspections.filter(
+      (insp) => Array.isArray(insp.correctiveActions) && insp.correctiveActions.length > 0
     );
 
-    if (inspectionsWithDirectives.length >= 2) {
-      const totalDirectives = inspectionsWithDirectives.reduce(
-        (sum, insp) => sum + (insp.correctiveActions?.length || 0) + (insp.issues?.length || 0),
+    if (inspectionsWithCorrectiveActions.length >= 2) {
+      const totalCorrectiveActions = inspectionsWithCorrectiveActions.reduce(
+        (sum, insp) => sum + (insp.correctiveActions?.length || 0),
         0
       );
 
-      const corAnomalyId = `anom-rep-cor-${projectId}`;
-      const existingCor = existingMap.get(corAnomalyId);
+      const corBaseRuleId = `anom-rep-cor-${projectId}`;
+      const { occurrenceId: corAnomalyId, existing: existingCor } = resolveOccurrence(corBaseRuleId);
 
       evaluatedAnomalies.push({
         id: corAnomalyId,
@@ -673,22 +835,23 @@ export class AnomalyDetectionService {
         organizationId: project.organizationId,
         agencyName: project.implementingAgencyName || project.agencyName,
         type: 'REPEATED_CORRECTIVE_ACTIONS',
-        severity: inspectionsWithDirectives.length >= 3 ? 'HIGH' : 'MEDIUM',
-        title: 'Repeated Corrective Directives Issued in Inspections',
-        explanation: `Multiple official site inspections (${inspectionsWithDirectives.length}) have recorded recurring quality, safety, or execution corrective directives (${totalDirectives} total issues identified).`,
+        severity: inspectionsWithCorrectiveActions.length >= 3 ? 'HIGH' : 'MEDIUM',
+        title: 'Repeated Corrective Actions Issued in Inspections',
+        explanation: `Multiple official site inspections (${inspectionsWithCorrectiveActions.length}) have issued binding corrective actions (${totalCorrectiveActions} total corrective actions required).`,
         detectedAt: existingCor?.detectedAt || now.toISOString(),
         status: existingCor?.status || 'OPEN',
-        evidence: inspectionsWithDirectives.map((i) => ({
+        evidence: inspectionsWithCorrectiveActions.map((i) => ({
           entityType: 'INSPECTION' as const,
           entityId: i.id,
           label: `Inspection on ${new Date(i.inspectionDate).toLocaleDateString('en-IN')}`,
-          detail: `Directives: ${(i.correctiveActions || []).join('; ') || (i.issues || []).join('; ')}`,
+          detail: `Corrective Actions: ${(i.correctiveActions || []).join('; ')}`,
           date: i.inspectionDate,
         })),
         metrics: {
-          correctiveActionsCount: totalDirectives,
+          correctiveActionsCount: totalCorrectiveActions,
         },
         ruleVersion: this.ENGINE_VERSION,
+        ruleKey: corBaseRuleId,
         detectionSource: 'SYSTEM_RULE',
         acknowledgedBy: existingCor?.acknowledgedBy,
         acknowledgedByName: existingCor?.acknowledgedByName,
@@ -721,8 +884,8 @@ export class AnomalyDetectionService {
     }
 
     if (conflicts.length > 0) {
-      const confAnomalyId = `anom-conflict-${projectId}`;
-      const existingConf = existingMap.get(confAnomalyId);
+      const confBaseRuleId = `anom-conflict-${projectId}`;
+      const { occurrenceId: confAnomalyId, existing: existingConf } = resolveOccurrence(confBaseRuleId);
 
       evaluatedAnomalies.push({
         id: confAnomalyId,
@@ -749,6 +912,7 @@ export class AnomalyDetectionService {
           physicalProgressPercent,
         },
         ruleVersion: this.ENGINE_VERSION,
+        ruleKey: confBaseRuleId,
         detectionSource: 'SYSTEM_RULE',
         acknowledgedBy: existingConf?.acknowledgedBy,
         acknowledgedByName: existingConf?.acknowledgedByName,
@@ -781,8 +945,8 @@ export class AnomalyDetectionService {
       const inactiveDays = Math.floor((now.getTime() - mostRecentActivityTime) / (1000 * 60 * 60 * 24));
 
       if (inactiveDays >= 60 && evaluatedAnomalies.some((a) => a.type === 'LONG_REPORTING_GAP')) {
-        const stagAnomalyId = `anom-stag-${projectId}`;
-        const existingStag = existingMap.get(stagAnomalyId);
+        const stagBaseRuleId = `anom-stag-${projectId}`;
+        const { occurrenceId: stagAnomalyId, existing: existingStag } = resolveOccurrence(stagBaseRuleId);
 
         evaluatedAnomalies.push({
           id: stagAnomalyId,
@@ -810,6 +974,7 @@ export class AnomalyDetectionService {
             inactiveDays,
           },
           ruleVersion: this.ENGINE_VERSION,
+          ruleKey: stagBaseRuleId,
           detectionSource: 'SYSTEM_RULE',
           acknowledgedBy: existingStag?.acknowledgedBy,
           acknowledgedByName: existingStag?.acknowledgedByName,
@@ -838,18 +1003,24 @@ export class AnomalyDetectionService {
       conditionEvaluatedAt: nowIso,
     }));
 
-    const evaluatedIds = new Set(activeEvaluated.map((a) => a.id));
+    const evaluatedActiveIds = new Set(activeEvaluated.map((a) => a.id));
     const allMergedAnomalies: ProjectAnomaly[] = [...activeEvaluated];
 
-    // Preserve historical anomalies whose underlying conditions are no longer actively detected.
-    // Preserves original detection snapshot and evidence, does not delete, and does NOT auto-resolve.
+    // Preserve historical terminal occurrences (RESOLVED / DISMISSED) completely unchanged without mutating documents,
+    // and mark non-terminal anomalies whose underlying condition is no longer actively detected as condition inactive.
     for (const existing of existingAnomalies) {
-      if (!evaluatedIds.has(existing.id)) {
-        allMergedAnomalies.push({
-          ...existing,
-          isConditionActive: false,
-          conditionEvaluatedAt: nowIso,
-        });
+      if (!evaluatedActiveIds.has(existing.id)) {
+        if (existing.status === 'RESOLVED' || existing.status === 'DISMISSED') {
+          // Terminal historical occurrence: preserve existing document completely unchanged
+          allMergedAnomalies.push(existing);
+        } else {
+          // Non-terminal anomaly whose condition has cleared: mark inactive
+          allMergedAnomalies.push({
+            ...existing,
+            isConditionActive: false,
+            conditionEvaluatedAt: nowIso,
+          });
+        }
       }
     }
 
@@ -899,10 +1070,12 @@ export class AnomalyDetectionService {
       else if (inspDivPct >= 10) progressDivergenceScore = 10;
     }
 
-    // 3. Milestone Delays (Weight up to 20)
+    // 3. Milestone Delays & Pre-Deadline Schedule Pressure (Weight up to 20)
     let milestoneDelaysScore = 0;
     const hasRepeatedDelays = activeAnomalies.some((a) => a.type === 'REPEATED_MILESTONE_DELAYS');
     const delayAnomalies = activeAnomalies.filter((a) => a.type === 'MILESTONE_DELAY');
+    const pressureAnomalies = activeAnomalies.filter((a) => a.type === 'MILESTONE_SCHEDULE_PRESSURE');
+
     if (hasRepeatedDelays) {
       milestoneDelaysScore = 20;
     } else if (delayAnomalies.length > 0) {
@@ -910,6 +1083,14 @@ export class AnomalyDetectionService {
       if (maxDelay >= 60) milestoneDelaysScore = 15;
       else if (maxDelay >= 30) milestoneDelaysScore = 10;
       else milestoneDelaysScore = 5;
+    } else if (pressureAnomalies.length > 0) {
+      const hasCritical = pressureAnomalies.some((a) => a.severity === 'CRITICAL');
+      const hasHigh = pressureAnomalies.some((a) => a.severity === 'HIGH');
+      const hasMedium = pressureAnomalies.some((a) => a.severity === 'MEDIUM');
+      if (hasCritical) milestoneDelaysScore = 15;
+      else if (hasHigh) milestoneDelaysScore = 10;
+      else if (hasMedium) milestoneDelaysScore = 5;
+      else milestoneDelaysScore = 3;
     }
 
     // 4. Reporting Gaps / Stagnation (Weight up to 15)
@@ -1373,6 +1554,10 @@ export class AnomalyDetectionService {
       try {
         const batch = writeBatch(db);
         for (const a of anomalies) {
+          // Terminal records (RESOLVED / DISMISSED) are immutable historical documents and must not be overwritten
+          if (a.status === 'RESOLVED' || a.status === 'DISMISSED') {
+            continue;
+          }
           const aRef = doc(db, ANOMALIES_COLLECTION, a.id);
           batch.set(aRef, sanitizeFirestorePayload(a), { merge: true });
         }

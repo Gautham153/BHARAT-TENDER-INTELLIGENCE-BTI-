@@ -112,6 +112,7 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
   const [auditEvents, setAuditEvents] = useState<ProjectAuditEvent[]>([]);
   const [projectAnomalies, setProjectAnomalies] = useState<ProjectAnomaly[]>([]);
   const [projectAssessment, setProjectAssessment] = useState<ProjectRiskAssessment | null>(null);
+  const [projectAssessmentsMap, setProjectAssessmentsMap] = useState<Record<string, ProjectRiskAssessment>>({});
   const [projectAiResult, setProjectAiResult] = useState<RiskIntelligenceResult | null>(null);
   const [aiRunning, setAiRunning] = useState<boolean>(false);
 
@@ -169,6 +170,25 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
     try {
       const data = await ProjectService.getProjects({ role: 'government' });
       setProjects(data || []);
+
+      // Load authoritative project risk assessments for all projects
+      if (data && data.length > 0) {
+        const assessmentEntries = await Promise.all(
+          data.map(async (p) => {
+            try {
+              const assess = await AnomalyDetectionService.getProjectRiskAssessment(p.id);
+              return [p.id, assess] as const;
+            } catch {
+              return [p.id, null] as const;
+            }
+          })
+        );
+        const map: Record<string, ProjectRiskAssessment> = {};
+        for (const [id, assess] of assessmentEntries) {
+          if (assess) map[id] = assess;
+        }
+        setProjectAssessmentsMap(map);
+      }
     } catch (err) {
       console.error('[ProjectMonitoring] Error loading projects from service:', err);
       setProjects([]);
@@ -218,6 +238,9 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
       setAuditEvents(a);
       setProjectAnomalies(anoms);
       setProjectAssessment(assess);
+      if (assess) {
+        setProjectAssessmentsMap((prev) => ({ ...prev, [projectId]: assess }));
+      }
       setProjectAiResult(assess?.aiAssessment || null);
     } catch (err) {
       console.error('[ProjectMonitoring] Failed to fetch project sub-records:', err);
@@ -676,6 +699,9 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
       const assessment = await AnomalyDetectionService.getProjectRiskAssessment(selectedProject.id);
       setProjectAnomalies(detected);
       setProjectAssessment(assessment);
+      if (assessment) {
+        setProjectAssessmentsMap((prev) => ({ ...prev, [selectedProject.id]: assessment }));
+      }
       if (assessment?.aiAssessment) {
         setProjectAiResult(assessment.aiAssessment);
       }
@@ -721,6 +747,7 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
       const updatedAssess = await AnomalyDetectionService.getProjectRiskAssessment(selectedProject.id);
       if (updatedAssess) {
         setProjectAssessment(updatedAssess);
+        setProjectAssessmentsMap((prev) => ({ ...prev, [selectedProject.id]: updatedAssess }));
       }
       showToast('AI Risk Advisory Generated', {
         message: 'Administrative risk advisory and actionable priority review observations generated.',
@@ -948,8 +975,12 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
       header: 'Risk Score',
       align: 'center',
       render: (p) => {
-        const score = p.riskScore ?? 0;
-        const level = p.riskLevel || (score >= 70 ? 'CRITICAL' : score >= 40 ? 'HIGH' : score > 15 ? 'MODERATE' : 'LOW');
+        const assessment = projectAssessmentsMap[p.id];
+        const score = assessment?.riskScore ?? p.riskScore ?? 0;
+        const level =
+          assessment?.riskLevel ||
+          p.riskLevel ||
+          (score >= 80 ? 'CRITICAL' : score >= 60 ? 'HIGH' : score >= 30 ? 'MODERATE' : 'LOW');
         const badgeClass =
           level === 'CRITICAL'
             ? 'bg-rose-100 text-rose-800 border-rose-300'
@@ -1459,7 +1490,7 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
                     </div>
 
                     <div>
-                      <span className="text-slate-400 block text-[10px]">Planned Target Completion</span>
+                      <span className="text-slate-400 block text-[10px]">Planned Project Completion</span>
                       <span className="font-mono text-slate-800">
                         {selectedProject.plannedCompletionDate || selectedProject.targetCompletionDate || 'Per Schedule'}
                       </span>
@@ -2212,7 +2243,12 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
                               return (
                                 (a.title && (fTitle.includes(aTitle) || aTitle.includes(fTitle))) ||
                                 (a.type && (fInd.includes(aType) || aType.includes(fInd) || fTitle.includes(aType.replace(/_/g, ' ')))) ||
-                                (finding.supportingIndicator && (a.id === finding.supportingIndicator || a.title.includes(finding.supportingIndicator))) ||
+                                (finding.supportingIndicator && (
+                                  a.id === finding.supportingIndicator ||
+                                  a.ruleKey === finding.supportingIndicator ||
+                                  a.id.startsWith(`${finding.supportingIndicator}-`) ||
+                                  a.title.includes(finding.supportingIndicator)
+                                )) ||
                                 (a.type === 'INSPECTION_PROGRESS_DIVERGENCE' &&
                                   (fTitle.includes('inspection') || fTitle.includes('verification') || fTitle.includes('progress discrepancy')))
                               );
@@ -2220,7 +2256,7 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
 
                             const isAnomalyActive = matchingAnomaly
                               ? matchingAnomaly.isConditionActive !== false && matchingAnomaly.status !== 'RESOLVED' && matchingAnomaly.status !== 'DISMISSED'
-                              : true;
+                              : false;
 
                             const isReported = Boolean(unresolvedException);
                             const isResolved = Boolean(!unresolvedException && resolvedException && !isAnomalyActive);
