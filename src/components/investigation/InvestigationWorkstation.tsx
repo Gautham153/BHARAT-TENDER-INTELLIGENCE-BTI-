@@ -256,17 +256,17 @@ export const InvestigationWorkstation: React.FC<InvestigationWorkstationProps> =
     setTimeout(() => setCopiedFindingId(false), 2000);
   };
 
-  if (!anomaly) return null;
-
-  const isTerminal = anomaly.status === 'DISMISSED' || anomaly.status === 'RESOLVED';
-  const allowedTransitions = VALID_ANOMALY_STATUS_TRANSITIONS[anomaly.status] || [];
+  const isTerminal = Boolean(anomaly && (anomaly.status === 'DISMISSED' || anomaly.status === 'RESOLVED'));
+  const allowedTransitions = anomaly ? (VALID_ANOMALY_STATUS_TRANSITIONS[anomaly.status] || []) : [];
 
   // Occurrence map for looking up historical anomaly occurrence details
   const occurrenceMap = React.useMemo(() => {
     const map = new Map<string, ProjectAnomaly>();
-    allAnomalies.forEach((a) => {
-      map.set(a.id, a);
-    });
+    if (allAnomalies) {
+      allAnomalies.forEach((a) => {
+        map.set(a.id, a);
+      });
+    }
     return map;
   }, [allAnomalies]);
 
@@ -315,6 +315,8 @@ export const InvestigationWorkstation: React.FC<InvestigationWorkstationProps> =
 
     return { currentNotes: current, historicalNotes: historical };
   }, [evidenceChain, anomaly, isTerminal]);
+
+  if (!anomaly) return null;
 
   return (
     <>
