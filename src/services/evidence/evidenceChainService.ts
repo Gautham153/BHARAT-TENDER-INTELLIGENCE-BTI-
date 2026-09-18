@@ -161,19 +161,10 @@ export class EvidenceChainService {
     // 5. Retrieve Investigation Notes
     const investigationNotes = await this.getInvestigationNotes(stableFindingId, projectId);
 
-    // 6. Filter relevant Audit Events for this Anomaly
-    const relevantAuditEvents = auditEvents.filter((ev) => {
-      const notes = (ev.notes || '').toLowerCase();
-      const action = (ev.action || '').toUpperCase();
-      return (
-        action.startsWith('ANOMALY_') ||
-        action.startsWith('AI_RISK_') ||
-        action === 'INVESTIGATION_NOTE_ADDED' ||
-        notes.includes(anomaly.id) ||
-        notes.includes(stableFindingId) ||
-        notes.includes(anomaly.title.toLowerCase())
-      );
-    });
+    // 6. Filter relevant Audit Events scoped specifically to this Anomaly Finding
+    const relevantAuditEvents = auditEvents.filter((ev) =>
+      this.isAuditEventForFinding(ev, anomaly, stableFindingId)
+    );
 
     return {
       findingId: stableFindingId,
@@ -1323,26 +1314,124 @@ export class EvidenceChainService {
       isDirectlySupportingFinding: true,
     });
 
-    // 7. Investigation Actions
-    auditEvents
-      .filter((ev) => (ev.action || '').startsWith('ANOMALY_') || ev.action === 'INVESTIGATION_NOTE_ADDED')
-      .forEach((ev) => {
-        events.push({
-          eventId: `tl-audit-${ev.eventId}`,
-          date: ev.timestamp,
-          eventType: 'INVESTIGATION_ACTION',
-          title: `Investigation Action: ${(ev.action || '').replace(/_/g, ' ')}`,
-          description: ev.notes || `Action recorded by ${ev.actorName || 'Government Officer'}.`,
-          sourceType: 'AUDIT_EVENT',
-          sourceId: ev.eventId,
-          badgeText: 'Officer Action',
-          badgeColor: 'bg-amber-100 text-amber-800 border-amber-300',
-          isDirectlySupportingFinding: true,
-        });
-      });
+    // 7. Investigation Actions (Scoped exclusively to target finding and occurrence)
+    const stableFindingId = getStableFindingId(targetAnomaly);
+    const findingAuditEvents = auditEvents.filter((ev) =>
+      this.isAuditEventForFinding(ev, targetAnomaly, stableFindingId)
+    );
 
-    // Sort chronologically ascending
-    return events.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    findingAuditEvents.forEach((ev) => {
+      let badgeText = 'Officer Action';
+      let badgeColor = 'bg-amber-100 text-amber-800 border-amber-300';
+      const action = ev.action || '';
+
+      if (action === 'INVESTIGATION_NOTE_ADDED') {
+        badgeText = 'Investigation Note';
+        badgeColor = 'bg-indigo-100 text-indigo-800 border-indigo-300';
+      } else if (action === 'ANOMALY_RESOLVED') {
+        badgeText = 'Resolved';
+        badgeColor = 'bg-emerald-100 text-emerald-800 border-emerald-300';
+      } else if (action === 'ANOMALY_DISMISSED') {
+        badgeText = 'Dismissed';
+        badgeColor = 'bg-slate-100 text-slate-700 border-slate-300';
+      } else if (action === 'ANOMALY_ACKNOWLEDGED') {
+        badgeText = 'Acknowledged';
+        badgeColor = 'bg-blue-100 text-blue-800 border-blue-300';
+      } else if (action === 'ANOMALY_UNDER_REVIEW') {
+        badgeText = 'Under Review';
+        badgeColor = 'bg-purple-100 text-purple-800 border-purple-300';
+      }
+
+      events.push({
+        eventId: `tl-audit-${ev.eventId}`,
+        date: ev.timestamp,
+        eventType: 'INVESTIGATION_ACTION',
+        title: `Investigation Action: ${action.replace(/_/g, ' ')}`,
+        description: ev.notes || `Action recorded by ${ev.actorName || 'Government Officer'}.`,
+        sourceType: 'AUDIT_EVENT',
+        sourceId: ev.eventId,
+        badgeText,
+        badgeColor,
+        isDirectlySupportingFinding: true,
+      });
+    });
+
+    // Sort chronologically ascending by authoritative date/timestamp, with deterministic eventId tie-breaker
+    return events.sort((a, b) => {
+      const timeA = a.date ? new Date(a.date).getTime() : 0;
+      const timeB = b.date ? new Date(b.date).getTime() : 0;
+      if (timeA !== timeB) {
+        return timeA - timeB;
+      }
+      return (a.eventId || '').localeCompare(b.eventId || '');
+    });
+  }
+
+  /**
+   * Evaluates whether an audit event specifically belongs to the target anomaly occurrence
+   * or its underlying stable finding identity.
+   */
+  private static isAuditEventForFinding(
+    ev: ProjectAuditEvent,
+    targetAnomaly: ProjectAnomaly,
+    stableFindingId: string
+  ): boolean {
+    const action = (ev.action || '').toUpperCase();
+    const isInvestigationOrAnomalyAction =
+      action.startsWith('ANOMALY_') ||
+      action.startsWith('AI_RISK_') ||
+      action === 'INVESTIGATION_NOTE_ADDED';
+
+    if (!isInvestigationOrAnomalyAction) {
+      return false;
+    }
+
+    const occurrenceId = targetAnomaly.id;
+    const notesLower = (ev.notes || '').toLowerCase();
+    const targetTitleLower = (targetAnomaly.title || '').trim().toLowerCase();
+
+    // 1. Structured newState check
+    if (ev.newState) {
+      const state = ev.newState as Record<string, any>;
+      if (state.findingId && (state.findingId === stableFindingId || state.findingId === occurrenceId)) {
+        return true;
+      }
+      if (state.anomalyId && (state.anomalyId === occurrenceId || state.anomalyId === stableFindingId)) {
+        return true;
+      }
+      if (state.occurrenceId && state.occurrenceId === occurrenceId) {
+        return true;
+      }
+    }
+
+    // 2. Structured previousState check
+    if (ev.previousState) {
+      const state = ev.previousState as Record<string, any>;
+      if (state.findingId && (state.findingId === stableFindingId || state.findingId === occurrenceId)) {
+        return true;
+      }
+      if (state.anomalyId && state.anomalyId === occurrenceId) {
+        return true;
+      }
+    }
+
+    // 3. Event ID naming check (e.g. evt-anom-acknowledged-anom-123-...)
+    if (ev.eventId && occurrenceId && ev.eventId.includes(occurrenceId)) {
+      return true;
+    }
+
+    // 4. Notes string match for occurrenceId, stable findingId, or specific finding title
+    if (occurrenceId && notesLower.includes(occurrenceId.toLowerCase())) {
+      return true;
+    }
+    if (stableFindingId && notesLower.includes(stableFindingId.toLowerCase())) {
+      return true;
+    }
+    if (targetTitleLower && targetTitleLower.length > 5 && notesLower.includes(targetTitleLower)) {
+      return true;
+    }
+
+    return false;
   }
 
   // ==========================================

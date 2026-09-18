@@ -16,6 +16,11 @@ import {
   CheckCircle2,
   RefreshCw,
   Database,
+  ClipboardCheck,
+  UserCheck,
+  Activity,
+  AlertTriangle,
+  ListChecks,
 } from 'lucide-react';
 
 interface EvidenceRecordModalProps {
@@ -86,7 +91,15 @@ export const EvidenceRecordModal: React.FC<EvidenceRecordModalProps> = ({
     }
   };
 
-  const isDocumentSource = evidence.sourceType === 'PROJECT' || evidence.sourceType === 'TENDER' || evidence.sourceType === 'PROPOSAL';
+  const isDocumentSource =
+    evidence.sourceType === 'PROJECT' ||
+    evidence.sourceType === 'TENDER' ||
+    evidence.sourceType === 'PROPOSAL';
+
+  const isInspection = evidence.sourceType === 'INSPECTION';
+  const inspectionRecord: any = isInspection
+    ? { ...(evidence.recordSnippet || {}), ...(fetchedRecord || {}) }
+    : null;
 
   return (
     <Modal
@@ -183,50 +196,311 @@ export const EvidenceRecordModal: React.FC<EvidenceRecordModalProps> = ({
           </div>
         )}
 
-        {/* Live Authoritative Stored Record Payload */}
-        {fetchedRecord && typeof fetchedRecord === 'object' && Object.keys(fetchedRecord).length > 0 && (
-          <div className="space-y-2">
-            <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-slate-800">
-              <div className="flex items-center gap-1.5">
-                <Database className="w-4 h-4 text-emerald-700" />
-                <span>Authoritative Record Payload</span>
-              </div>
-              <span className="text-[10px] font-mono font-bold text-emerald-800 bg-emerald-100/70 border border-emerald-300 px-2 py-0.5 rounded-full">
-                Resolved Live
-              </span>
-            </div>
-            <div className="bg-slate-900 text-slate-100 p-4 rounded-xl font-mono text-xs overflow-x-auto max-h-64 space-y-1.5">
-              {Object.entries(fetchedRecord).map(([key, val]) => (
-                <div key={key} className="flex items-start justify-between border-b border-slate-800 pb-1.5 last:border-0 last:pb-0">
-                  <span className="text-emerald-400 shrink-0 mr-4 font-semibold">{key}:</span>
-                  <span className="text-slate-200 text-right break-all">
-                    {typeof val === 'object' ? JSON.stringify(val, null, 2) : String(val)}
+        {/* ------------------------------------------------------------- */}
+        {/* SOURCE-SPECIFIC VIEW: GOVERNMENT FIELD INSPECTION RECORDS    */}
+        {/* ------------------------------------------------------------- */}
+        {isInspection && inspectionRecord && (
+          <div className="space-y-4">
+            {/* Record Identity & Inspecting Officer Card */}
+            <div className="p-4 bg-white border border-slate-200 rounded-xl space-y-3 shadow-xs">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                <div className="flex items-center gap-2">
+                  <ClipboardCheck className="w-4 h-4 text-indigo-700" />
+                  <span className="text-xs font-bold text-slate-900 uppercase tracking-wide">
+                    Government Field Inspection Details
                   </span>
                 </div>
-              ))}
+                <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-800 border border-indigo-200">
+                  {inspectionRecord.inspectionType || 'ROUTINE'} INSPECTION
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div>
+                  <span className="text-[11px] font-medium text-slate-500 block">Inspection Date</span>
+                  <span className="font-semibold text-slate-900 flex items-center gap-1.5 mt-0.5">
+                    <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                    {inspectionRecord.inspectionDate
+                      ? new Date(inspectionRecord.inspectionDate).toLocaleDateString('en-IN', {
+                          day: '2-digit',
+                          month: 'short',
+                          year: 'numeric',
+                        })
+                      : 'Not specified'}
+                  </span>
+                </div>
+
+                <div>
+                  <span className="text-[11px] font-medium text-slate-500 block">Inspection Type</span>
+                  <span className="font-semibold text-slate-900 mt-0.5 block">
+                    {inspectionRecord.inspectionType || 'Routine Surveillance'}
+                  </span>
+                </div>
+
+                <div>
+                  <span className="text-[11px] font-medium text-slate-500 block">Officer Name</span>
+                  <span className="font-semibold text-slate-900 flex items-center gap-1.5 mt-0.5">
+                    <UserCheck className="w-3.5 h-3.5 text-slate-400" />
+                    {inspectionRecord.officerName || 'Not specified'}
+                  </span>
+                </div>
+
+                <div>
+                  <span className="text-[11px] font-medium text-slate-500 block">Officer Designation</span>
+                  <span className="font-semibold text-slate-900 mt-0.5 block">
+                    {inspectionRecord.officerDesignation || 'Inspection Officer'}
+                  </span>
+                </div>
+
+                <div>
+                  <span className="text-[11px] font-medium text-slate-500 block">Source Record ID</span>
+                  <span className="font-mono text-slate-700 font-semibold mt-0.5 block">
+                    {inspectionRecord.id || evidence.sourceId}
+                  </span>
+                </div>
+
+                <div>
+                  <span className="text-[11px] font-medium text-slate-500 block">Project ID</span>
+                  <span className="font-mono text-slate-700 font-semibold mt-0.5 block">
+                    {inspectionRecord.projectId ||
+                      projectId ||
+                      evidence.projectId ||
+                      (evidence.recordSnippet?.projectId as string) ||
+                      'N/A'}
+                  </span>
+                </div>
+              </div>
             </div>
+
+            {/* Progress Measurement Comparison */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
+                <div className="flex items-center gap-1.5 text-slate-600 text-xs font-medium">
+                  <Activity className="w-4 h-4 text-blue-600" />
+                  <span>Observed Physical Progress</span>
+                </div>
+                <div className="text-xl font-bold text-slate-900">
+                  {inspectionRecord.physicalProgressObserved !== undefined
+                    ? `${inspectionRecord.physicalProgressObserved}%`
+                    : evidence.metrics?.inspectedProgressPercent !== undefined
+                    ? `${evidence.metrics.inspectedProgressPercent}%`
+                    : 'N/A'}
+                </div>
+                <p className="text-[11px] text-slate-500">
+                  Ground-truth visual & engineering measurement on site.
+                </p>
+              </div>
+
+              <div className="p-3.5 bg-emerald-50/50 border border-emerald-200 rounded-xl space-y-1">
+                <div className="flex items-center gap-1.5 text-emerald-800 text-xs font-medium">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-700" />
+                  <span>Government Verified Physical Progress</span>
+                </div>
+                <div className="text-xl font-bold text-emerald-950">
+                  {inspectionRecord.governmentVerifiedPhysicalProgressPercent !== undefined
+                    ? `${inspectionRecord.governmentVerifiedPhysicalProgressPercent}%`
+                    : inspectionRecord.physicalProgressObserved !== undefined
+                    ? `${inspectionRecord.physicalProgressObserved}%`
+                    : evidence.metrics?.inspectedProgressPercent !== undefined
+                    ? `${evidence.metrics.inspectedProgressPercent}%`
+                    : 'N/A'}
+                </div>
+                <p className="text-[11px] text-emerald-700">
+                  Official verified physical progress entered into state register.
+                </p>
+              </div>
+            </div>
+
+            {/* Observations */}
+            <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
+              <span className="text-xs font-bold text-slate-900 uppercase tracking-wide flex items-center gap-1.5">
+                <FileText className="w-4 h-4 text-slate-600" />
+                Observations
+              </span>
+              <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-wrap bg-white p-3 rounded-lg border border-slate-200/80">
+                {inspectionRecord.observations || 'No written observations recorded.'}
+              </p>
+            </div>
+
+            {/* Issues & Corrective Actions Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Issues */}
+              <div className="p-3.5 bg-white border border-slate-200 rounded-xl space-y-2">
+                <span className="text-xs font-bold text-slate-900 uppercase tracking-wide flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                  Issues
+                </span>
+                {inspectionRecord.issues &&
+                Array.isArray(inspectionRecord.issues) &&
+                inspectionRecord.issues.length > 0 ? (
+                  <ul className="space-y-1.5 text-xs text-slate-700 pl-1">
+                    {inspectionRecord.issues.map((issue: string, idx: number) => (
+                      <li key={idx} className="flex items-start gap-1.5">
+                        <span className="text-amber-600 font-bold">•</span>
+                        <span className="leading-relaxed">{issue}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-xs text-slate-500 italic bg-slate-50 p-2.5 rounded-lg border border-slate-100">
+                    None
+                  </p>
+                )}
+              </div>
+
+              {/* Corrective Actions */}
+              <div className="p-3.5 bg-white border border-slate-200 rounded-xl space-y-2">
+                <span className="text-xs font-bold text-slate-900 uppercase tracking-wide flex items-center gap-1.5">
+                  <ListChecks className="w-3.5 h-3.5 text-indigo-600" />
+                  Corrective Actions
+                </span>
+                {inspectionRecord.correctiveActions &&
+                Array.isArray(inspectionRecord.correctiveActions) &&
+                inspectionRecord.correctiveActions.length > 0 ? (
+                  <ul className="space-y-1.5 text-xs text-slate-700 pl-1">
+                    {inspectionRecord.correctiveActions.map((action: string, idx: number) => (
+                      <li key={idx} className="flex items-start gap-1.5">
+                        <span className="text-indigo-600 font-bold">•</span>
+                        <span className="leading-relaxed">{action}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-xs text-slate-500 italic bg-slate-50 p-2.5 rounded-lg border border-slate-100">
+                    None
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* Milestone Observations (if present) */}
+            {inspectionRecord.milestoneObservations &&
+              Array.isArray(inspectionRecord.milestoneObservations) &&
+              inspectionRecord.milestoneObservations.length > 0 && (
+                <div className="p-4 bg-white border border-slate-200 rounded-xl space-y-3">
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                    <span className="text-xs font-bold text-slate-900 uppercase tracking-wide flex items-center gap-1.5">
+                      <Layers className="w-4 h-4 text-indigo-600" />
+                      Milestone Observations
+                    </span>
+                    <span className="text-[10px] font-medium text-slate-500">
+                      {inspectionRecord.milestoneObservations.length} Milestone(s) Inspected
+                    </span>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs text-left">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-slate-500 uppercase text-[10px] font-semibold bg-slate-50">
+                          <th className="py-2 px-3">Milestone Title</th>
+                          <th className="py-2 px-3 text-right">Observed Progress %</th>
+                          <th className="py-2 px-3 text-right">Verified Progress %</th>
+                          {inspectionRecord.milestoneObservations.some((m: any) => m.notes) && (
+                            <th className="py-2 px-3">Notes</th>
+                          )}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {inspectionRecord.milestoneObservations.map((m: any, idx: number) => (
+                          <tr key={idx} className="hover:bg-slate-50/70">
+                            <td className="py-2.5 px-3 font-semibold text-slate-900">
+                              {m.milestoneTitle || m.milestoneId || `Milestone ${idx + 1}`}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-medium text-slate-800">
+                              {m.observedProgressPercent !== undefined
+                                ? `${m.observedProgressPercent}%`
+                                : 'N/A'}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-bold text-emerald-800">
+                              {m.verifiedProgressPercent !== undefined
+                                ? `${m.verifiedProgressPercent}%`
+                                : m.observedProgressPercent !== undefined
+                                ? `${m.observedProgressPercent}%`
+                                : 'N/A'}
+                            </td>
+                            {inspectionRecord.milestoneObservations.some((mo: any) => mo.notes) && (
+                              <td className="py-2.5 px-3 text-slate-600 text-[11px]">
+                                {m.notes || '-'}
+                              </td>
+                            )}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+            {/* Optional Recommendation */}
+            {inspectionRecord.recommendation && (
+              <div className="p-3 bg-blue-50/70 border border-blue-200 rounded-xl text-xs space-y-1">
+                <span className="font-bold text-blue-950 uppercase tracking-wider text-[10px] block">
+                  Official Recommendation
+                </span>
+                <p className="text-blue-900 leading-relaxed">{inspectionRecord.recommendation}</p>
+              </div>
+            )}
           </div>
         )}
 
-        {/* Raw Record Snippet & Stored Attributes */}
-        {(!fetchedRecord || Object.keys(fetchedRecord).length === 0) && evidence.recordSnippet && Object.keys(evidence.recordSnippet).length > 0 && (
-          <div className="space-y-2">
-            <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-slate-800">
-              <Layers className="w-4 h-4 text-slate-600" />
-              <span>Underlying Stored Record Fields</span>
-            </div>
-            <div className="bg-slate-900 text-slate-100 p-4 rounded-xl font-mono text-xs overflow-x-auto max-h-64 space-y-1.5">
-              {Object.entries(evidence.recordSnippet).map(([key, val]) => (
-                <div key={key} className="flex items-start justify-between border-b border-slate-800 pb-1.5 last:border-0 last:pb-0">
-                  <span className="text-indigo-300 shrink-0 mr-4">{key}:</span>
-                  <span className="text-slate-200 text-right break-all">
-                    {typeof val === 'object' ? JSON.stringify(val, null, 2) : String(val)}
-                  </span>
+        {/* ------------------------------------------------------------- */}
+        {/* NON-INSPECTION SOURCES: Live Authoritative Stored Payload      */}
+        {/* ------------------------------------------------------------- */}
+        {!isInspection &&
+          fetchedRecord &&
+          typeof fetchedRecord === 'object' &&
+          Object.keys(fetchedRecord).length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-slate-800">
+                <div className="flex items-center gap-1.5">
+                  <Database className="w-4 h-4 text-emerald-700" />
+                  <span>Authoritative Record Payload</span>
                 </div>
-              ))}
+                <span className="text-[10px] font-mono font-bold text-emerald-800 bg-emerald-100/70 border border-emerald-300 px-2 py-0.5 rounded-full">
+                  Resolved Live
+                </span>
+              </div>
+              <div className="bg-slate-900 text-slate-100 p-4 rounded-xl font-mono text-xs overflow-x-auto max-h-64 space-y-1.5">
+                {Object.entries(fetchedRecord).map(([key, val]) => (
+                  <div
+                    key={key}
+                    className="flex items-start justify-between border-b border-slate-800 pb-1.5 last:border-0 last:pb-0"
+                  >
+                    <span className="text-emerald-400 shrink-0 mr-4 font-semibold">{key}:</span>
+                    <span className="text-slate-200 text-right break-all">
+                      {typeof val === 'object' ? JSON.stringify(val, null, 2) : String(val)}
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
-        )}
+          )}
+
+        {/* Raw Record Snippet & Stored Attributes for Non-Inspection Sources */}
+        {!isInspection &&
+          (!fetchedRecord || Object.keys(fetchedRecord).length === 0) &&
+          evidence.recordSnippet &&
+          Object.keys(evidence.recordSnippet).length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-slate-800">
+                <Layers className="w-4 h-4 text-slate-600" />
+                <span>Underlying Stored Record Fields</span>
+              </div>
+              <div className="bg-slate-900 text-slate-100 p-4 rounded-xl font-mono text-xs overflow-x-auto max-h-64 space-y-1.5">
+                {Object.entries(evidence.recordSnippet).map(([key, val]) => (
+                  <div
+                    key={key}
+                    className="flex items-start justify-between border-b border-slate-800 pb-1.5 last:border-0 last:pb-0"
+                  >
+                    <span className="text-indigo-300 shrink-0 mr-4">{key}:</span>
+                    <span className="text-slate-200 text-right break-all">
+                      {typeof val === 'object' ? JSON.stringify(val, null, 2) : String(val)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
         {/* Supporting Metrics */}
         {evidence.metrics && Object.keys(evidence.metrics).length > 0 && (
@@ -236,9 +510,14 @@ export const EvidenceRecordModal: React.FC<EvidenceRecordModalProps> = ({
             </span>
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-1.5 text-xs font-mono">
               {Object.entries(evidence.metrics).map(([k, v]) => (
-                <div key={k} className="flex items-center justify-between border-b border-slate-200/60 pb-1 last:border-0 last:pb-0">
+                <div
+                  key={k}
+                  className="flex items-center justify-between border-b border-slate-200/60 pb-1 last:border-0 last:pb-0"
+                >
                   <span className="text-slate-600">{k}:</span>
-                  <span className="font-bold text-slate-900">{typeof v === 'number' ? v.toLocaleString('en-IN') : String(v)}</span>
+                  <span className="font-bold text-slate-900">
+                    {typeof v === 'number' ? v.toLocaleString('en-IN') : String(v)}
+                  </span>
                 </div>
               ))}
             </div>

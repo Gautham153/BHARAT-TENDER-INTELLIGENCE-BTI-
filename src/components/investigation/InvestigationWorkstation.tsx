@@ -40,6 +40,8 @@ import {
   Check,
   ExternalLink,
   Bot,
+  Lock,
+  FolderClock,
 } from 'lucide-react';
 
 interface InvestigationWorkstationProps {
@@ -256,7 +258,63 @@ export const InvestigationWorkstation: React.FC<InvestigationWorkstationProps> =
 
   if (!anomaly) return null;
 
+  const isTerminal = anomaly.status === 'DISMISSED' || anomaly.status === 'RESOLVED';
   const allowedTransitions = VALID_ANOMALY_STATUS_TRANSITIONS[anomaly.status] || [];
+
+  // Occurrence map for looking up historical anomaly occurrence details
+  const occurrenceMap = React.useMemo(() => {
+    const map = new Map<string, ProjectAnomaly>();
+    allAnomalies.forEach((a) => {
+      map.set(a.id, a);
+    });
+    return map;
+  }, [allAnomalies]);
+
+  // Distinguish Current vs Historical Investigation Notes
+  const { currentNotes, historicalNotes } = React.useMemo(() => {
+    if (!evidenceChain || !anomaly) {
+      return { currentNotes: [], historicalNotes: [] };
+    }
+
+    const allNotes = evidenceChain.investigationNotes || [];
+
+    if (isTerminal) {
+      // When the selected occurrence itself is DISMISSED or RESOLVED:
+      // Do NOT treat its notes as a fresh/current active investigation.
+      // All notes are historical/closed investigation records.
+      return {
+        currentNotes: [],
+        historicalNotes: allNotes,
+      };
+    }
+
+    const current: InvestigationNote[] = [];
+    const historical: InvestigationNote[] = [];
+
+    for (const note of allNotes) {
+      if (note.occurrenceId) {
+        if (note.occurrenceId === anomaly.id) {
+          current.push(note);
+        } else {
+          historical.push(note);
+        }
+      } else {
+        // Legacy note without occurrenceId
+        if (note.findingId === anomaly.id) {
+          current.push(note);
+        } else if (
+          anomaly.detectedAt &&
+          new Date(note.timestamp).getTime() < new Date(anomaly.detectedAt).getTime() - 60000
+        ) {
+          historical.push(note);
+        } else {
+          current.push(note);
+        }
+      }
+    }
+
+    return { currentNotes: current, historicalNotes: historical };
+  }, [evidenceChain, anomaly, isTerminal]);
 
   return (
     <>
@@ -680,7 +738,19 @@ export const InvestigationWorkstation: React.FC<InvestigationWorkstationProps> =
                                 <span className="font-bold text-slate-900">{event.title}</span>
                               </div>
                               <span className="text-slate-400 font-mono text-[10px]">
-                                {new Date(event.date).toLocaleDateString('en-IN')}
+                                {event.eventType === 'INVESTIGATION_ACTION' || event.eventType === 'ANOMALY_DETECTED'
+                                  ? new Date(event.date).toLocaleString('en-IN', {
+                                      day: '2-digit',
+                                      month: 'short',
+                                      year: 'numeric',
+                                      hour: '2-digit',
+                                      minute: '2-digit',
+                                    })
+                                  : new Date(event.date).toLocaleDateString('en-IN', {
+                                      day: '2-digit',
+                                      month: 'short',
+                                      year: 'numeric',
+                                    })}
                               </span>
                             </div>
                             <p className="text-xs text-slate-600 leading-relaxed pl-1">
@@ -871,80 +941,254 @@ export const InvestigationWorkstation: React.FC<InvestigationWorkstationProps> =
               )}
 
               {/* ==================================================== */}
-              {/* 7. INVESTIGATION NOTES (APPEND-ONLY) */}
+              {/* 7. INVESTIGATION NOTES (CURRENT & HISTORICAL) */}
               {/* ==================================================== */}
               {(activeSection === 'ALL' || activeSection === 'NOTES_AUDIT') && (
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
-                      <MessageSquare className="w-4 h-4 text-indigo-700" />
-                      <span>Investigation Notes & Observations ({evidenceChain.investigationNotes.length})</span>
-                    </h4>
-                    <span className="text-[10px] text-slate-400">
-                      Append-Only Regulatory Record
-                    </span>
-                  </div>
+                <div className="space-y-4">
+                  {/* Case A: Terminal Occurrence (DISMISSED or RESOLVED) */}
+                  {isTerminal ? (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
+                          <FolderClock className="w-4 h-4 text-slate-600" />
+                          <span>Closed Investigation Notes & History ({historicalNotes.length})</span>
+                        </h4>
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded font-bold uppercase bg-slate-100 text-slate-700 border border-slate-300">
+                          Finding State: {anomaly.status}
+                        </span>
+                      </div>
 
-                  {/* Add Note Form */}
-                  <form onSubmit={handleAddNote} className="p-3.5 bg-white border border-slate-200 rounded-xl space-y-2">
-                    <label className="block text-[11px] font-bold text-slate-700">
-                      Append Administrative Observation / Inquiry Finding:
-                    </label>
-                    <textarea
-                      value={newNoteText}
-                      onChange={(e) => setNewNoteText(e.target.value)}
-                      placeholder="Record inspection observations, communication with agency, or directives issued..."
-                      rows={3}
-                      className="w-full text-xs p-2.5 border border-slate-200 rounded-lg focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
-                    />
-                    <div className="flex items-center justify-between pt-1">
-                      <span className="text-[10px] text-slate-400">
-                        Notes become part of the immutable investigation audit log.
-                      </span>
-                      <Button
-                        type="submit"
-                        variant="primary"
-                        size="sm"
-                        disabled={submittingNote || !newNoteText.trim()}
-                        className="bg-[#002B49] hover:bg-[#001D32] text-white text-xs gap-1.5"
-                      >
-                        {submittingNote ? (
-                          <RefreshCw className="w-3 h-3 animate-spin" />
-                        ) : (
-                          <Send className="w-3 h-3" />
-                        )}
-                        <span>Save Note</span>
-                      </Button>
-                    </div>
-                  </form>
-
-                  {/* Existing Notes Feed */}
-                  {evidenceChain.investigationNotes.length === 0 ? (
-                    <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-500 text-center">
-                      No investigation notes have been recorded for this finding yet.
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {evidenceChain.investigationNotes.map((note) => (
-                        <div
-                          key={note.noteId}
-                          className="p-3 bg-white border border-slate-200 rounded-xl space-y-1.5 text-xs"
-                        >
-                          <div className="flex items-center justify-between text-[11px] text-slate-400">
-                            <div className="flex items-center gap-1.5">
-                              <span className="font-bold text-slate-800">{note.authorName}</span>
-                              <span>•</span>
-                              <span className="text-indigo-700 uppercase font-semibold text-[10px]">
-                                {note.authorRole}
-                              </span>
-                            </div>
-                            <span>{new Date(note.timestamp).toLocaleString('en-IN')}</span>
+                      <div className="p-3.5 bg-slate-100/90 border border-slate-300 rounded-xl flex items-start gap-2.5 text-xs text-slate-700">
+                        <Lock className="w-4 h-4 text-slate-600 mt-0.5 shrink-0" />
+                        <div className="space-y-1">
+                          <div className="font-bold text-slate-900 flex items-center gap-2">
+                            <span>This anomaly occurrence is {anomaly.status}</span>
+                            <span className="text-[10px] font-mono font-normal px-2 py-0.2 rounded bg-white text-slate-700 border border-slate-300">
+                              Occurrence: {anomaly.id}
+                            </span>
                           </div>
-                          <p className="text-slate-700 leading-relaxed font-sans pl-1">
-                            {note.note}
+                          <p className="text-slate-600 leading-relaxed text-[11px]">
+                            All investigation notes on this stable finding identity (<span className="font-mono">{evidenceChain.findingId}</span>) remain permanently preserved in an immutable, read-only audit log. New notes cannot be appended to closed occurrences.
                           </p>
                         </div>
-                      ))}
+                      </div>
+
+                      {/* Closed / Historical Notes Feed */}
+                      {historicalNotes.length === 0 ? (
+                        <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-500 text-center">
+                          No investigation notes were recorded for this finding.
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {historicalNotes.map((note) => {
+                            const isCurrentOcc = note.occurrenceId === anomaly.id || (!note.occurrenceId && note.findingId === anomaly.id);
+                            return (
+                              <div
+                                key={note.noteId}
+                                className="p-3 bg-white border border-slate-200 rounded-xl space-y-1.5 text-xs shadow-xs"
+                              >
+                                <div className="flex flex-wrap items-center justify-between text-[11px] text-slate-500 gap-1">
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    <span className="font-bold text-slate-800">{note.authorName}</span>
+                                    <span>•</span>
+                                    <span className="text-slate-600 uppercase font-semibold text-[10px]">
+                                      {note.authorRole}
+                                    </span>
+                                    {note.occurrenceId && (
+                                      <span className={`font-mono text-[9px] px-1.5 py-0.2 rounded font-semibold border ${
+                                        isCurrentOcc
+                                          ? 'bg-slate-100 text-slate-800 border-slate-300'
+                                          : 'bg-amber-50 text-amber-800 border-amber-200'
+                                      }`}>
+                                        Occurrence: {note.occurrenceId}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="text-slate-400 font-mono text-[10px]">
+                                    {new Date(note.timestamp).toLocaleString('en-IN', {
+                                      day: '2-digit',
+                                      month: 'short',
+                                      year: 'numeric',
+                                      hour: '2-digit',
+                                      minute: '2-digit',
+                                    })}
+                                  </span>
+                                </div>
+                                <p className="text-slate-700 leading-relaxed font-sans pl-1">
+                                  {note.note}
+                                </p>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    /* Case B: Active Occurrence (OPEN, ACKNOWLEDGED, UNDER_REVIEW) */
+                    <div className="space-y-4">
+                      {/* 1. CURRENT INVESTIGATION NOTES */}
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-xs font-bold uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
+                            <MessageSquare className="w-4 h-4 text-indigo-700" />
+                            <span>Investigation Notes & Observations ({currentNotes.length})</span>
+                          </h4>
+                          <span className="text-[10px] text-indigo-700 font-semibold bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full">
+                            Active Occurrence: {anomaly.id}
+                          </span>
+                        </div>
+
+                        {/* Add Note Form */}
+                        <form onSubmit={handleAddNote} className="p-3.5 bg-white border border-slate-200 rounded-xl space-y-2">
+                          <label className="block text-[11px] font-bold text-slate-700">
+                            Append Administrative Observation / Inquiry Finding:
+                          </label>
+                          <textarea
+                            value={newNoteText}
+                            onChange={(e) => setNewNoteText(e.target.value)}
+                            placeholder="Record inspection observations, communication with agency, or directives issued..."
+                            rows={3}
+                            className="w-full text-xs p-2.5 border border-slate-200 rounded-lg focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
+                          />
+                          <div className="flex items-center justify-between pt-1">
+                            <span className="text-[10px] text-slate-400">
+                              Notes become part of the immutable investigation audit log.
+                            </span>
+                            <Button
+                              type="submit"
+                              variant="primary"
+                              size="sm"
+                              disabled={submittingNote || !newNoteText.trim()}
+                              className="bg-[#002B49] hover:bg-[#001D32] text-white text-xs gap-1.5"
+                            >
+                              {submittingNote ? (
+                                <RefreshCw className="w-3 h-3 animate-spin" />
+                              ) : (
+                                <Send className="w-3 h-3" />
+                              )}
+                              <span>Save Note</span>
+                            </Button>
+                          </div>
+                        </form>
+
+                        {/* Current Notes Feed */}
+                        {currentNotes.length === 0 ? (
+                          <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-500 text-center">
+                            No investigation notes have been recorded for this active occurrence yet. Use the form above to record observations.
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            {currentNotes.map((note) => (
+                              <div
+                                key={note.noteId}
+                                className="p-3 bg-white border border-slate-200 rounded-xl space-y-1.5 text-xs shadow-xs"
+                              >
+                                <div className="flex flex-wrap items-center justify-between text-[11px] text-slate-400 gap-1">
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    <span className="font-bold text-slate-800">{note.authorName}</span>
+                                    <span>•</span>
+                                    <span className="text-indigo-700 uppercase font-semibold text-[10px]">
+                                      {note.authorRole}
+                                    </span>
+                                    <span className="bg-blue-50 text-blue-700 border border-blue-200 font-mono text-[9px] px-1.5 py-0.2 rounded font-semibold">
+                                      Current Occurrence
+                                    </span>
+                                  </div>
+                                  <span className="text-slate-400 font-mono text-[10px]">
+                                    {new Date(note.timestamp).toLocaleString('en-IN', {
+                                      day: '2-digit',
+                                      month: 'short',
+                                      year: 'numeric',
+                                      hour: '2-digit',
+                                      minute: '2-digit',
+                                    })}
+                                  </span>
+                                </div>
+                                <p className="text-slate-700 leading-relaxed font-sans pl-1">
+                                  {note.note}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 2. HISTORICAL INVESTIGATION NOTES (From previous occurrences) */}
+                      {historicalNotes.length > 0 && (
+                        <div className="pt-2 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                              <FolderClock className="w-4 h-4 text-amber-600" />
+                              <span>Historical Investigation Notes ({historicalNotes.length})</span>
+                            </h4>
+                            <span className="text-[10px] text-slate-500">
+                              Prior Occurrence Archive
+                            </span>
+                          </div>
+
+                          <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl flex items-start gap-2.5 text-xs text-amber-900">
+                            <Info className="w-4 h-4 text-amber-700 mt-0.5 shrink-0" />
+                            <div className="space-y-0.5">
+                              <p className="font-semibold text-amber-900">
+                                Prior investigation records for stable finding: <span className="font-mono">{evidenceChain.findingId}</span>
+                              </p>
+                              <p className="text-[11px] text-amber-800 leading-relaxed">
+                                These historical notes originate from previous resolved or dismissed occurrences of this finding identity. They remain preserved for regulatory audit compliance.
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="space-y-2">
+                            {historicalNotes.map((note) => {
+                              const histAnomaly = note.occurrenceId ? occurrenceMap.get(note.occurrenceId) : undefined;
+                              return (
+                                <div
+                                  key={note.noteId}
+                                  className="p-3 bg-slate-50 border border-slate-200/90 rounded-xl space-y-1.5 text-xs"
+                                >
+                                  <div className="flex flex-wrap items-center justify-between text-[11px] text-slate-500 gap-1">
+                                    <div className="flex flex-wrap items-center gap-1.5">
+                                      <span className="font-bold text-slate-800">{note.authorName}</span>
+                                      <span>•</span>
+                                      <span className="text-slate-600 uppercase font-semibold text-[10px]">
+                                        {note.authorRole}
+                                      </span>
+                                      {note.occurrenceId && (
+                                        <span className="bg-slate-200 text-slate-700 border border-slate-300 font-mono text-[9px] px-1.5 py-0.2 rounded font-semibold">
+                                          Occurrence: {note.occurrenceId}
+                                        </span>
+                                      )}
+                                      {histAnomaly?.status && (
+                                        <span className={`text-[9px] px-1.5 py-0.2 rounded font-bold uppercase border ${
+                                          histAnomaly.status === 'RESOLVED'
+                                            ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                                            : histAnomaly.status === 'DISMISSED'
+                                            ? 'bg-slate-200 text-slate-700 border-slate-300'
+                                            : 'bg-amber-100 text-amber-800 border-amber-300'
+                                        }`}>
+                                          {histAnomaly.status}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <span className="text-slate-400 font-mono text-[10px]">
+                                      {new Date(note.timestamp).toLocaleString('en-IN', {
+                                        day: '2-digit',
+                                        month: 'short',
+                                        year: 'numeric',
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                      })}
+                                    </span>
+                                  </div>
+                                  <p className="text-slate-700 leading-relaxed font-sans pl-1">
+                                    {note.note}
+                                  </p>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

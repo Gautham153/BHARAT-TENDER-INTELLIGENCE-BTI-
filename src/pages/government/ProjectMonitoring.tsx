@@ -2171,17 +2171,19 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
                       <div className="flex items-center gap-2">
                         <span
                           className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
-                            projectAiResult.riskLevel === 'CRITICAL' || projectAiResult.riskLevel === 'HIGH'
-                              ? 'bg-rose-100 text-rose-900 border-rose-300'
-                              : projectAiResult.riskLevel === 'MODERATE'
-                              ? 'bg-amber-100 text-amber-900 border-amber-300'
-                              : 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                            projectAssessment?.riskLevel === 'CRITICAL'
+                              ? 'bg-rose-100 text-rose-800 border-rose-300'
+                              : projectAssessment?.riskLevel === 'HIGH'
+                              ? 'bg-amber-100 text-amber-800 border-amber-300'
+                              : projectAssessment?.riskLevel === 'MODERATE'
+                              ? 'bg-yellow-100 text-yellow-800 border-yellow-300'
+                              : 'bg-emerald-100 text-emerald-800 border-emerald-300'
                           }`}
                         >
-                          Risk Level: {projectAiResult.riskLevel || projectAssessment?.riskLevel || 'MODERATE'}
+                          Risk Level: {projectAssessment?.riskLevel || 'ASSESSING'}
                         </span>
                         <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white text-indigo-950 border border-indigo-200 font-bold">
-                          Risk Score: {projectAssessment?.riskScore ?? projectAiResult.riskScore ?? selectedProject.riskScore ?? 0}/100
+                          Risk Score: {projectAssessment?.riskScore ?? selectedProject.riskScore ?? 0}/100
                         </span>
                       </div>
                     </div>
