@@ -60,6 +60,8 @@ export const DEMONSTRATION_PROJECTS: Project[] = [
     mpName: 'Sh. Narendra Modi',
     riskScore: 8,
     riskLevel: 'LOW',
+    publicDisclosureStatus: 'PUBLIC',
+    isPubliclyVisible: true,
   },
 
   // Scenario 2: Financial/Physical Progress Divergence (High Risk)
@@ -107,6 +109,8 @@ export const DEMONSTRATION_PROJECTS: Project[] = [
     mpName: 'Smt. Anupriya Patel',
     riskScore: 68,
     riskLevel: 'HIGH',
+    publicDisclosureStatus: 'PUBLIC',
+    isPubliclyVisible: true,
   },
 
   // Scenario 3: Multiple Milestone Delays (High Risk)
@@ -154,6 +158,8 @@ export const DEMONSTRATION_PROJECTS: Project[] = [
     mpName: 'Dr. Mahendra Nath Pandey',
     riskScore: 64,
     riskLevel: 'HIGH',
+    publicDisclosureStatus: 'PUBLIC',
+    isPubliclyVisible: true,
   },
 
   // Scenario 4: Long Reporting Gap / Dormant Project (Moderate Risk)
@@ -201,6 +207,8 @@ export const DEMONSTRATION_PROJECTS: Project[] = [
     mpName: 'Smt. Rita Bahuguna Joshi',
     riskScore: 48,
     riskLevel: 'MODERATE',
+    publicDisclosureStatus: 'PUBLIC',
+    isPubliclyVisible: true,
   },
 
   // Scenario 5: Inspection vs Reported Progress Divergence (High Risk)
@@ -248,6 +256,8 @@ export const DEMONSTRATION_PROJECTS: Project[] = [
     mpName: 'Sh. Ravi Kishan',
     riskScore: 72,
     riskLevel: 'HIGH',
+    publicDisclosureStatus: 'PUBLIC',
+    isPubliclyVisible: true,
   },
 
   // Scenario 6: Expenditure Acceleration (Moderate/High Risk)
@@ -295,6 +305,8 @@ export const DEMONSTRATION_PROJECTS: Project[] = [
     mpName: 'Sh. Shyam Singh Yadav',
     riskScore: 56,
     riskLevel: 'MODERATE',
+    publicDisclosureStatus: 'PUBLIC',
+    isPubliclyVisible: true,
   },
 
   // Scenario 7: Multiple Simultaneous Risk Indicators (Critical Risk)
@@ -342,6 +354,8 @@ export const DEMONSTRATION_PROJECTS: Project[] = [
     mpName: 'Sh. Pakauri Lal Kol',
     riskScore: 92,
     riskLevel: 'CRITICAL',
+    publicDisclosureStatus: 'PUBLIC',
+    isPubliclyVisible: true,
   },
 ];
 

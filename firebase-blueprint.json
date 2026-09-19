@@ -580,6 +580,11 @@
         },
         "physicalProgressPercent": { "type": "number", "minimum": 0, "maximum": 100 },
         "financialProgressPercent": { "type": "number", "minimum": 0, "maximum": 100 },
+        "publicDisclosureStatus": {
+          "type": "string",
+          "enum": ["PUBLIC", "RESTRICTED"]
+        },
+        "isPubliclyVisible": { "type": "boolean" },
         "createdAt": { "type": "string", "maxLength": 50 },
         "updatedAt": { "type": "string", "maxLength": 50 }
       },
@@ -700,6 +705,36 @@
         "actionReference": { "type": "string", "maxLength": 100 }
       },
       "required": ["noteId", "findingId", "projectId", "authorId", "timestamp", "note"]
+    },
+    "PublicProject": {
+      "title": "PublicProject",
+      "description": "Strictly allowlisted public transparency projection for citizen oversight",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string", "maxLength": 128 },
+        "projectNumber": { "type": "string", "maxLength": 100 },
+        "projectName": { "type": "string", "maxLength": 300 },
+        "description": { "type": "string", "maxLength": 2000 },
+        "category": { "type": "string", "maxLength": 100 },
+        "sector": { "type": "string", "maxLength": 100 },
+        "location": { "type": "object" },
+        "status": { "type": "string", "maxLength": 50 },
+        "statusLabel": { "type": "string", "maxLength": 50 },
+        "implementingAgencyName": { "type": "string", "maxLength": 200 },
+        "authorityName": { "type": "string", "maxLength": 200 },
+        "sanctionedAmount": { "type": "number" },
+        "awardedAmount": { "type": "number" },
+        "verifiedExpenditure": { "type": "number" },
+        "physicalProgressPercent": { "type": "number" },
+        "isDemonstrationData": { "type": "boolean" },
+        "isPubliclyVisible": { "type": "boolean" },
+        "publicDisclosureStatus": {
+          "type": "string",
+          "enum": ["PUBLIC"]
+        },
+        "lastUpdated": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["projectId", "projectName", "category", "status", "sanctionedAmount", "verifiedExpenditure", "physicalProgressPercent"]
     }
   },
   "firestore": {
@@ -766,6 +801,10 @@
     "/projectAuditEvents/{eventId}": {
       "schema": "ProjectAuditEvent",
       "description": "Append-only statutory audit trail for all project monitoring actions"
+    },
+    "/publicProjects/{projectId}": {
+      "schema": "PublicProject",
+      "description": "Strictly allowlisted public transparency projections for citizen oversight"
     }
   }
 }
