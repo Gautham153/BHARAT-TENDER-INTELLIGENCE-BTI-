@@ -118,32 +118,9 @@ export interface Project {
   riskSignals?: string[];
   beneficiariesCount?: number;
   lastUpdated?: string;
-  isPubliclyVisible?: boolean;
-  publicDisclosureStatus?: PublicDisclosureStatus;
-  publicDisclosureReason?: string;
-  publicDisclosureUpdatedBy?: string;
-  publicDisclosureUpdatedAt?: string;
   updates?: any[];
   images?: any[];
   inspections?: any[];
-}
-
-export type PublicDisclosureStatus = 'PUBLIC' | 'RESTRICTED';
-
-/**
- * Authoritative fail-closed disclosure evaluation:
- * - Explicit 'PUBLIC' -> true
- * - Explicit 'RESTRICTED' -> false
- * - Legacy missing status -> fail-closed false (unless isPubliclyVisible === true was explicitly established previously)
- */
-export function isProjectPubliclyDisclosed(project?: {
-  publicDisclosureStatus?: PublicDisclosureStatus;
-  isPubliclyVisible?: boolean;
-} | null): boolean {
-  if (!project) return false;
-  if (project.publicDisclosureStatus === 'RESTRICTED') return false;
-  if (project.publicDisclosureStatus === 'PUBLIC') return true;
-  return project.isPubliclyVisible === true;
 }
 
 /**
@@ -335,7 +312,6 @@ export type ProjectAuditAction =
   | 'PROJECT_CREATED'
   | 'PROJECT_UPDATED'
   | 'STATUS_CHANGED'
-  | 'DISCLOSURE_STATUS_CHANGED'
   | 'MILESTONE_CREATED'
   | 'MILESTONE_UPDATED'
   | 'PROGRESS_UPDATE_SUBMITTED'

@@ -59,7 +59,7 @@ export const PublicFooter: React.FC<{ onNavigate: (path: string) => void }> = ({
               <li>
                 <button
                   type="button"
-                  onClick={() => onNavigate('/transparency')}
+                  onClick={() => onNavigate('/')}
                   className="hover:text-[#002B49] transition-colors cursor-pointer"
                 >
                   Public Transparency Hub

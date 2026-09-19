@@ -938,26 +938,6 @@ service cloud.firestore {
             && getAfter(/databases/$(database)/documents/projectInspections/$(incoming().lastInspectionId)).data.projectId == projectId
             && getAfter(/databases/$(database)/documents/projectAuditEvents/$(inspectionCreatedAuditId(incoming().lastInspectionId))).data.action == 'INSPECTION_CREATED'
             && getAfter(/databases/$(database)/documents/projectAuditEvents/$(inspectionCreatedAuditId(incoming().lastInspectionId))).data.projectId == projectId
-          )
-          ||
-          // Path 6: Government authoritative public disclosure status control (audit-logged, strictly government)
-          (
-            isGovernmentUser()
-            && incoming().status == existing().status
-            && incoming().diff(existing()).affectedKeys().hasOnly([
-              'publicDisclosureStatus', 'isPubliclyVisible', 'publicDisclosureReason',
-              'publicDisclosureUpdatedBy', 'publicDisclosureUpdatedAt', 'updatedAt', 'lastStatusChangeEventId'
-            ])
-            && incoming().publicDisclosureStatus in ['PUBLIC', 'RESTRICTED']
-            && (
-              (incoming().publicDisclosureStatus == 'PUBLIC' && incoming().isPubliclyVisible == true) ||
-              (incoming().publicDisclosureStatus == 'RESTRICTED' && incoming().isPubliclyVisible == false)
-            )
-            && incoming().get('lastStatusChangeEventId', '') is string
-            && incoming().get('lastStatusChangeEventId', '').size() > 0
-            && getAfter(/databases/$(database)/documents/projectAuditEvents/$(incoming().lastStatusChangeEventId)).data.action in ['STATUS_CHANGED', 'DISCLOSURE_STATUS_CHANGED']
-            && getAfter(/databases/$(database)/documents/projectAuditEvents/$(incoming().lastStatusChangeEventId)).data.projectId == projectId
-            && getAfter(/databases/$(database)/documents/projectAuditEvents/$(incoming().lastStatusChangeEventId)).data.actorId == request.auth.uid
           ));
 
       allow delete: if false;
@@ -1458,18 +1438,6 @@ service cloud.firestore {
            && getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.status != get(/databases/$(database)/documents/projects/$(incoming().projectId)).data.status
            && getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.lastStatusChangeEventId == eventId) ||
 
-          // DISCLOSURE_STATUS_CHANGED -> project public disclosure status changed in getAfter()
-          (incoming().action == 'DISCLOSURE_STATUS_CHANGED'
-           && exists(/databases/$(database)/documents/projects/$(incoming().projectId))
-           && getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.publicDisclosureStatus in ['PUBLIC', 'RESTRICTED']
-           && (
-             (getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.publicDisclosureStatus == 'PUBLIC'
-              && getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.isPubliclyVisible == true) ||
-             (getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.publicDisclosureStatus == 'RESTRICTED'
-              && getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.isPubliclyVisible == false)
-           )
-           && getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.lastStatusChangeEventId == eventId) ||
-
           // MILESTONE_CREATED -> referenced milestone created in getAfter()
           (incoming().action == 'MILESTONE_CREATED'
            && incoming().get('newState', {}).get('milestoneId', '') is string
@@ -1588,7 +1556,6 @@ service cloud.firestore {
               'PROJECT_CREATED',
               'PROJECT_UPDATED',
               'STATUS_CHANGED',
-              'DISCLOSURE_STATUS_CHANGED',
               'MILESTONE_CREATED',
               'MILESTONE_UPDATED',
               'PROGRESS_UPDATE_SUBMITTED',
@@ -1614,45 +1581,6 @@ service cloud.firestore {
         );
 
       allow update, delete: if false;
-    }
-
-    // 24. Public Projects Projection Collection (/publicProjects/{projectId})
-    // Phase 9: Public Transparency & Citizen Social Audit Layer
-    // Strictly allowlisted public data projection; public users have read-only access.
-    // Projections are authored and synchronized strictly by authorized government officers from authoritative internal project records.
-    match /publicProjects/{projectId} {
-      allow get, list: if true;
-      allow create, update: if isSignedIn()
-        && isGovernmentUser()
-        && request.resource.data.projectId == projectId
-        && request.resource.data.projectName is string
-        && request.resource.data.sanctionedAmount is number
-        && request.resource.data.verifiedExpenditure is number
-        && request.resource.data.physicalProgressPercent is number
-        && request.resource.data.status is string
-        && (request.resource.data.get('publicDisclosureStatus', '') == 'PUBLIC' || request.resource.data.isPubliclyVisible == true)
-        && request.resource.data.keys().hasOnly([
-          'projectId', 'projectNumber', 'projectName', 'description',
-          'category', 'sector', 'location', 'status', 'statusLabel',
-          'implementingAgencyName', 'authorityName', 'mpName',
-          'sanctionedAmount', 'awardedAmount', 'verifiedExpenditure',
-          'hasVerifiedExpenditureRecords', 'remainingAwardedBalance',
-          'isFinancialIncomplete', 'physicalProgressPercent',
-          'milestonesSummary', 'milestones', 'publicUpdates',
-          'publicInspections', 'publicTimeline', 'accountabilityIndicators',
-          'dataProvenance', 'isDemonstrationData', 'isPubliclyVisible', 'publicDisclosureStatus',
-          'lastUpdated', 'startDate', 'plannedCompletionDate', 'actualCompletionDate'
-        ])
-        && !request.resource.data.keys().hasAny([
-          'riskScore', 'riskLevel', 'riskSignals', 'anomalies', 'evidenceChain',
-          'findings', 'internalNotes', 'fraudSignals', 'investigationState', 'aiAdvisory'
-        ])
-        && exists(/databases/$(database)/documents/projects/$(projectId))
-        && (
-          get(/databases/$(database)/documents/projects/$(projectId)).data.get('publicDisclosureStatus', '') == 'PUBLIC' ||
-          get(/databases/$(database)/documents/projects/$(projectId)).data.get('isPubliclyVisible', false) == true
-        );
-      allow delete: if isSignedIn() && isGovernmentUser();
     }
   }
 }

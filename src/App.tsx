@@ -8,9 +8,7 @@ import { PortalLayout } from './components/layout/PortalLayout';
 import { ProtectedRoute } from './components/auth/ProtectedRoute';
 import { LandingPage } from './pages/public/LandingPage';
 import { PublicMapPage } from './pages/public/PublicMapPage';
-import { TransparencyLandingPage } from './pages/public/TransparencyLandingPage';
-import { PublicProjectDirectoryPage } from './pages/public/PublicProjectDirectoryPage';
-import { PublicProjectDetailPage } from './pages/public/PublicProjectDetailPage';
+import { TransparencyPortal } from './pages/public/TransparencyPortal';
 import { HowItWorksPage } from './pages/public/HowItWorksPage';
 import { AboutPage } from './pages/public/AboutPage';
 import { ResourcesPage } from './pages/public/ResourcesPage';
@@ -203,30 +201,6 @@ function AppContent() {
 
         <main className="flex-1 w-full">
           {(() => {
-            const pathWithoutQuery = currentPath.split('?')[0];
-            const queryParams = new URLSearchParams(
-              currentPath.includes('?') ? currentPath.split('?')[1] : ''
-            );
-
-            if (pathWithoutQuery.startsWith('/transparency/projects/')) {
-              const projectId = pathWithoutQuery.replace('/transparency/projects/', '');
-              return <PublicProjectDetailPage projectId={projectId} onNavigate={navigate} />;
-            }
-
-            if (pathWithoutQuery === '/transparency/projects') {
-              return (
-                <PublicProjectDirectoryPage
-                  onNavigate={navigate}
-                  initialSearch={queryParams.get('search') || ''}
-                  initialStatus={queryParams.get('status') || ''}
-                />
-              );
-            }
-
-            if (pathWithoutQuery === '/transparency') {
-              return <TransparencyLandingPage onNavigate={navigate} />;
-            }
-
             switch (currentPath) {
               case '/':
                 return <LandingPage onNavigate={navigate} />;
@@ -234,6 +208,12 @@ function AppContent() {
                 return (
                   <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
                     <PublicMapPage onNavigate={navigate} />
+                  </div>
+                );
+              case '/transparency':
+                return (
+                  <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+                    <TransparencyPortal onNavigate={navigate} />
                   </div>
                 );
               case '/how-it-works':

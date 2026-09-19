@@ -44,7 +44,6 @@ import { AuthUser } from '../../types/auth';
 import { ProposalService } from './proposals';
 import { TenderService } from './tenders';
 import { OrganizationService } from './organizations';
-import { PublicTransparencyService } from '../transparency/publicTransparencyService';
 import {
   DEMONSTRATION_PROJECTS,
   DEMONSTRATION_MILESTONES,
@@ -547,8 +546,6 @@ const INITIAL_DEMO_PROJECT: Project = {
   financialProgress: 38,
   targetCompletionDate: '2026-08-30',
   mpName: 'Sh. Narendra Modi',
-  publicDisclosureStatus: 'PUBLIC',
-  isPubliclyVisible: true,
 };
 
 const INITIAL_DEMO_MILESTONES: ProjectMilestone[] = [
@@ -884,8 +881,6 @@ export class ProjectService {
       physicalProgress: 0,
       financialProgress: 0,
       targetCompletionDate: proposal.timeline?.proposedCompletionDate?.trim() || (proposal as any).proposedCompletionDate?.trim() || undefined,
-      publicDisclosureStatus: 'PUBLIC',
-      isPubliclyVisible: true,
     };
 
     // Extract initial milestones from proposal's implementation plan if available
@@ -973,11 +968,6 @@ export class ProjectService {
       batch.set(evtRef, sanitizeFirestorePayload(auditEvent));
 
       await batch.commit();
-      try {
-        await PublicTransparencyService.syncPublicProjection(newProject, initialMilestones);
-      } catch (err) {
-        console.warn('[ProjectService] Failed to sync public projection:', err);
-      }
     } else {
       this.saveProjectLocally(newProject, initialMilestones, user);
     }
@@ -1196,129 +1186,15 @@ export class ProjectService {
       batch.update(doc(db, PROJECTS_COLLECTION, projectId), sanitizeFirestorePayload(updated));
       batch.set(doc(db, AUDIT_EVENTS_COLLECTION, eventId), sanitizeFirestorePayload(auditEvent));
       await batch.commit();
-      try {
-        await PublicTransparencyService.syncPublicProjection(projectId);
-      } catch (err) {
-        console.warn('[ProjectService] Failed to sync public projection:', err);
-      }
     } else {
       this.updateProjectLocally(updated, auditEvent);
     }
 
     return updated;
-  }
-
-  /**
-   * Authoritative government public disclosure governance.
-   * Establishes public disclosure status (PUBLIC or RESTRICTED) with fail-closed audit tracking.
-   * Synchronizes public projection immediately via PublicTransparencyService.
-   */
-  static async setProjectDisclosureStatus(params: {
-    projectId: string;
-    status: 'PUBLIC' | 'RESTRICTED';
-    reason?: string;
-    user: AuthUser;
-  }): Promise<Project> {
-    const { projectId, status, reason, user } = params;
-    const userRole = (user.role || '').toLowerCase();
-    if (!userRole.includes('gov')) {
-      throw new Error('Access Denied: Only authorized government officers can establish public disclosure status.');
-    }
-
-    const project = await this.getProjectById(projectId);
-    if (!project) {
-      throw new Error(`Project ${projectId} not found.`);
-    }
-
-    const isPubliclyVisible = status === 'PUBLIC';
-    const nowIso = new Date().toISOString();
-    const eventId = `evt-proj-disclose-${projectId}-${Date.now()}`;
-    const authoritativeActorId = getAuthoritativeUid(user);
-
-    const updated: Project = {
-      ...project,
-      publicDisclosureStatus: status,
-      isPubliclyVisible,
-      publicDisclosureReason: reason?.trim() || undefined,
-      publicDisclosureUpdatedBy: authoritativeActorId,
-      publicDisclosureUpdatedAt: nowIso,
-      updatedAt: nowIso,
-    };
-
-    const auditEvent: ProjectAuditEvent = {
-      eventId,
-      projectId,
-      action: 'DISCLOSURE_STATUS_CHANGED',
-      actorId: authoritativeActorId,
-      actorRole: 'government',
-      actorName: user.name || 'Authorized Officer',
-      timestamp: nowIso,
-      previousState: {
-        publicDisclosureStatus: project.publicDisclosureStatus,
-        isPubliclyVisible: project.isPubliclyVisible,
-      },
-      newState: {
-        publicDisclosureStatus: status,
-        isPubliclyVisible,
-        publicDisclosureReason: reason?.trim() || undefined,
-      },
-      notes: status === 'PUBLIC'
-        ? 'Public disclosure established as PUBLIC (Eligible for Citizen Transparency).'
-        : `Public disclosure restricted (RESTRICTED). Reason: ${reason || 'Applicable disclosure controls applied.'}`,
-    };
-
-    if (isLiveFirestoreSession() && db) {
-      const batch = writeBatch(db);
-      const updatePayload: Record<string, any> = {
-        publicDisclosureStatus: status,
-        isPubliclyVisible,
-        publicDisclosureUpdatedBy: authoritativeActorId,
-        publicDisclosureUpdatedAt: nowIso,
-        updatedAt: nowIso,
-        lastStatusChangeEventId: eventId,
-      };
-      if (reason?.trim()) {
-        updatePayload.publicDisclosureReason = reason.trim();
-      }
-      batch.set(
-        doc(db, PROJECTS_COLLECTION, projectId),
-        sanitizeFirestorePayload(updatePayload),
-        { merge: true }
-      );
-      batch.set(doc(db, AUDIT_EVENTS_COLLECTION, eventId), sanitizeFirestorePayload(auditEvent));
-      await batch.commit();
-
-      try {
-        await PublicTransparencyService.syncPublicProjection(updated);
-      } catch (err) {
-        console.warn('[ProjectService] Failed to sync public projection disclosure change:', err);
-      }
-    } else {
-      this.updateProjectLocally(updated, auditEvent);
-    }
-
-    return updated;
-  }
-
-  /**
-   * Compatibility delegation wrapper for setProjectDisclosureStatus.
-   */
-  static async setProjectPublicVisibility(params: {
-    projectId: string;
-    isPubliclyVisible: boolean;
-    reason?: string;
-    user: AuthUser;
-  }): Promise<Project> {
-    return this.setProjectDisclosureStatus({
-      projectId: params.projectId,
-      status: params.isPubliclyVisible ? 'PUBLIC' : 'RESTRICTED',
-      reason: params.reason,
-      user: params.user,
-    });
   }
 
   private static updateProjectLocally(project: Project, auditEvent: ProjectAuditEvent): void {
-    const projects = getLocalItems<Project>(LOCAL_STORAGE_PROJECTS_KEY, DEMONSTRATION_PROJECTS);
+    const projects = getLocalItems<Project>(LOCAL_STORAGE_PROJECTS_KEY, [INITIAL_DEMO_PROJECT]);
     const idx = projects.findIndex((p) => p.id === project.id);
     if (idx !== -1) {
       projects[idx] = project;
@@ -1441,11 +1317,6 @@ export class ProjectService {
       batch.update(doc(db, PROJECTS_COLLECTION, projectId), sanitizeFirestorePayload(updatedProject));
       batch.set(doc(db, AUDIT_EVENTS_COLLECTION, eventId), sanitizeFirestorePayload(auditEvent));
       await batch.commit();
-      try {
-        await PublicTransparencyService.syncPublicProjection(projectId);
-      } catch (err) {
-        console.warn('[ProjectService] Failed to sync public projection:', err);
-      }
     } else {
       const local = getLocalItems<ProjectMilestone>(LOCAL_STORAGE_MILESTONES_KEY, INITIAL_DEMO_MILESTONES);
       local.push(newMilestone);
@@ -1576,11 +1447,6 @@ export class ProjectService {
       }
       batch.set(doc(db, AUDIT_EVENTS_COLLECTION, eventId), sanitizeFirestorePayload(auditEvent));
       await batch.commit();
-      try {
-        await PublicTransparencyService.syncPublicProjection(projectId);
-      } catch (err) {
-        console.warn('[ProjectService] Failed to sync public projection:', err);
-      }
     } else {
       const local = getLocalItems<ProjectMilestone>(LOCAL_STORAGE_MILESTONES_KEY, INITIAL_DEMO_MILESTONES);
       const idx = local.findIndex((m) => m.id === milestoneId);
@@ -1800,11 +1666,6 @@ export class ProjectService {
       batch.set(doc(db, PROGRESS_UPDATES_COLLECTION, id), sanitizeFirestorePayload(newUpdate));
       batch.set(doc(db, AUDIT_EVENTS_COLLECTION, eventId), sanitizeFirestorePayload(auditEvent));
       await batch.commit();
-      try {
-        await PublicTransparencyService.syncPublicProjection(projectId);
-      } catch (err) {
-        console.warn('[ProjectService] Failed to sync public projection:', err);
-      }
     } else {
       if (updatedMilestone && milestoneAuditEvent && milestoneId) {
         const localMs = getLocalItems<ProjectMilestone>(LOCAL_STORAGE_MILESTONES_KEY, INITIAL_DEMO_MILESTONES);
@@ -1951,11 +1812,6 @@ export class ProjectService {
       batch.set(doc(db, FINANCIAL_RECORDS_COLLECTION, id), sanitizeFirestorePayload(newRecord));
       batch.set(doc(db, AUDIT_EVENTS_COLLECTION, eventId), sanitizeFirestorePayload(auditEvent));
       await batch.commit();
-      try {
-        await PublicTransparencyService.syncPublicProjection(projectId);
-      } catch (err) {
-        console.warn('[ProjectService] Failed to sync public projection:', err);
-      }
     } else {
       const local = getLocalItems<ProjectFinancialRecord>(LOCAL_STORAGE_FINANCIAL_KEY, INITIAL_DEMO_FINANCIAL);
       local.unshift(newRecord);
@@ -2049,11 +1905,6 @@ export class ProjectService {
       batch.update(doc(db, PROJECTS_COLLECTION, projectId), sanitizeFirestorePayload(updatedProject));
       batch.set(doc(db, AUDIT_EVENTS_COLLECTION, eventId), sanitizeFirestorePayload(auditEvent));
       await batch.commit();
-      try {
-        await PublicTransparencyService.syncPublicProjection(projectId);
-      } catch (err) {
-        console.warn('[ProjectService] Failed to sync public projection:', err);
-      }
     } else {
       const local = getLocalItems<ProjectFinancialRecord>(LOCAL_STORAGE_FINANCIAL_KEY, INITIAL_DEMO_FINANCIAL);
       const idx = local.findIndex((r) => r.id === recordId);
@@ -2212,11 +2063,6 @@ export class ProjectService {
       batch.update(doc(db, PROJECTS_COLLECTION, projectId), sanitizeFirestorePayload(updatedProject));
       batch.set(doc(db, AUDIT_EVENTS_COLLECTION, eventId), sanitizeFirestorePayload(auditEvent));
       await batch.commit();
-      try {
-        await PublicTransparencyService.syncPublicProjection(projectId);
-      } catch (err) {
-        console.warn('[ProjectService] Failed to sync public projection:', err);
-      }
     } else {
       const local = getLocalItems<ProjectInspection>(LOCAL_STORAGE_INSPECTIONS_KEY, INITIAL_DEMO_INSPECTIONS);
       local.unshift(newInspection);
