@@ -1,7 +1,7 @@
 // Bharat Tender Intelligence (BTI) — Evidence Chain Service
 // Phase 8: Authoritative Evidence Graph, Stable Finding Identity & Investigation Intelligence
 
-import { ProjectService, isLiveFirestoreSession, sanitizeFirestorePayload } from '../firebase/projects.js';
+import { ProjectService, isLiveFirestoreSession, isDemoSession, sanitizeFirestorePayload } from '../firebase/projects.js';
 import { AnomalyDetectionService } from '../anomaly/anomalyDetectionService.js';
 import {
   ProjectAnomaly,
@@ -80,8 +80,12 @@ export class EvidenceChainService {
     auditEvents: ProjectAuditEvent[];
     anomalies: ProjectAnomaly[];
   }> {
+    const isLive = isLiveFirestoreSession();
+    const isDemo = isDemoSession();
+
     let project = await ProjectService.getProjectById(projectId);
-    if (!project) {
+    // Demonstration records must ONLY be used when explicitly operating in demonstration mode/context
+    if (!project && (isDemo || (!isLive && DEMONSTRATION_PROJECTS.some((p) => p.id === projectId)))) {
       project = DEMONSTRATION_PROJECTS.find((p) => p.id === projectId) || null;
     }
     if (!project) {
@@ -97,21 +101,29 @@ export class EvidenceChainService {
       AnomalyDetectionService.getProjectAnomalies(projectId).catch(() => []),
     ]);
 
-    // Fallbacks to demonstration dataset if live collections are empty
-    if (milestones.length === 0) {
-      milestones = DEMONSTRATION_MILESTONES.filter((m) => m.projectId === projectId);
-    }
-    if (updates.length === 0) {
-      updates = DEMONSTRATION_UPDATES.filter((u) => u.projectId === projectId);
-    }
-    if (financialRecords.length === 0) {
-      financialRecords = DEMONSTRATION_FINANCIAL_RECORDS.filter((f) => f.projectId === projectId);
-    }
-    if (inspections.length === 0) {
-      inspections = DEMONSTRATION_INSPECTIONS.filter((i) => i.projectId === projectId);
-    }
-    if (auditEvents.length === 0) {
-      auditEvents = DEMONSTRATION_AUDIT_EVENTS.filter((e) => e.projectId === projectId);
+    // Fallbacks to demonstration dataset ONLY when explicitly in demo mode or non-live demo context.
+    // For a real authenticated/live Firestore project:
+    // - Firestore is authoritative.
+    // - If a collection has no records, return no evidence / missing evidence.
+    // - NEVER silently substitute demonstration records because a live collection is empty.
+    // - NEVER mix live project records with demonstration records.
+    const allowDemoFallback = isDemo || (!isLive && DEMONSTRATION_PROJECTS.some((p) => p.id === projectId));
+    if (allowDemoFallback) {
+      if (milestones.length === 0) {
+        milestones = DEMONSTRATION_MILESTONES.filter((m) => m.projectId === projectId);
+      }
+      if (updates.length === 0) {
+        updates = DEMONSTRATION_UPDATES.filter((u) => u.projectId === projectId);
+      }
+      if (financialRecords.length === 0) {
+        financialRecords = DEMONSTRATION_FINANCIAL_RECORDS.filter((f) => f.projectId === projectId);
+      }
+      if (inspections.length === 0) {
+        inspections = DEMONSTRATION_INSPECTIONS.filter((i) => i.projectId === projectId);
+      }
+      if (auditEvents.length === 0) {
+        auditEvents = DEMONSTRATION_AUDIT_EVENTS.filter((e) => e.projectId === projectId);
+      }
     }
 
     return {
@@ -1668,6 +1680,10 @@ export class EvidenceChainService {
         }
       }
       if (!idToken) {
+        if (isLiveFirestoreSession()) {
+          // In a live Firestore session without an active auth token, never substitute demo tokens
+          return this.buildDeterministicAdvisory(findingId, anomaly, evidenceItems);
+        }
         idToken = 'bti-demo-token-government';
       }
 

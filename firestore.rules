@@ -1582,6 +1582,42 @@ service cloud.firestore {
 
       allow update, delete: if false;
     }
+
+    // 24. Public Projects Projection Collection (/publicProjects/{projectId})
+    // Phase 9: Public Transparency & Citizen Social Audit Layer
+    // Strictly allowlisted public data projection; public users have read-only access.
+    // Projections are authored and synchronized strictly by authorized government officers from authoritative internal project records.
+    match /publicProjects/{projectId} {
+      allow get, list: if true;
+      allow create, update: if isSignedIn()
+        && isGovernmentUser()
+        && request.resource.data.projectId == projectId
+        && request.resource.data.projectName is string
+        && request.resource.data.sanctionedAmount is number
+        && request.resource.data.verifiedExpenditure is number
+        && request.resource.data.physicalProgressPercent is number
+        && request.resource.data.status is string
+        && request.resource.data.isPubliclyVisible == true
+        && request.resource.data.keys().hasOnly([
+          'projectId', 'projectNumber', 'projectName', 'description',
+          'category', 'sector', 'location', 'status', 'statusLabel',
+          'implementingAgencyName', 'authorityName', 'mpName',
+          'sanctionedAmount', 'awardedAmount', 'verifiedExpenditure',
+          'hasVerifiedExpenditureRecords', 'remainingAwardedBalance',
+          'isFinancialIncomplete', 'physicalProgressPercent',
+          'milestonesSummary', 'milestones', 'publicUpdates',
+          'publicInspections', 'publicTimeline', 'accountabilityIndicators',
+          'dataProvenance', 'isDemonstrationData', 'isPubliclyVisible',
+          'lastUpdated', 'startDate', 'plannedCompletionDate', 'actualCompletionDate'
+        ])
+        && !request.resource.data.keys().hasAny([
+          'riskScore', 'riskLevel', 'riskSignals', 'anomalies', 'evidenceChain',
+          'findings', 'internalNotes', 'fraudSignals', 'investigationState', 'aiAdvisory'
+        ])
+        && exists(/databases/$(database)/documents/projects/$(projectId))
+        && get(/databases/$(database)/documents/projects/$(projectId)).data.get('isPubliclyVisible', false) == true;
+      allow delete: if isSignedIn() && isGovernmentUser();
+    }
   }
 }
 

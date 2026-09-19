@@ -344,103 +344,125 @@ Return a single JSON object with these keys:
     inspectionSummary?: any[];
   }> {
     const firebaseProjectId = process.env.VITE_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID;
+    const isDemoToken = Boolean(
+      token &&
+        (token.startsWith('bti-demo-token-') ||
+          token.includes('demo-token') ||
+          token === 'bti-token-usr-gov-001' ||
+          token.includes('usr-gov-001') ||
+          token === 'bti-token-usr-ag-001' ||
+          token.includes('usr-ag-001'))
+    );
+    const isLiveAuth = Boolean(firebaseProjectId && token && !isDemoToken);
 
-    if (firebaseProjectId && token && !token.startsWith('bti-demo-token-')) {
+    if (isLiveAuth) {
+      let projRes: Response;
       try {
-        const projRes = await fetch(
+        projRes = await fetch(
           `https://firestore.googleapis.com/v1/projects/${firebaseProjectId}/databases/(default)/documents/projects/${projectId}`,
           { headers: { Authorization: `Bearer ${token}` } }
         );
-        if (projRes.ok) {
-          const docJson = await projRes.json();
-          const proj = parseFirestoreDoc(docJson);
-
-          // Parallelize subcollection & risk assessment queries
-          const [
-            authoritativeRiskAssessment,
-            allFetchedAnomalies,
-            liveMilestones,
-            liveFinancials,
-            liveUpdates,
-            liveInspections,
-            liveExceptions,
-            liveAuditEvents,
-          ] = await Promise.all([
-            // projectRiskAssessments/{projectId}
-            fetch(
-              `https://firestore.googleapis.com/v1/projects/${firebaseProjectId}/databases/(default)/documents/projectRiskAssessments/${projectId}`,
-              { headers: { Authorization: `Bearer ${token}` } }
-            )
-              .then((r) => (r.ok ? r.json() : null))
-              .then((d) => (d ? parseFirestoreDoc(d) : null))
-              .catch(() => null),
-            this.queryFirestoreCollection(firebaseProjectId, token, 'projectAnomalies', projectId),
-            this.queryFirestoreCollection(firebaseProjectId, token, 'projectMilestones', projectId),
-            this.queryFirestoreCollection(firebaseProjectId, token, 'projectFinancialRecords', projectId),
-            this.queryFirestoreCollection(firebaseProjectId, token, 'projectProgressUpdates', projectId),
-            this.queryFirestoreCollection(firebaseProjectId, token, 'projectInspections', projectId),
-            this.queryFirestoreCollection(firebaseProjectId, token, 'projectExceptions', projectId),
-            this.queryFirestoreCollection(firebaseProjectId, token, 'projectAuditEvents', projectId),
-          ]);
-
-          // Filter to strictly current active anomalies:
-          // isConditionActive !== false AND status is OPEN, UNDER_REVIEW, or ACKNOWLEDGED
-          const authoritativeAnomalies = allFetchedAnomalies.filter((a: any) => {
-            const isConditionActive = a.isConditionActive !== false;
-            const status = (a.status || 'OPEN').toUpperCase();
-            return isConditionActive && ['OPEN', 'UNDER_REVIEW', 'ACKNOWLEDGED'].includes(status);
-          });
-
-          return {
-            project: proj,
-            riskAssessment: authoritativeRiskAssessment,
-            anomalies: authoritativeAnomalies,
-            allAnomalies: allFetchedAnomalies,
-            milestones: liveMilestones,
-            financialRecords: liveFinancials,
-            updates: liveUpdates,
-            inspections: liveInspections,
-            exceptions: liveExceptions,
-            auditEvents: liveAuditEvents,
-            milestonesSummary: liveMilestones.map((m: any) => ({
-              sequence: m.sequence,
-              title: m.title,
-              progress: m.progressPercent ?? m.progress ?? 0,
-              status: m.status,
-              weight: m.weightPercent ?? m.weight ?? 0,
-              plannedEnd: m.plannedEndDate || m.plannedEnd,
-            })),
-            financialSummary: {
-              verifiedRecordsCount: liveFinancials.filter(
-                (f: any) => f.verificationStatus === 'VERIFIED' || f.status === 'VERIFIED'
-              ).length,
-              totalVerified: liveFinancials
-                .filter((f: any) => f.verificationStatus === 'VERIFIED' || f.status === 'VERIFIED')
-                .reduce((sum: number, f: any) => sum + (Number(f.amount) || 0), 0),
-              totalExpenditure: liveFinancials.reduce((sum: number, f: any) => sum + (Number(f.amount) || 0), 0),
-            },
-            inspectionSummary: liveInspections.map((i: any) => ({
-              date: i.inspectionDate || i.date,
-              officer: i.officerName || i.inspectorName || 'Government Engineer',
-              type: i.type,
-              observedProgress: i.physicalProgressObserved ?? i.observedPhysicalProgressPercent ?? 0,
-              issuesCount: Array.isArray(i.issues)
-                ? i.issues.length
-                : Array.isArray(i.issuesIdentified)
-                ? i.issuesIdentified.length
-                : 0,
-              hasCorrectiveActions:
-                (Array.isArray(i.correctiveActions) && i.correctiveActions.length > 0) ||
-                (Array.isArray(i.correctiveActionsRequired) && i.correctiveActionsRequired.length > 0),
-            })),
-          };
-        }
-      } catch (err) {
+      } catch (err: any) {
         console.warn('[ProjectRiskAiServerService] Firestore fetch error for AI boundary:', err);
+        const error: any = new Error(`Failed to query authoritative Firestore project records: ${err?.message || err}`);
+        error.statusCode = 502;
+        throw error;
+      }
+
+      if (projRes.ok) {
+        const docJson = await projRes.json();
+        const proj = parseFirestoreDoc(docJson);
+
+        // Parallelize subcollection & risk assessment queries
+        const [
+          authoritativeRiskAssessment,
+          allFetchedAnomalies,
+          liveMilestones,
+          liveFinancials,
+          liveUpdates,
+          liveInspections,
+          liveExceptions,
+          liveAuditEvents,
+        ] = await Promise.all([
+          // projectRiskAssessments/{projectId}
+          fetch(
+            `https://firestore.googleapis.com/v1/projects/${firebaseProjectId}/databases/(default)/documents/projectRiskAssessments/${projectId}`,
+            { headers: { Authorization: `Bearer ${token}` } }
+          )
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => (d ? parseFirestoreDoc(d) : null))
+            .catch(() => null),
+          this.queryFirestoreCollection(firebaseProjectId, token, 'projectAnomalies', projectId),
+          this.queryFirestoreCollection(firebaseProjectId, token, 'projectMilestones', projectId),
+          this.queryFirestoreCollection(firebaseProjectId, token, 'projectFinancialRecords', projectId),
+          this.queryFirestoreCollection(firebaseProjectId, token, 'projectProgressUpdates', projectId),
+          this.queryFirestoreCollection(firebaseProjectId, token, 'projectInspections', projectId),
+          this.queryFirestoreCollection(firebaseProjectId, token, 'projectExceptions', projectId),
+          this.queryFirestoreCollection(firebaseProjectId, token, 'projectAuditEvents', projectId),
+        ]);
+
+        // Filter to strictly current active anomalies:
+        // isConditionActive !== false AND status is OPEN, UNDER_REVIEW, or ACKNOWLEDGED
+        const authoritativeAnomalies = allFetchedAnomalies.filter((a: any) => {
+          const isConditionActive = a.isConditionActive !== false;
+          const status = (a.status || 'OPEN').toUpperCase();
+          return isConditionActive && ['OPEN', 'UNDER_REVIEW', 'ACKNOWLEDGED'].includes(status);
+        });
+
+        return {
+          project: proj,
+          riskAssessment: authoritativeRiskAssessment,
+          anomalies: authoritativeAnomalies,
+          allAnomalies: allFetchedAnomalies,
+          milestones: liveMilestones,
+          financialRecords: liveFinancials,
+          updates: liveUpdates,
+          inspections: liveInspections,
+          exceptions: liveExceptions,
+          auditEvents: liveAuditEvents,
+          milestonesSummary: liveMilestones.map((m: any) => ({
+            sequence: m.sequence,
+            title: m.title,
+            progress: m.progressPercent ?? m.progress ?? 0,
+            status: m.status,
+            weight: m.weightPercent ?? m.weight ?? 0,
+            plannedEnd: m.plannedEndDate || m.plannedEnd,
+          })),
+          financialSummary: {
+            verifiedRecordsCount: liveFinancials.filter(
+              (f: any) => f.verificationStatus === 'VERIFIED' || f.status === 'VERIFIED'
+            ).length,
+            totalVerified: liveFinancials
+              .filter((f: any) => f.verificationStatus === 'VERIFIED' || f.status === 'VERIFIED')
+              .reduce((sum: number, f: any) => sum + (Number(f.amount) || 0), 0),
+            totalExpenditure: liveFinancials.reduce((sum: number, f: any) => sum + (Number(f.amount) || 0), 0),
+          },
+          inspectionSummary: liveInspections.map((i: any) => ({
+            date: i.inspectionDate || i.date,
+            officer: i.officerName || i.inspectorName || 'Government Engineer',
+            type: i.type,
+            observedProgress: i.physicalProgressObserved ?? i.observedPhysicalProgressPercent ?? 0,
+            issuesCount: Array.isArray(i.issues)
+              ? i.issues.length
+              : Array.isArray(i.issuesIdentified)
+              ? i.issuesIdentified.length
+              : 0,
+            hasCorrectiveActions:
+              (Array.isArray(i.correctiveActions) && i.correctiveActions.length > 0) ||
+              (Array.isArray(i.correctiveActionsRequired) && i.correctiveActionsRequired.length > 0),
+          })),
+        };
+      } else {
+        // Live project requested but not found in Firestore - never silently fall back to demo records
+        const err: any = new Error(
+          `Project "${projectId}" not found in authoritative Firestore records (status ${projRes.status}).`
+        );
+        err.statusCode = projRes.status === 404 ? 404 : 502;
+        throw err;
       }
     }
 
-    // Ground truth fallback: Check demonstration projects repository
+    // Ground truth fallback: ONLY accessible in explicit demonstration context
     const demoProj = DEMONSTRATION_PROJECTS.find((p) => p.id === projectId);
     if (demoProj) {
       const demoMilestones = DEMONSTRATION_MILESTONES.filter((m) => m.projectId === projectId);

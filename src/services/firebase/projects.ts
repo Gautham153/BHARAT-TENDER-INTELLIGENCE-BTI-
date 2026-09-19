@@ -44,6 +44,7 @@ import { AuthUser } from '../../types/auth';
 import { ProposalService } from './proposals';
 import { TenderService } from './tenders';
 import { OrganizationService } from './organizations';
+import { PublicTransparencyService } from '../transparency/publicTransparencyService';
 import {
   DEMONSTRATION_PROJECTS,
   DEMONSTRATION_MILESTONES,
@@ -546,6 +547,7 @@ const INITIAL_DEMO_PROJECT: Project = {
   financialProgress: 38,
   targetCompletionDate: '2026-08-30',
   mpName: 'Sh. Narendra Modi',
+  isPubliclyVisible: true,
 };
 
 const INITIAL_DEMO_MILESTONES: ProjectMilestone[] = [
@@ -881,6 +883,7 @@ export class ProjectService {
       physicalProgress: 0,
       financialProgress: 0,
       targetCompletionDate: proposal.timeline?.proposedCompletionDate?.trim() || (proposal as any).proposedCompletionDate?.trim() || undefined,
+      isPubliclyVisible: false,
     };
 
     // Extract initial milestones from proposal's implementation plan if available
@@ -968,6 +971,11 @@ export class ProjectService {
       batch.set(evtRef, sanitizeFirestorePayload(auditEvent));
 
       await batch.commit();
+      try {
+        await PublicTransparencyService.syncPublicProjection(newProject, initialMilestones);
+      } catch (err) {
+        console.warn('[ProjectService] Failed to sync public projection:', err);
+      }
     } else {
       this.saveProjectLocally(newProject, initialMilestones, user);
     }
@@ -1186,6 +1194,72 @@ export class ProjectService {
       batch.update(doc(db, PROJECTS_COLLECTION, projectId), sanitizeFirestorePayload(updated));
       batch.set(doc(db, AUDIT_EVENTS_COLLECTION, eventId), sanitizeFirestorePayload(auditEvent));
       await batch.commit();
+      try {
+        await PublicTransparencyService.syncPublicProjection(projectId);
+      } catch (err) {
+        console.warn('[ProjectService] Failed to sync public projection:', err);
+      }
+    } else {
+      this.updateProjectLocally(updated, auditEvent);
+    }
+
+    return updated;
+  }
+
+  /**
+   * Authoritative government publication control.
+   * Explicitly publishes or revokes publication of an internal project to the Public Transparency portal.
+   * Fail-closed: revocation immediately removes the public projection via trusted server-side mutation.
+   */
+  static async setProjectPublicVisibility(params: {
+    projectId: string;
+    isPubliclyVisible: boolean;
+    user: AuthUser;
+  }): Promise<Project> {
+    const { projectId, isPubliclyVisible, user } = params;
+    const userRole = (user.role || '').toLowerCase();
+    if (!userRole.includes('gov')) {
+      throw new Error('Access Denied: Only authorized government officers can toggle public visibility.');
+    }
+
+    const project = await this.getProjectById(projectId);
+    if (!project) {
+      throw new Error(`Project ${projectId} not found.`);
+    }
+
+    const nowIso = new Date().toISOString();
+    const eventId = `evt-proj-vis-${projectId}-${Date.now()}`;
+    const updated: Project = {
+      ...project,
+      isPubliclyVisible,
+      updatedAt: nowIso,
+    };
+
+    const auditEvent: ProjectAuditEvent = {
+      eventId,
+      projectId,
+      action: 'STATUS_CHANGED',
+      actorId: getAuthoritativeUid(user),
+      actorRole: 'government',
+      actorName: user.name || 'Authorized Officer',
+      timestamp: nowIso,
+      previousState: { isPubliclyVisible: project.isPubliclyVisible },
+      newState: { isPubliclyVisible },
+      notes: isPubliclyVisible
+        ? 'Project explicitly published to Public Transparency portal.'
+        : 'Project public transparency publication revoked.',
+    };
+
+    if (isLiveFirestoreSession() && db) {
+      const batch = writeBatch(db);
+      batch.update(doc(db, PROJECTS_COLLECTION, projectId), sanitizeFirestorePayload({ isPubliclyVisible, updatedAt: nowIso }));
+      batch.set(doc(db, AUDIT_EVENTS_COLLECTION, eventId), sanitizeFirestorePayload(auditEvent));
+      await batch.commit();
+      try {
+        await PublicTransparencyService.syncPublicProjection(updated);
+      } catch (err) {
+        console.warn('[ProjectService] Failed to sync public projection visibility change:', err);
+      }
     } else {
       this.updateProjectLocally(updated, auditEvent);
     }
@@ -1317,6 +1391,11 @@ export class ProjectService {
       batch.update(doc(db, PROJECTS_COLLECTION, projectId), sanitizeFirestorePayload(updatedProject));
       batch.set(doc(db, AUDIT_EVENTS_COLLECTION, eventId), sanitizeFirestorePayload(auditEvent));
       await batch.commit();
+      try {
+        await PublicTransparencyService.syncPublicProjection(projectId);
+      } catch (err) {
+        console.warn('[ProjectService] Failed to sync public projection:', err);
+      }
     } else {
       const local = getLocalItems<ProjectMilestone>(LOCAL_STORAGE_MILESTONES_KEY, INITIAL_DEMO_MILESTONES);
       local.push(newMilestone);
@@ -1447,6 +1526,11 @@ export class ProjectService {
       }
       batch.set(doc(db, AUDIT_EVENTS_COLLECTION, eventId), sanitizeFirestorePayload(auditEvent));
       await batch.commit();
+      try {
+        await PublicTransparencyService.syncPublicProjection(projectId);
+      } catch (err) {
+        console.warn('[ProjectService] Failed to sync public projection:', err);
+      }
     } else {
       const local = getLocalItems<ProjectMilestone>(LOCAL_STORAGE_MILESTONES_KEY, INITIAL_DEMO_MILESTONES);
       const idx = local.findIndex((m) => m.id === milestoneId);
@@ -1666,6 +1750,11 @@ export class ProjectService {
       batch.set(doc(db, PROGRESS_UPDATES_COLLECTION, id), sanitizeFirestorePayload(newUpdate));
       batch.set(doc(db, AUDIT_EVENTS_COLLECTION, eventId), sanitizeFirestorePayload(auditEvent));
       await batch.commit();
+      try {
+        await PublicTransparencyService.syncPublicProjection(projectId);
+      } catch (err) {
+        console.warn('[ProjectService] Failed to sync public projection:', err);
+      }
     } else {
       if (updatedMilestone && milestoneAuditEvent && milestoneId) {
         const localMs = getLocalItems<ProjectMilestone>(LOCAL_STORAGE_MILESTONES_KEY, INITIAL_DEMO_MILESTONES);
@@ -1812,6 +1901,11 @@ export class ProjectService {
       batch.set(doc(db, FINANCIAL_RECORDS_COLLECTION, id), sanitizeFirestorePayload(newRecord));
       batch.set(doc(db, AUDIT_EVENTS_COLLECTION, eventId), sanitizeFirestorePayload(auditEvent));
       await batch.commit();
+      try {
+        await PublicTransparencyService.syncPublicProjection(projectId);
+      } catch (err) {
+        console.warn('[ProjectService] Failed to sync public projection:', err);
+      }
     } else {
       const local = getLocalItems<ProjectFinancialRecord>(LOCAL_STORAGE_FINANCIAL_KEY, INITIAL_DEMO_FINANCIAL);
       local.unshift(newRecord);
@@ -1905,6 +1999,11 @@ export class ProjectService {
       batch.update(doc(db, PROJECTS_COLLECTION, projectId), sanitizeFirestorePayload(updatedProject));
       batch.set(doc(db, AUDIT_EVENTS_COLLECTION, eventId), sanitizeFirestorePayload(auditEvent));
       await batch.commit();
+      try {
+        await PublicTransparencyService.syncPublicProjection(projectId);
+      } catch (err) {
+        console.warn('[ProjectService] Failed to sync public projection:', err);
+      }
     } else {
       const local = getLocalItems<ProjectFinancialRecord>(LOCAL_STORAGE_FINANCIAL_KEY, INITIAL_DEMO_FINANCIAL);
       const idx = local.findIndex((r) => r.id === recordId);
@@ -2063,6 +2162,11 @@ export class ProjectService {
       batch.update(doc(db, PROJECTS_COLLECTION, projectId), sanitizeFirestorePayload(updatedProject));
       batch.set(doc(db, AUDIT_EVENTS_COLLECTION, eventId), sanitizeFirestorePayload(auditEvent));
       await batch.commit();
+      try {
+        await PublicTransparencyService.syncPublicProjection(projectId);
+      } catch (err) {
+        console.warn('[ProjectService] Failed to sync public projection:', err);
+      }
     } else {
       const local = getLocalItems<ProjectInspection>(LOCAL_STORAGE_INSPECTIONS_KEY, INITIAL_DEMO_INSPECTIONS);
       local.unshift(newInspection);

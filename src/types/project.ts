@@ -118,6 +118,7 @@ export interface Project {
   riskSignals?: string[];
   beneficiariesCount?: number;
   lastUpdated?: string;
+  isPubliclyVisible?: boolean;
   updates?: any[];
   images?: any[];
   inspections?: any[];
