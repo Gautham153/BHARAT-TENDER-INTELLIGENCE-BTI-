@@ -379,23 +379,29 @@ export class PublicTransparencyService {
         console.warn('[PublicTransparencyService] Error querying publicProjects:', err);
       }
     } else {
-      // Demonstration session: Project all explicitly public demo projects
-      allProjections = DEMONSTRATION_PROJECTS
-        .filter((dp) => dp.isPubliclyVisible === true)
-        .map((dp) => {
-        const m = DEMONSTRATION_MILESTONES.filter((item) => item.projectId === dp.id);
-        const f = DEMONSTRATION_FINANCIAL_RECORDS.filter((item) => item.projectId === dp.id);
-        const u = DEMONSTRATION_PROGRESS_UPDATES.filter((item) => item.projectId === dp.id);
-        const i = DEMONSTRATION_INSPECTIONS.filter((item) => item.projectId === dp.id);
-        return this.buildPublicProjectProjection({
-          project: dp,
-          milestones: m,
-          financials: f,
-          updates: u,
-          inspections: i,
-          isDemonstration: true,
-        });
-      });
+      // Demonstration / Local session: Project all explicitly public projects
+      const { ProjectService } = await import('../firebase/projects');
+      const allProjects = await ProjectService.getProjects();
+      const publicProjects = allProjects.filter((dp) => dp.isPubliclyVisible === true);
+
+      allProjections = await Promise.all(
+        publicProjects.map(async (dp) => {
+          const [m, f, u, i] = await Promise.all([
+            ProjectService.getMilestones(dp.id),
+            ProjectService.getFinancialRecords(dp.id),
+            ProjectService.getProgressUpdates(dp.id),
+            ProjectService.getInspections(dp.id),
+          ]);
+          return this.buildPublicProjectProjection({
+            project: dp,
+            milestones: m,
+            financials: f,
+            updates: u,
+            inspections: i,
+            isDemonstration: dp.id.includes('demo') || (dp.projectCode && dp.projectCode.includes('2026/000')),
+          });
+        })
+      );
     }
 
     // Apply Public Search & Filters
@@ -501,24 +507,25 @@ export class PublicTransparencyService {
       }
     }
 
-    // Demonstration session
-    const dp = DEMONSTRATION_PROJECTS.find(
-      (p) => p.id === projectId || p.projectNumber === projectId || p.projectCode === projectId
-    );
+    // Demonstration / Local session
+    const { ProjectService } = await import('../firebase/projects');
+    const project = await ProjectService.getProjectById(projectId);
 
-    if (dp && dp.isPubliclyVisible === true) {
-      const m = DEMONSTRATION_MILESTONES.filter((item) => item.projectId === dp.id);
-      const f = DEMONSTRATION_FINANCIAL_RECORDS.filter((item) => item.projectId === dp.id);
-      const u = DEMONSTRATION_PROGRESS_UPDATES.filter((item) => item.projectId === dp.id);
-      const i = DEMONSTRATION_INSPECTIONS.filter((item) => item.projectId === dp.id);
+    if (project && project.isPubliclyVisible === true) {
+      const [m, f, u, i] = await Promise.all([
+        ProjectService.getMilestones(project.id),
+        ProjectService.getFinancialRecords(project.id),
+        ProjectService.getProgressUpdates(project.id),
+        ProjectService.getInspections(project.id),
+      ]);
 
       return this.buildPublicProjectProjection({
-        project: dp,
+        project,
         milestones: m,
         financials: f,
         updates: u,
         inspections: i,
-        isDemonstration: true,
+        isDemonstration: project.id.includes('demo') || (project.projectCode && project.projectCode.includes('2026/000')),
       });
     }
 

@@ -34,6 +34,9 @@ import {
   ShieldAlert,
   Sparkles,
   ExternalLink,
+  Globe,
+  EyeOff,
+  UploadCloud,
 } from 'lucide-react';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { Table, Column } from '../../components/ui/Table';
@@ -164,6 +167,38 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
   const [requestNote, setRequestNote] = useState<string>('');
 
   const [actionProcessing, setActionProcessing] = useState<boolean>(false);
+  const [publishingVisibility, setPublishingVisibility] = useState<boolean>(false);
+
+  // Handle Toggle Public Transparency Publication
+  const handleTogglePublicVisibility = async (projectToUpdate: Project) => {
+    if (!user) return;
+    try {
+      setPublishingVisibility(true);
+      const targetVisibility = projectToUpdate.isPubliclyVisible !== true;
+      const updated = await ProjectService.setProjectPublicVisibility({
+        projectId: projectToUpdate.id,
+        isPubliclyVisible: targetVisibility,
+        user,
+      });
+
+      setSelectedProject(updated);
+      setProjects((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+      showToast('Publication Status Updated', {
+        message: targetVisibility
+          ? `"${updated.title}" is now published on the Public Transparency portal.`
+          : `Public transparency publication revoked for "${updated.title}". Removed from public citizen portal.`,
+        type: 'success',
+      });
+    } catch (err: any) {
+      console.error('[ProjectMonitoring] Failed to toggle public visibility:', err);
+      showToast('Publication Update Failed', {
+        message: err.message || 'Could not update public visibility.',
+        type: 'error',
+      });
+    } finally {
+      setPublishingVisibility(false);
+    }
+  };
 
   // Load all projects
   const loadProjects = useCallback(async () => {
@@ -876,9 +911,18 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
           <span className="font-mono text-xs font-bold text-slate-900 block">
             {p.projectNumber || p.projectCode || p.id.slice(0, 12)}
           </span>
-          <span className="text-[10px] text-slate-400 font-mono">
+          <span className="text-[10px] text-slate-400 font-mono block">
             {p.createdAt ? new Date(p.createdAt).toLocaleDateString('en-IN') : 'Registered'}
           </span>
+          {p.isPubliclyVisible === true ? (
+            <span className="inline-flex items-center gap-1 text-[9px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 mt-1">
+              <Globe className="w-2.5 h-2.5" /> Public
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 text-[9px] font-medium text-slate-500 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200 mt-1">
+              <EyeOff className="w-2.5 h-2.5 text-slate-400" /> Internal
+            </span>
+          )}
         </div>
       ),
     },
@@ -1188,6 +1232,17 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
                   {selectedProject.projectNumber || selectedProject.projectCode || selectedProject.id}
                 </span>
                 <StatusBadge status={toCanonicalProjectStatus(selectedProject.status)} size="sm" />
+                {selectedProject.isPubliclyVisible === true ? (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded border border-emerald-300">
+                    <Globe className="w-3 h-3 text-emerald-700" />
+                    Publicly Visible
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-medium bg-slate-100 text-slate-600 px-2 py-0.5 rounded border border-slate-300">
+                    <EyeOff className="w-3 h-3 text-slate-500" />
+                    Internal Record Only
+                  </span>
+                )}
                 {(exceptionCountMap[selectedProject.id] || 0) > 0 && (
                   <span className="text-[10px] font-bold bg-amber-100 text-amber-800 px-2 py-0.5 rounded border border-amber-200">
                     {exceptionCountMap[selectedProject.id]} Active Exception(s)
@@ -1441,6 +1496,66 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
                           )
                         )}
                       </strong>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Public Transparency & Social Audit Publication Control */}
+                <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <Globe className="w-4 h-4 text-[#002B49]" />
+                        <h4 className="font-bold text-slate-900 text-xs">
+                          Public Transparency & Social Audit Publication
+                        </h4>
+                        {selectedProject.isPubliclyVisible === true ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded border border-emerald-300">
+                            Published
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-medium bg-slate-100 text-slate-600 px-2 py-0.5 rounded border border-slate-300">
+                            Unlisted (Private)
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-500 max-w-2xl">
+                        {selectedProject.isPubliclyVisible === true
+                          ? 'This project is published on the citizen portal (/transparency/projects). All sanitized milestone completions, statutory fund disbursals, and inspection records are accessible for open public oversight.'
+                          : 'This project is currently private and not listed on the Public Transparency portal. Authorized officers can explicitly publish this project to establish open citizen oversight and verifiable social audit tracking.'}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      {selectedProject.isPubliclyVisible === true && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          icon={ExternalLink}
+                          onClick={() => onNavigate(`/transparency/projects/${selectedProject.id}`)}
+                          className="text-xs text-blue-700 border-blue-200 hover:bg-blue-50"
+                        >
+                          View Public Page
+                        </Button>
+                      )}
+
+                      <Button
+                        variant={selectedProject.isPubliclyVisible === true ? 'outline' : 'gov'}
+                        size="sm"
+                        disabled={publishingVisibility}
+                        onClick={() => handleTogglePublicVisibility(selectedProject)}
+                        className={
+                          selectedProject.isPubliclyVisible === true
+                            ? 'text-xs text-rose-700 border-rose-300 hover:bg-rose-50'
+                            : 'text-xs bg-[#002B49] text-white hover:bg-slate-800'
+                        }
+                      >
+                        {publishingVisibility
+                          ? 'Updating...'
+                          : selectedProject.isPubliclyVisible === true
+                          ? 'Revoke Public Publication'
+                          : 'Publish to Public Portal'}
+                      </Button>
                     </div>
                   </div>
                 </div>

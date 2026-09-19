@@ -1252,7 +1252,11 @@ export class ProjectService {
 
     if (isLiveFirestoreSession() && db) {
       const batch = writeBatch(db);
-      batch.update(doc(db, PROJECTS_COLLECTION, projectId), sanitizeFirestorePayload({ isPubliclyVisible, updatedAt: nowIso }));
+      batch.set(
+        doc(db, PROJECTS_COLLECTION, projectId),
+        sanitizeFirestorePayload({ isPubliclyVisible, updatedAt: nowIso }),
+        { merge: true }
+      );
       batch.set(doc(db, AUDIT_EVENTS_COLLECTION, eventId), sanitizeFirestorePayload(auditEvent));
       await batch.commit();
       try {
@@ -1268,7 +1272,7 @@ export class ProjectService {
   }
 
   private static updateProjectLocally(project: Project, auditEvent: ProjectAuditEvent): void {
-    const projects = getLocalItems<Project>(LOCAL_STORAGE_PROJECTS_KEY, [INITIAL_DEMO_PROJECT]);
+    const projects = getLocalItems<Project>(LOCAL_STORAGE_PROJECTS_KEY, DEMONSTRATION_PROJECTS);
     const idx = projects.findIndex((p) => p.id === project.id);
     if (idx !== -1) {
       projects[idx] = project;
