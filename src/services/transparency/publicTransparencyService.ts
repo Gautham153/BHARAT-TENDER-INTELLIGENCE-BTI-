@@ -23,6 +23,7 @@ import {
   ProjectInspection,
   toCanonicalProjectStatus,
   CanonicalProjectStatus,
+  isProjectPubliclyDisclosed,
 } from '../../types/project';
 import {
   PublicProjectDTO,
@@ -334,7 +335,8 @@ export class PublicTransparencyService {
       accountabilityIndicators,
       dataProvenance,
       isDemonstrationData: isDemonstration,
-      isPubliclyVisible: project.isPubliclyVisible === true,
+      isPubliclyVisible: isProjectPubliclyDisclosed(project),
+      publicDisclosureStatus: 'PUBLIC',
       lastUpdated,
       startDate: project.startDate || project.implementationStartDate,
       plannedCompletionDate: project.plannedCompletionDate || project.targetCompletionDate,
@@ -371,7 +373,7 @@ export class PublicTransparencyService {
 
         snap.forEach((d) => {
           const item = d.data() as PublicProjectDTO;
-          if (item && item.isPubliclyVisible === true) {
+          if (item && isProjectPubliclyDisclosed(item)) {
             allProjections.push(item);
           }
         });
@@ -382,7 +384,7 @@ export class PublicTransparencyService {
       // Demonstration / Local session: Project all explicitly public projects
       const { ProjectService } = await import('../firebase/projects');
       const allProjects = await ProjectService.getProjects();
-      const publicProjects = allProjects.filter((dp) => dp.isPubliclyVisible === true);
+      const publicProjects = allProjects.filter((dp) => isProjectPubliclyDisclosed(dp));
 
       allProjections = await Promise.all(
         publicProjects.map(async (dp) => {
@@ -496,7 +498,7 @@ export class PublicTransparencyService {
         const snap = await getDoc(docRef);
         if (snap.exists()) {
           const data = snap.data() as PublicProjectDTO;
-          if (data && data.isPubliclyVisible === true) {
+          if (data && isProjectPubliclyDisclosed(data)) {
             return data;
           }
         }
@@ -511,7 +513,7 @@ export class PublicTransparencyService {
     const { ProjectService } = await import('../firebase/projects');
     const project = await ProjectService.getProjectById(projectId);
 
-    if (project && project.isPubliclyVisible === true) {
+    if (project && isProjectPubliclyDisclosed(project)) {
       const [m, f, u, i] = await Promise.all([
         ProjectService.getMilestones(project.id),
         ProjectService.getFinancialRecords(project.id),
@@ -627,10 +629,9 @@ export class PublicTransparencyService {
 
     const publicDocRef = doc(db, PUBLIC_PROJECTS_COLLECTION, project.id);
 
-    // Strict Fail-Closed Check: ONLY when isPubliclyVisible === true is it published.
-    // If isPubliclyVisible !== true (including false, undefined, null), do NOT publish.
-    // If a public projection already exists from when it was previously public, remove it.
-    if (project.isPubliclyVisible !== true) {
+    // Strict Fail-Closed Check: ONLY when eligible for public disclosure (PUBLIC) is it published.
+    // If restricted or unestablished (including undefined, null, RESTRICTED), fail closed and remove projection.
+    if (!isProjectPubliclyDisclosed(project)) {
       try {
         await deleteDoc(publicDocRef);
       } catch (err) {

@@ -111,6 +111,7 @@ export interface PublicProjectDTO {
   // Verification & Metadata
   isDemonstrationData: boolean;
   isPubliclyVisible: boolean;
+  publicDisclosureStatus?: 'PUBLIC';
   lastUpdated?: string;
   startDate?: string;
   plannedCompletionDate?: string;

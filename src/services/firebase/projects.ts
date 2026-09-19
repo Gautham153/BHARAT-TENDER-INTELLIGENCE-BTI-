@@ -547,6 +547,7 @@ const INITIAL_DEMO_PROJECT: Project = {
   financialProgress: 38,
   targetCompletionDate: '2026-08-30',
   mpName: 'Sh. Narendra Modi',
+  publicDisclosureStatus: 'PUBLIC',
   isPubliclyVisible: true,
 };
 
@@ -883,7 +884,8 @@ export class ProjectService {
       physicalProgress: 0,
       financialProgress: 0,
       targetCompletionDate: proposal.timeline?.proposedCompletionDate?.trim() || (proposal as any).proposedCompletionDate?.trim() || undefined,
-      isPubliclyVisible: false,
+      publicDisclosureStatus: 'PUBLIC',
+      isPubliclyVisible: true,
     };
 
     // Extract initial milestones from proposal's implementation plan if available
@@ -1207,19 +1209,20 @@ export class ProjectService {
   }
 
   /**
-   * Authoritative government publication control.
-   * Explicitly publishes or revokes publication of an internal project to the Public Transparency portal.
-   * Fail-closed: revocation immediately removes the public projection via trusted server-side mutation.
+   * Authoritative government public disclosure governance.
+   * Establishes public disclosure status (PUBLIC or RESTRICTED) with fail-closed audit tracking.
+   * Synchronizes public projection immediately via PublicTransparencyService.
    */
-  static async setProjectPublicVisibility(params: {
+  static async setProjectDisclosureStatus(params: {
     projectId: string;
-    isPubliclyVisible: boolean;
+    status: 'PUBLIC' | 'RESTRICTED';
+    reason?: string;
     user: AuthUser;
   }): Promise<Project> {
-    const { projectId, isPubliclyVisible, user } = params;
+    const { projectId, status, reason, user } = params;
     const userRole = (user.role || '').toLowerCase();
     if (!userRole.includes('gov')) {
-      throw new Error('Access Denied: Only authorized government officers can toggle public visibility.');
+      throw new Error('Access Denied: Only authorized government officers can establish public disclosure status.');
     }
 
     const project = await this.getProjectById(projectId);
@@ -1227,11 +1230,18 @@ export class ProjectService {
       throw new Error(`Project ${projectId} not found.`);
     }
 
+    const isPubliclyVisible = status === 'PUBLIC';
     const nowIso = new Date().toISOString();
-    const eventId = `evt-proj-vis-${projectId}-${Date.now()}`;
+    const eventId = `evt-proj-disclose-${projectId}-${Date.now()}`;
+    const authoritativeActorId = getAuthoritativeUid(user);
+
     const updated: Project = {
       ...project,
+      publicDisclosureStatus: status,
       isPubliclyVisible,
+      publicDisclosureReason: reason?.trim() || undefined,
+      publicDisclosureUpdatedBy: authoritativeActorId,
+      publicDisclosureUpdatedAt: nowIso,
       updatedAt: nowIso,
     };
 
@@ -1239,36 +1249,72 @@ export class ProjectService {
       eventId,
       projectId,
       action: 'STATUS_CHANGED',
-      actorId: getAuthoritativeUid(user),
+      actorId: authoritativeActorId,
       actorRole: 'government',
       actorName: user.name || 'Authorized Officer',
       timestamp: nowIso,
-      previousState: { isPubliclyVisible: project.isPubliclyVisible },
-      newState: { isPubliclyVisible },
-      notes: isPubliclyVisible
-        ? 'Project explicitly published to Public Transparency portal.'
-        : 'Project public transparency publication revoked.',
+      previousState: {
+        publicDisclosureStatus: project.publicDisclosureStatus,
+        isPubliclyVisible: project.isPubliclyVisible,
+      },
+      newState: {
+        publicDisclosureStatus: status,
+        isPubliclyVisible,
+        publicDisclosureReason: reason?.trim() || undefined,
+      },
+      notes: status === 'PUBLIC'
+        ? 'Public disclosure established as PUBLIC (Eligible for Citizen Transparency).'
+        : `Public disclosure restricted (RESTRICTED). Reason: ${reason || 'Applicable disclosure controls applied.'}`,
     };
 
     if (isLiveFirestoreSession() && db) {
       const batch = writeBatch(db);
+      const updatePayload: Record<string, any> = {
+        publicDisclosureStatus: status,
+        isPubliclyVisible,
+        publicDisclosureUpdatedBy: authoritativeActorId,
+        publicDisclosureUpdatedAt: nowIso,
+        updatedAt: nowIso,
+        lastStatusChangeEventId: eventId,
+      };
+      if (reason?.trim()) {
+        updatePayload.publicDisclosureReason = reason.trim();
+      }
       batch.set(
         doc(db, PROJECTS_COLLECTION, projectId),
-        sanitizeFirestorePayload({ isPubliclyVisible, updatedAt: nowIso }),
+        sanitizeFirestorePayload(updatePayload),
         { merge: true }
       );
       batch.set(doc(db, AUDIT_EVENTS_COLLECTION, eventId), sanitizeFirestorePayload(auditEvent));
       await batch.commit();
+
       try {
         await PublicTransparencyService.syncPublicProjection(updated);
       } catch (err) {
-        console.warn('[ProjectService] Failed to sync public projection visibility change:', err);
+        console.warn('[ProjectService] Failed to sync public projection disclosure change:', err);
       }
     } else {
       this.updateProjectLocally(updated, auditEvent);
     }
 
     return updated;
+  }
+
+  /**
+   * Compatibility delegation wrapper for setProjectDisclosureStatus.
+   */
+  static async setProjectPublicVisibility(params: {
+    projectId: string;
+    isPubliclyVisible: boolean;
+    reason?: string;
+    user: AuthUser;
+  }): Promise<Project> {
+    return this.setProjectDisclosureStatus({
+      projectId: params.projectId,
+      status: params.isPubliclyVisible ? 'PUBLIC' : 'RESTRICTED',
+      reason: params.reason,
+      user: params.user,
+    });
   }
 
   private static updateProjectLocally(project: Project, auditEvent: ProjectAuditEvent): void {

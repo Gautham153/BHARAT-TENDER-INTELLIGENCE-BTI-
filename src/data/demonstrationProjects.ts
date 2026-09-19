@@ -60,6 +60,7 @@ export const DEMONSTRATION_PROJECTS: Project[] = [
     mpName: 'Sh. Narendra Modi',
     riskScore: 8,
     riskLevel: 'LOW',
+    publicDisclosureStatus: 'PUBLIC',
     isPubliclyVisible: true,
   },
 
@@ -108,6 +109,7 @@ export const DEMONSTRATION_PROJECTS: Project[] = [
     mpName: 'Smt. Anupriya Patel',
     riskScore: 68,
     riskLevel: 'HIGH',
+    publicDisclosureStatus: 'PUBLIC',
     isPubliclyVisible: true,
   },
 
@@ -156,6 +158,7 @@ export const DEMONSTRATION_PROJECTS: Project[] = [
     mpName: 'Dr. Mahendra Nath Pandey',
     riskScore: 64,
     riskLevel: 'HIGH',
+    publicDisclosureStatus: 'PUBLIC',
     isPubliclyVisible: true,
   },
 
@@ -204,6 +207,7 @@ export const DEMONSTRATION_PROJECTS: Project[] = [
     mpName: 'Smt. Rita Bahuguna Joshi',
     riskScore: 48,
     riskLevel: 'MODERATE',
+    publicDisclosureStatus: 'PUBLIC',
     isPubliclyVisible: true,
   },
 
@@ -252,6 +256,7 @@ export const DEMONSTRATION_PROJECTS: Project[] = [
     mpName: 'Sh. Ravi Kishan',
     riskScore: 72,
     riskLevel: 'HIGH',
+    publicDisclosureStatus: 'PUBLIC',
     isPubliclyVisible: true,
   },
 
@@ -300,6 +305,7 @@ export const DEMONSTRATION_PROJECTS: Project[] = [
     mpName: 'Sh. Shyam Singh Yadav',
     riskScore: 56,
     riskLevel: 'MODERATE',
+    publicDisclosureStatus: 'PUBLIC',
     isPubliclyVisible: true,
   },
 
@@ -348,6 +354,7 @@ export const DEMONSTRATION_PROJECTS: Project[] = [
     mpName: 'Sh. Pakauri Lal Kol',
     riskScore: 92,
     riskLevel: 'CRITICAL',
+    publicDisclosureStatus: 'PUBLIC',
     isPubliclyVisible: true,
   },
 ];

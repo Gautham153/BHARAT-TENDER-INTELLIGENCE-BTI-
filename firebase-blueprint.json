@@ -580,6 +580,11 @@
         },
         "physicalProgressPercent": { "type": "number", "minimum": 0, "maximum": 100 },
         "financialProgressPercent": { "type": "number", "minimum": 0, "maximum": 100 },
+        "publicDisclosureStatus": {
+          "type": "string",
+          "enum": ["PUBLIC", "RESTRICTED"]
+        },
+        "isPubliclyVisible": { "type": "boolean" },
         "createdAt": { "type": "string", "maxLength": 50 },
         "updatedAt": { "type": "string", "maxLength": 50 }
       },
@@ -723,6 +728,10 @@
         "physicalProgressPercent": { "type": "number" },
         "isDemonstrationData": { "type": "boolean" },
         "isPubliclyVisible": { "type": "boolean" },
+        "publicDisclosureStatus": {
+          "type": "string",
+          "enum": ["PUBLIC"]
+        },
         "lastUpdated": { "type": "string", "maxLength": 50 }
       },
       "required": ["projectId", "projectName", "category", "status", "sanctionedAmount", "verifiedExpenditure", "physicalProgressPercent"]

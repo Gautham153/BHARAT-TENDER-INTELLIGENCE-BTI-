@@ -76,6 +76,8 @@ import {
   ProjectCompletionChecklist,
   ExpenditureType,
   InspectionType,
+  PublicDisclosureStatus,
+  isProjectPubliclyDisclosed,
 } from '../../types/project';
 import { formatCurrencyINR } from '../../components/tenders/TenderOpportunityCard';
 
@@ -168,35 +170,79 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
 
   const [actionProcessing, setActionProcessing] = useState<boolean>(false);
   const [publishingVisibility, setPublishingVisibility] = useState<boolean>(false);
+  const [restrictionModalProject, setRestrictionModalProject] = useState<Project | null>(null);
+  const [restrictionReason, setRestrictionReason] = useState<string>('Administrative Baseline Review');
+  const [customRestrictionReason, setCustomRestrictionReason] = useState<string>('');
 
-  // Handle Toggle Public Transparency Publication
-  const handleTogglePublicVisibility = async (projectToUpdate: Project) => {
+  // Handle Establish Public Disclosure (Default for eligible MPLAD projects)
+  const handleEstablishPublicDisclosure = async (projectToUpdate: Project) => {
     if (!user) return;
     try {
       setPublishingVisibility(true);
-      const targetVisibility = projectToUpdate.isPubliclyVisible !== true;
-      const updated = await ProjectService.setProjectPublicVisibility({
+      const updated = await ProjectService.setProjectDisclosureStatus({
         projectId: projectToUpdate.id,
-        isPubliclyVisible: targetVisibility,
+        status: 'PUBLIC',
         user,
       });
 
       setSelectedProject(updated);
       setProjects((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
-      showToast('Publication Status Updated', {
-        message: targetVisibility
-          ? `"${updated.title}" is now published on the Public Transparency portal.`
-          : `Public transparency publication revoked for "${updated.title}". Removed from public citizen portal.`,
+      showToast('Public Disclosure Established', {
+        message: `Public transparency established for "${updated.title}". Project is active on the Citizen Portal.`,
         type: 'success',
       });
     } catch (err: any) {
-      console.error('[ProjectMonitoring] Failed to toggle public visibility:', err);
-      showToast('Publication Update Failed', {
-        message: err.message || 'Could not update public visibility.',
+      console.error('[ProjectMonitoring] Failed to establish public disclosure:', err);
+      showToast('Disclosure Update Failed', {
+        message: err.message || 'Could not establish public disclosure.',
         type: 'error',
       });
     } finally {
       setPublishingVisibility(false);
+    }
+  };
+
+  // Handle Confirm Restrict Public Disclosure
+  const handleConfirmRestrictDisclosure = async () => {
+    if (!user || !restrictionModalProject) return;
+    try {
+      setPublishingVisibility(true);
+      const finalReason = restrictionReason === 'Other'
+        ? (customRestrictionReason.trim() || 'Administrative Review')
+        : restrictionReason;
+
+      const updated = await ProjectService.setProjectDisclosureStatus({
+        projectId: restrictionModalProject.id,
+        status: 'RESTRICTED',
+        reason: finalReason,
+        user,
+      });
+
+      setSelectedProject(updated);
+      setProjects((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+      setRestrictionModalProject(null);
+      setCustomRestrictionReason('');
+      showToast('Public Disclosure Restricted', {
+        message: `Public disclosure restricted for "${updated.title}". Projection removed from Citizen Portal.`,
+        type: 'success',
+      });
+    } catch (err: any) {
+      console.error('[ProjectMonitoring] Failed to restrict public disclosure:', err);
+      showToast('Restriction Failed', {
+        message: err.message || 'Could not restrict public disclosure.',
+        type: 'error',
+      });
+    } finally {
+      setPublishingVisibility(false);
+    }
+  };
+
+  // Legacy fallback compatibility wrapper
+  const handleTogglePublicVisibility = async (projectToUpdate: Project) => {
+    if (isProjectPubliclyDisclosed(projectToUpdate)) {
+      setRestrictionModalProject(projectToUpdate);
+    } else {
+      await handleEstablishPublicDisclosure(projectToUpdate);
     }
   };
 
@@ -914,13 +960,13 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
           <span className="text-[10px] text-slate-400 font-mono block">
             {p.createdAt ? new Date(p.createdAt).toLocaleDateString('en-IN') : 'Registered'}
           </span>
-          {p.isPubliclyVisible === true ? (
+          {isProjectPubliclyDisclosed(p) ? (
             <span className="inline-flex items-center gap-1 text-[9px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 mt-1">
               <Globe className="w-2.5 h-2.5" /> Public
             </span>
           ) : (
-            <span className="inline-flex items-center gap-1 text-[9px] font-medium text-slate-500 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200 mt-1">
-              <EyeOff className="w-2.5 h-2.5 text-slate-400" /> Internal
+            <span className="inline-flex items-center gap-1 text-[9px] font-medium text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200 mt-1">
+              <EyeOff className="w-2.5 h-2.5 text-amber-500" /> Restricted
             </span>
           )}
         </div>
@@ -1232,15 +1278,15 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
                   {selectedProject.projectNumber || selectedProject.projectCode || selectedProject.id}
                 </span>
                 <StatusBadge status={toCanonicalProjectStatus(selectedProject.status)} size="sm" />
-                {selectedProject.isPubliclyVisible === true ? (
+                {isProjectPubliclyDisclosed(selectedProject) ? (
                   <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded border border-emerald-300">
                     <Globe className="w-3 h-3 text-emerald-700" />
-                    Publicly Visible
+                    Public Disclosure: PUBLIC
                   </span>
                 ) : (
-                  <span className="inline-flex items-center gap-1 text-[10px] font-medium bg-slate-100 text-slate-600 px-2 py-0.5 rounded border border-slate-300">
-                    <EyeOff className="w-3 h-3 text-slate-500" />
-                    Internal Record Only
+                  <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-amber-100 text-amber-800 px-2 py-0.5 rounded border border-amber-300">
+                    <EyeOff className="w-3 h-3 text-amber-600" />
+                    Public Disclosure: RESTRICTED
                   </span>
                 )}
                 {(exceptionCountMap[selectedProject.id] || 0) > 0 && (
@@ -1500,34 +1546,36 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
                   </div>
                 </div>
 
-                {/* Public Transparency & Social Audit Publication Control */}
+                {/* Public Transparency & Citizen Social Audit Disclosure Governance */}
                 <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">
                         <Globe className="w-4 h-4 text-[#002B49]" />
                         <h4 className="font-bold text-slate-900 text-xs">
-                          Public Transparency & Social Audit Publication
+                          Public Disclosure & Citizen Social Audit Governance
                         </h4>
-                        {selectedProject.isPubliclyVisible === true ? (
+                        {isProjectPubliclyDisclosed(selectedProject) ? (
                           <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded border border-emerald-300">
-                            Published
+                            <Globe className="w-2.5 h-2.5" /> PUBLIC
                           </span>
                         ) : (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-medium bg-slate-100 text-slate-600 px-2 py-0.5 rounded border border-slate-300">
-                            Unlisted (Private)
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-amber-100 text-amber-800 px-2 py-0.5 rounded border border-amber-300">
+                            <EyeOff className="w-2.5 h-2.5" /> RESTRICTED
                           </span>
                         )}
                       </div>
-                      <p className="text-[11px] text-slate-500 max-w-2xl">
-                        {selectedProject.isPubliclyVisible === true
-                          ? 'This project is published on the citizen portal (/transparency/projects). All sanitized milestone completions, statutory fund disbursals, and inspection records are accessible for open public oversight.'
-                          : 'This project is currently private and not listed on the Public Transparency portal. Authorized officers can explicitly publish this project to establish open citizen oversight and verifiable social audit tracking.'}
+                      <p className="text-[11px] text-slate-600 max-w-2xl">
+                        {isProjectPubliclyDisclosed(selectedProject)
+                          ? 'This MPLAD project is publicly disclosed by default under transparency guidelines. Sanitized milestone progress, verified fund utilization, and physical inspections are published for citizen social audit.'
+                          : (selectedProject.publicDisclosureReason
+                              ? `Restricted from citizen portal: "${selectedProject.publicDisclosureReason}". MPLAD civil works remain publicly disclosed by default unless restricted for administrative or security reasons.`
+                              : 'This project is currently RESTRICTED. Under MPLAD transparency guidelines, public disclosure is standard for eligible works; authorized officers may establish or restore public disclosure once baseline requirements are satisfied.')}
                       </p>
                     </div>
 
                     <div className="flex items-center gap-2 shrink-0">
-                      {selectedProject.isPubliclyVisible === true && (
+                      {isProjectPubliclyDisclosed(selectedProject) && (
                         <Button
                           variant="outline"
                           size="sm"
@@ -1539,23 +1587,31 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
                         </Button>
                       )}
 
-                      <Button
-                        variant={selectedProject.isPubliclyVisible === true ? 'outline' : 'gov'}
-                        size="sm"
-                        disabled={publishingVisibility}
-                        onClick={() => handleTogglePublicVisibility(selectedProject)}
-                        className={
-                          selectedProject.isPubliclyVisible === true
-                            ? 'text-xs text-rose-700 border-rose-300 hover:bg-rose-50'
-                            : 'text-xs bg-[#002B49] text-white hover:bg-slate-800'
-                        }
-                      >
-                        {publishingVisibility
-                          ? 'Updating...'
-                          : selectedProject.isPubliclyVisible === true
-                          ? 'Revoke Public Publication'
-                          : 'Publish to Public Portal'}
-                      </Button>
+                      {isProjectPubliclyDisclosed(selectedProject) ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={publishingVisibility}
+                          onClick={() => setRestrictionModalProject(selectedProject)}
+                          className="text-xs text-amber-700 border-amber-300 hover:bg-amber-50"
+                        >
+                          {publishingVisibility ? 'Updating...' : 'Restrict Public Disclosure'}
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="gov"
+                          size="sm"
+                          disabled={publishingVisibility}
+                          onClick={() => handleEstablishPublicDisclosure(selectedProject)}
+                          className="text-xs bg-[#002B49] text-white hover:bg-slate-800"
+                        >
+                          {publishingVisibility
+                            ? 'Updating...'
+                            : selectedProject.publicDisclosureStatus === 'RESTRICTED'
+                            ? 'Restore Public Disclosure'
+                            : 'Establish Public Disclosure'}
+                        </Button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -3243,6 +3299,81 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
                 className="bg-slate-900 hover:bg-slate-800 text-white"
               >
                 {actionProcessing ? 'Closing Exception...' : 'Resolve & Close Exception'}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Modal: Restrict Public Disclosure */}
+      <Modal
+        isOpen={Boolean(restrictionModalProject)}
+        onClose={() => {
+          if (!publishingVisibility) setRestrictionModalProject(null);
+        }}
+        title="Restrict Public Disclosure"
+        description="MPLAD guidelines establish public transparency by default for sanctioned civil works. Specify the statutory or administrative governance reason for restricting citizen portal access."
+      >
+        {restrictionModalProject && (
+          <div className="space-y-4">
+            <div className="p-3 bg-amber-50 rounded-lg border border-amber-200 text-xs space-y-1">
+              <span className="font-bold text-amber-900 block">{restrictionModalProject.title}</span>
+              <p className="text-amber-800 text-[11px]">
+                Restricting this project will immediately withdraw the public projection from the citizen transparency portal.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Administrative Restriction Reason <span className="text-rose-500">*</span>
+              </label>
+              <select
+                value={restrictionReason}
+                onChange={(e) => setRestrictionReason(e.target.value)}
+                className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg bg-white"
+              >
+                <option value="Administrative Baseline Review">Administrative Baseline Review (Incomplete statutory data)</option>
+                <option value="Sensitive Infrastructure Specification">Sensitive Infrastructure / Security Exemption</option>
+                <option value="Legal or Audit Hold">Legal or Statutory Audit Hold</option>
+                <option value="Tender / Award Documentation Recalibration">Tender / Award Documentation Recalibration</option>
+                <option value="Other">Other Administrative Justification</option>
+              </select>
+            </div>
+
+            {restrictionReason === 'Other' && (
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Specific Justification Note <span className="text-rose-500">*</span>
+                </label>
+                <textarea
+                  value={customRestrictionReason}
+                  onChange={(e) => setCustomRestrictionReason(e.target.value)}
+                  rows={3}
+                  placeholder="Record authoritative justification for public restriction..."
+                  required
+                  className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg"
+                />
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <Button
+                variant="outline"
+                size="sm"
+                type="button"
+                onClick={() => setRestrictionModalProject(null)}
+                disabled={publishingVisibility}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="gov"
+                size="sm"
+                onClick={handleConfirmRestrictDisclosure}
+                disabled={publishingVisibility || (restrictionReason === 'Other' && !customRestrictionReason.trim())}
+                className="bg-amber-700 hover:bg-amber-800 text-white"
+              >
+                {publishingVisibility ? 'Applying Restriction...' : 'Confirm Restriction'}
               </Button>
             </div>
           </div>
