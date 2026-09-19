@@ -1248,7 +1248,7 @@ export class ProjectService {
     const auditEvent: ProjectAuditEvent = {
       eventId,
       projectId,
-      action: 'STATUS_CHANGED',
+      action: 'DISCLOSURE_STATUS_CHANGED',
       actorId: authoritativeActorId,
       actorRole: 'government',
       actorName: user.name || 'Authorized Officer',

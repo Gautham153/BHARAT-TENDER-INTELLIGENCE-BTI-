@@ -1458,6 +1458,18 @@ service cloud.firestore {
            && getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.status != get(/databases/$(database)/documents/projects/$(incoming().projectId)).data.status
            && getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.lastStatusChangeEventId == eventId) ||
 
+          // DISCLOSURE_STATUS_CHANGED -> project public disclosure status changed in getAfter()
+          (incoming().action == 'DISCLOSURE_STATUS_CHANGED'
+           && exists(/databases/$(database)/documents/projects/$(incoming().projectId))
+           && getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.publicDisclosureStatus in ['PUBLIC', 'RESTRICTED']
+           && (
+             (getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.publicDisclosureStatus == 'PUBLIC'
+              && getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.isPubliclyVisible == true) ||
+             (getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.publicDisclosureStatus == 'RESTRICTED'
+              && getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.isPubliclyVisible == false)
+           )
+           && getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.lastStatusChangeEventId == eventId) ||
+
           // MILESTONE_CREATED -> referenced milestone created in getAfter()
           (incoming().action == 'MILESTONE_CREATED'
            && incoming().get('newState', {}).get('milestoneId', '') is string
@@ -1576,6 +1588,7 @@ service cloud.firestore {
               'PROJECT_CREATED',
               'PROJECT_UPDATED',
               'STATUS_CHANGED',
+              'DISCLOSURE_STATUS_CHANGED',
               'MILESTONE_CREATED',
               'MILESTONE_UPDATED',
               'PROGRESS_UPDATE_SUBMITTED',
