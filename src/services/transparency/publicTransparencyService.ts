@@ -339,7 +339,28 @@ export class PublicTransparencyService {
       publicDisclosureStatus: 'PUBLIC',
       lastUpdated,
       startDate: project.startDate || project.implementationStartDate,
-      plannedCompletionDate: project.plannedCompletionDate || project.targetCompletionDate,
+      plannedCompletionDate: (() => {
+        let date = project.plannedCompletionDate || project.targetCompletionDate;
+        if (!date) {
+          const durVal = project.durationValue ?? project.executionDurationValue ?? (project as any).durationMonths;
+          const durUnit = project.durationUnit ?? project.executionDurationUnit ?? 'months';
+          const baseDateStr = project.startDate || project.implementationStartDate || project.createdAt;
+          if (durVal && Number(durVal) > 0 && baseDateStr) {
+            const base = new Date(baseDateStr);
+            if (!isNaN(base.getTime())) {
+              if (durUnit === 'days') {
+                base.setDate(base.getDate() + Number(durVal));
+              } else if (durUnit === 'weeks') {
+                base.setDate(base.getDate() + Number(durVal) * 7);
+              } else {
+                base.setMonth(base.getMonth() + Number(durVal));
+              }
+              date = base.toISOString();
+            }
+          }
+        }
+        return date;
+      })(),
       actualCompletionDate: project.actualCompletionDate,
     };
   }

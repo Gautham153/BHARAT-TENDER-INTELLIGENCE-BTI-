@@ -28,6 +28,8 @@ import {
   CitizenReportStatus,
   CitizenReportAdvisoryResult,
   CITIZEN_REPORT_NATURE_LABELS,
+  CITIZEN_REPORT_STATUS_CONFIG,
+  PublicCitizenReportStatusDTO,
 } from '../../types/citizenReport.js';
 import { ProjectAuditEvent, ProjectAuditAction } from '../../types/project.js';
 import { DEMONSTRATION_CITIZEN_REPORTS } from '../../data/demonstrationCitizenReports.js';
@@ -328,6 +330,51 @@ export class CitizenReportService {
 
     const local = getLocalReports();
     return local.find((r) => r.reportId === reportId) || DEMONSTRATION_CITIZEN_REPORTS.find((r) => r.reportId === reportId) || null;
+  }
+
+  /**
+   * Public-facing tracking endpoint:
+   * Retrieves a strictly sanitized, public-safe status for a submitted citizen report.
+   * Section 33A fail-closed: If not found or invalid, returns null without exposing internal state.
+   * Absolutely never reveals reporter identity, officer names, internal memos, risk score, AI advisory, or evidence chain.
+   */
+  static async trackReportPublic(reportId: string): Promise<PublicCitizenReportStatusDTO | null> {
+    if (!reportId || !reportId.trim()) return null;
+    const cleanId = reportId.trim();
+
+    try {
+      const report = await this.getReportById(cleanId);
+      if (!report) return null;
+
+      const status = report.status || 'SUBMITTED';
+      const statusCfg = CITIZEN_REPORT_STATUS_CONFIG[status] || {
+        label: status,
+        description: 'Report is logged in the official BTI monitoring registry.',
+        colorClass: 'bg-slate-100 text-slate-700 border-slate-200',
+      };
+      const natureCfg = CITIZEN_REPORT_NATURE_LABELS[report.natureOfAnomaly] || {
+        label: 'Implementation Observation',
+        description: '',
+      };
+
+      return {
+        reportId: report.reportId,
+        submittedAt: report.submittedAt,
+        projectTitle: report.projectNameSnapshot || (report as any).projectTitle || 'MPLAD Project',
+        projectId: report.projectId,
+        status,
+        statusLabel: statusCfg.label,
+        statusDescription: statusCfg.description,
+        statusColorClass: statusCfg.colorClass,
+        updatedAt: report.updatedAt || report.submittedAt,
+        natureOfAnomalyLabel: natureCfg.label,
+        locationSnapshot: report.constituencySnapshot || report.projectLocationSnapshot,
+        isDemonstrationData: report.isDemonstrationData,
+      };
+    } catch (err) {
+      console.warn('[CitizenReportService] Public report tracking resolution error:', err);
+      return null;
+    }
   }
 
   /**

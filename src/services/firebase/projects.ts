@@ -847,6 +847,36 @@ export class ProjectService {
     const canonicalOrgId = proposal.organizationId || orgId;
     const authoritativeActorId = getAuthoritativeUid(user);
 
+    // Deterministically calculate target completion date from authoritative commencement & execution duration baseline
+    const durationValue =
+      proposal.timeline?.proposedDurationValue ??
+      (proposal as any).durationValue ??
+      tender.durationValue ??
+      (tender as any).timeline?.durationValue;
+    const durationUnit =
+      proposal.timeline?.proposedDurationUnit ??
+      (proposal as any).durationUnit ??
+      tender.durationUnit ??
+      (tender as any).timeline?.durationUnit ??
+      'months';
+
+    let targetCompletionDate: string | undefined =
+      proposal.timeline?.proposedCompletionDate?.trim() ||
+      (proposal as any).proposedCompletionDate?.trim() ||
+      undefined;
+
+    if (!targetCompletionDate && durationValue && durationValue > 0) {
+      const baseDate = new Date(nowIso);
+      if (durationUnit === 'days') {
+        baseDate.setDate(baseDate.getDate() + durationValue);
+      } else if (durationUnit === 'weeks') {
+        baseDate.setDate(baseDate.getDate() + durationValue * 7);
+      } else {
+        baseDate.setMonth(baseDate.getMonth() + durationValue);
+      }
+      targetCompletionDate = baseDate.toISOString();
+    }
+
     const newProject: Project = {
       id: projectId,
       projectNumber,
@@ -866,7 +896,12 @@ export class ProjectService {
       sanctionedAmount,
       awardedAmount,
       startDate: nowIso,
-      plannedCompletionDate: proposal.timeline?.proposedCompletionDate?.trim() || (proposal as any).proposedCompletionDate?.trim() || undefined,
+      implementationStartDate: nowIso,
+      plannedCompletionDate: targetCompletionDate,
+      durationValue: durationValue ? Number(durationValue) : undefined,
+      durationUnit: durationValue ? durationUnit : undefined,
+      executionDurationValue: durationValue ? Number(durationValue) : undefined,
+      executionDurationUnit: durationValue ? durationUnit : undefined,
       status: 'NOT_STARTED',
       physicalProgressPercent: 0,
       financialProgressPercent: 0,
@@ -884,7 +919,7 @@ export class ProjectService {
       utilizedAmount: 0,
       physicalProgress: 0,
       financialProgress: 0,
-      targetCompletionDate: proposal.timeline?.proposedCompletionDate?.trim() || (proposal as any).proposedCompletionDate?.trim() || undefined,
+      targetCompletionDate: targetCompletionDate,
       publicDisclosureStatus: 'PUBLIC',
       isPubliclyVisible: true,
     };

@@ -32,9 +32,10 @@ interface CitizenReportModalProps {
   project: PublicProjectDTO;
   isOpen: boolean;
   onClose: () => void;
+  onNavigate?: (path: string) => void;
 }
 
-export const CitizenReportModal: React.FC<CitizenReportModalProps> = ({ project, isOpen, onClose }) => {
+export const CitizenReportModal: React.FC<CitizenReportModalProps> = ({ project, isOpen, onClose, onNavigate }) => {
   const [reporterMode, setReporterMode] = useState<CitizenReporterMode>('ANONYMOUS');
   const [reporterName, setReporterName] = useState('');
   const [reporterMobile, setReporterMobile] = useState('');
@@ -264,12 +265,26 @@ export const CitizenReportModal: React.FC<CitizenReportModalProps> = ({ project,
                 </p>
               </div>
 
-              <div className="pt-2">
+              <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
+                {onNavigate && (
+                  <button
+                    id="citizen-report-receipt-track-btn"
+                    type="button"
+                    onClick={() => {
+                      const id = submissionReceipt.reportId;
+                      handleResetAndClose();
+                      onNavigate(`/transparency/track?id=${encodeURIComponent(id)}`);
+                    }}
+                    className="px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-slate-950 text-sm font-bold rounded-lg shadow-sm transition-colors cursor-pointer"
+                  >
+                    Track Report Online &rarr;
+                  </button>
+                )}
                 <button
                   id="citizen-report-receipt-done-btn"
                   type="button"
                   onClick={handleResetAndClose}
-                  className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-sm font-semibold rounded-lg shadow-sm transition-colors"
+                  className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-sm font-semibold rounded-lg shadow-sm transition-colors cursor-pointer"
                 >
                   Done
                 </button>

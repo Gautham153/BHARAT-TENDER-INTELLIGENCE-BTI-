@@ -74,6 +74,10 @@ export interface Project {
   plannedCompletionDate?: string;
   actualCompletionDate?: string;
   completionChecklist?: ProjectCompletionChecklist;
+  durationValue?: number;
+  durationUnit?: 'days' | 'weeks' | 'months';
+  executionDurationValue?: number;
+  executionDurationUnit?: 'days' | 'weeks' | 'months';
 
   status: ProjectStatus;
 

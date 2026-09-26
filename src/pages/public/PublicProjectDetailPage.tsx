@@ -705,6 +705,7 @@ export const PublicProjectDetailPage: React.FC<PublicProjectDetailPageProps> = (
           project={project}
           isOpen={isReportModalOpen}
           onClose={() => setIsReportModalOpen(false)}
+          onNavigate={onNavigate}
         />
       )}
     </div>

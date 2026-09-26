@@ -11,6 +11,7 @@ import { PublicMapPage } from './pages/public/PublicMapPage';
 import { TransparencyLandingPage } from './pages/public/TransparencyLandingPage';
 import { PublicProjectDirectoryPage } from './pages/public/PublicProjectDirectoryPage';
 import { PublicProjectDetailPage } from './pages/public/PublicProjectDetailPage';
+import { PublicTrackReportPage } from './pages/public/PublicTrackReportPage';
 import { HowItWorksPage } from './pages/public/HowItWorksPage';
 import { AboutPage } from './pages/public/AboutPage';
 import { ResourcesPage } from './pages/public/ResourcesPage';
@@ -228,6 +229,19 @@ function AppContent() {
                   onNavigate={navigate}
                   initialSearch={queryParams.get('search') || ''}
                   initialStatus={queryParams.get('status') || ''}
+                />
+              );
+            }
+
+            if (
+              pathWithoutQuery === '/transparency/track' ||
+              pathWithoutQuery === '/transparency/track-report' ||
+              pathWithoutQuery === '/track-report'
+            ) {
+              return (
+                <PublicTrackReportPage
+                  onNavigate={navigate}
+                  initialReportId={queryParams.get('id') || ''}
                 />
               );
             }

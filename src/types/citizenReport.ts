@@ -264,3 +264,24 @@ export interface CitizenReportAdvisoryResult {
   limitations: string;
   generatedAt: string;
 }
+
+/**
+ * Sanitized, public-safe DTO for citizen report tracking.
+ * Strictly excludes reporter identity, officer names, investigation notes,
+ * internal AI advisory/risk scores, and evidence chain data.
+ */
+export interface PublicCitizenReportStatusDTO {
+  reportId: string;
+  submittedAt: string;
+  projectTitle: string;
+  projectId: string;
+  status: CitizenReportStatus;
+  statusLabel: string;
+  statusDescription: string;
+  statusColorClass: string;
+  updatedAt: string;
+  natureOfAnomalyLabel: string;
+  locationSnapshot?: string;
+  isDemonstrationData?: boolean;
+}
+

@@ -87,7 +87,7 @@ export const TransparencyLandingPage: React.FC<TransparencyLandingPageProps> = (
             Explore publicly available information about monitored MPLAD implementation projects. Track sanctioned allocations, awarded contracts, verified public fund disbursals, and ground physical milestones in your constituency.
           </p>
 
-          {/* Search Box */}
+          {/* Search Box & Quick Track CTA */}
           <form onSubmit={handleSearchSubmit} className="pt-2 flex flex-col sm:flex-row gap-3">
             <div className="relative flex-1">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
@@ -103,9 +103,18 @@ export const TransparencyLandingPage: React.FC<TransparencyLandingPageProps> = (
               type="submit"
               variant="primary"
               size="lg"
-              className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold px-6 shadow-md"
+              className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold px-6 shadow-md cursor-pointer"
             >
               Search Projects
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="lg"
+              onClick={() => onNavigate('/transparency/track')}
+              className="bg-white/10 hover:bg-white/20 text-white border-white/30 font-bold px-5 shadow-md cursor-pointer shrink-0"
+            >
+              Track a Report &rarr;
             </Button>
           </form>
         </div>
