@@ -46,6 +46,7 @@ const LOCAL_STORAGE_NOTES_KEY = 'bti_investigation_notes_cache_v1';
 const LOCAL_STORAGE_AUDIT_EVENTS_KEY = 'bti_project_audit_events_cache_v1';
 const INVESTIGATION_NOTES_COLLECTION = 'projectInvestigationNotes';
 const AUDIT_EVENTS_COLLECTION = 'projectAuditEvents';
+const LOCAL_STORAGE_LINKED_EVIDENCE_KEY = 'bti_linked_citizen_evidence_cache_v1';
 
 function getLocalItems<T>(key: string, fallback: T[]): T[] {
   try {
@@ -82,10 +83,11 @@ export class EvidenceChainService {
   }> {
     const isLive = isLiveFirestoreSession();
     const isDemo = isDemoSession();
+    const isExplicitDemoProject = projectId.startsWith('demo-') || projectId.startsWith('proj-demo-');
 
     let project = await ProjectService.getProjectById(projectId);
-    // Demonstration records must ONLY be used when explicitly operating in demonstration mode/context
-    if (!project && (isDemo || (!isLive && DEMONSTRATION_PROJECTS.some((p) => p.id === projectId)))) {
+    // Demonstration records must ONLY be used when explicitly operating in demonstration mode/context or explicit demo project IDs
+    if (!project && (isDemo || (!isLive && DEMONSTRATION_PROJECTS.some((p) => p.id === projectId)) || isExplicitDemoProject)) {
       project = DEMONSTRATION_PROJECTS.find((p) => p.id === projectId) || null;
     }
     if (!project) {
@@ -93,22 +95,58 @@ export class EvidenceChainService {
     }
 
     let [milestones, updates, financialRecords, inspections, auditEvents, anomalies] = await Promise.all([
-      ProjectService.getMilestones(projectId).catch(() => []),
-      ProjectService.getProgressUpdates(projectId).catch(() => []),
-      ProjectService.getFinancialRecords(projectId).catch(() => []),
-      ProjectService.getInspections(projectId).catch(() => []),
-      ProjectService.getAuditEvents(projectId).catch(() => []),
-      AnomalyDetectionService.getProjectAnomalies(projectId).catch(() => []),
+      ProjectService.getMilestones(projectId).catch((err) => {
+        if (isLive && !isExplicitDemoProject) {
+          console.error(`[EvidenceChainService] Live Firestore error in getMilestones for ${projectId}:`, err);
+          throw err;
+        }
+        return [];
+      }),
+      ProjectService.getProgressUpdates(projectId).catch((err) => {
+        if (isLive && !isExplicitDemoProject) {
+          console.error(`[EvidenceChainService] Live Firestore error in getProgressUpdates for ${projectId}:`, err);
+          throw err;
+        }
+        return [];
+      }),
+      ProjectService.getFinancialRecords(projectId).catch((err) => {
+        if (isLive && !isExplicitDemoProject) {
+          console.error(`[EvidenceChainService] Live Firestore error in getFinancialRecords for ${projectId}:`, err);
+          throw err;
+        }
+        return [];
+      }),
+      ProjectService.getInspections(projectId).catch((err) => {
+        if (isLive && !isExplicitDemoProject) {
+          console.error(`[EvidenceChainService] Live Firestore error in getInspections for ${projectId}:`, err);
+          throw err;
+        }
+        return [];
+      }),
+      ProjectService.getAuditEvents(projectId).catch((err) => {
+        if (isLive && !isExplicitDemoProject) {
+          console.error(`[EvidenceChainService] Live Firestore error in getAuditEvents for ${projectId}:`, err);
+          throw err;
+        }
+        return [];
+      }),
+      AnomalyDetectionService.getProjectAnomalies(projectId).catch((err) => {
+        if (isLive && !isExplicitDemoProject) {
+          console.error(`[EvidenceChainService] Live Firestore error in getProjectAnomalies for ${projectId}:`, err);
+          throw err;
+        }
+        return [];
+      }),
     ]);
 
-    // Fallbacks to demonstration dataset ONLY when explicitly in demo mode or non-live demo context.
+    // Fallbacks to demonstration dataset ONLY when explicitly in demo mode or explicit demo project ID.
     // For a real authenticated/live Firestore project:
     // - Firestore is authoritative.
     // - If a collection has no records, return no evidence / missing evidence.
     // - NEVER silently substitute demonstration records because a live collection is empty.
     // - NEVER mix live project records with demonstration records.
-    const allowDemoFallback = isDemo || (!isLive && DEMONSTRATION_PROJECTS.some((p) => p.id === projectId));
-    if (allowDemoFallback) {
+    const allowDemoFallback = !isLive || isDemo || isExplicitDemoProject;
+    if (allowDemoFallback && (!isLive || isExplicitDemoProject)) {
       if (milestones.length === 0) {
         milestones = DEMONSTRATION_MILESTONES.filter((m) => m.projectId === projectId);
       }
@@ -153,6 +191,27 @@ export class EvidenceChainService {
 
     // 2. Build Supporting Evidence Items
     const evidenceItems = this.buildEvidenceItems(anomaly, project, milestones, updates, financialRecords, inspections);
+
+    // Retrieve verified citizen report evidence linked to this finding or project
+    if (isLiveFirestoreSession()) {
+      const linkedCitizenEvidence = await this.getLinkedCitizenEvidence(projectId, stableFindingId, anomaly);
+      for (const item of linkedCitizenEvidence) {
+        if (!evidenceItems.some((e) => e.evidenceId === item.evidenceId || e.sourceId === item.sourceId)) {
+          evidenceItems.push(item);
+        }
+      }
+    } else {
+      try {
+        const linkedCitizenEvidence = await this.getLinkedCitizenEvidence(projectId, stableFindingId, anomaly);
+        for (const item of linkedCitizenEvidence) {
+          if (!evidenceItems.some((e) => e.evidenceId === item.evidenceId || e.sourceId === item.sourceId)) {
+            evidenceItems.push(item);
+          }
+        }
+      } catch (e) {
+        console.warn('[EvidenceChainService] Linked citizen evidence lookup warning:', e);
+      }
+    }
 
     // 3. Build Unified Chronological Project Timeline
     const timeline = this.buildTimeline(project, milestones, updates, financialRecords, inspections, auditEvents, anomaly);
@@ -1392,7 +1451,9 @@ export class EvidenceChainService {
     const isInvestigationOrAnomalyAction =
       action.startsWith('ANOMALY_') ||
       action.startsWith('AI_RISK_') ||
-      action === 'INVESTIGATION_NOTE_ADDED';
+      action.startsWith('CITIZEN_REPORT_') ||
+      action === 'INVESTIGATION_NOTE_ADDED' ||
+      action === 'INVESTIGATION_ADVISORY_GENERATED';
 
     if (!isInvestigationOrAnomalyAction) {
       return false;
@@ -1414,6 +1475,9 @@ export class EvidenceChainService {
       if (state.occurrenceId && state.occurrenceId === occurrenceId) {
         return true;
       }
+      if (state.linkedFindingId && (state.linkedFindingId === stableFindingId || state.linkedFindingId === occurrenceId)) {
+        return true;
+      }
     }
 
     // 2. Structured previousState check
@@ -1423,6 +1487,9 @@ export class EvidenceChainService {
         return true;
       }
       if (state.anomalyId && state.anomalyId === occurrenceId) {
+        return true;
+      }
+      if (state.linkedFindingId && (state.linkedFindingId === stableFindingId || state.linkedFindingId === occurrenceId)) {
         return true;
       }
     }
@@ -1653,6 +1720,47 @@ export class EvidenceChainService {
           return null;
         }
       }
+      case 'CITIZEN_REPORT': {
+        try {
+          const { CitizenReportService } = await import('../citizen/citizenReportService.js');
+          const report = await CitizenReportService.getReportById(sourceId);
+          if (report) {
+            // Strip any sensitive private fields (protect reporter identity)
+            return {
+              reportId: report.reportId,
+              projectId: report.projectId,
+              projectName: report.projectNameSnapshot,
+              natureOfAnomaly: report.natureOfAnomaly,
+              specificEvidence: report.specificEvidence,
+              locationDetails: report.locationDetails,
+              status: report.status,
+              reporterMode: report.reporterMode,
+              submittedAt: report.submittedAt,
+              reviewedAt: report.reviewedAt,
+              reviewedByName: report.reviewedByName,
+              verifiedAt: report.verifiedAt,
+              verifiedByName: report.verifiedByName,
+              verificationNotes: report.verificationNotes,
+              verificationDecision: report.verificationDecision,
+              linkedFindingId: report.linkedFindingId,
+              linkedFindingTitle: report.linkedFindingTitle,
+              linkedExceptionId: report.linkedExceptionId,
+              linkedExceptionTitle: report.linkedExceptionTitle,
+              mediaCount: report.media?.length || 0,
+              media: report.media?.map((m) => ({
+                mediaId: m.mediaId,
+                name: m.name,
+                type: m.type,
+                caption: m.caption,
+                uploadedAt: m.uploadedAt,
+              })),
+            };
+          }
+          return null;
+        } catch {
+          return null;
+        }
+      }
       default:
         return null;
     }
@@ -1820,5 +1928,253 @@ export class EvidenceChainService {
       version: '1.0',
       timestamp: new Date().toISOString(),
     };
+  }
+
+  /**
+   * Retrieves verified citizen report evidence linked to a project and finding.
+   * LIVE FIRESTORE SESSION:
+   * - Firestore citizenProjectReports is authoritative.
+   * - Lookup failure surfaces the error immediately.
+   * - Never silently continues or falls back to local/demo cache.
+   * - Missing records return empty array (no authoritative evidence).
+   * EXPLICIT DEMO SESSION:
+   * - Retains demo reports and non-authoritative local cache for offline/demo operation.
+   */
+  private static async getLinkedCitizenEvidence(
+    projectId: string,
+    stableFindingId: string,
+    anomaly: ProjectAnomaly
+  ): Promise<EvidenceReference[]> {
+    const isLive = isLiveFirestoreSession() && db;
+
+    if (isLive) {
+      // 1. Authoritative derivation: Query authoritative verified citizen reports from Firestore
+      // Any query failure must surface and not be swallowed into local cache
+      const { CitizenReportService } = await import('../citizen/citizenReportService.js');
+      const verifiedReports = await CitizenReportService.getReports({
+        projectId,
+        status: 'VERIFIED_DISCREPANCY',
+      });
+
+      const results: EvidenceReference[] = [];
+      for (const report of verifiedReports) {
+        // A verified citizen report must appear in a finding's evidence chain ONLY when
+        // explicitly linked to this finding or its originating monitoring exception.
+        const isDirectlyLinkedToFinding = Boolean(
+          report.linkedFindingId &&
+          (report.linkedFindingId === stableFindingId || report.linkedFindingId === anomaly.id)
+        );
+
+        const isDirectlyLinkedToException = Boolean(
+          report.linkedExceptionId &&
+          ((anomaly as any).exceptionId === report.linkedExceptionId ||
+           anomaly.metrics?.createdExceptionId === report.linkedExceptionId ||
+           anomaly.metrics?.exceptionId === report.linkedExceptionId)
+        );
+
+        if (isDirectlyLinkedToFinding || isDirectlyLinkedToException) {
+          const evidenceId = `ev-cpr-${report.reportId}`;
+          results.push({
+            evidenceId,
+            sourceType: 'CITIZEN_REPORT',
+            sourceId: report.reportId,
+            projectId: report.projectId,
+            timestamp: report.verifiedAt || report.submittedAt || new Date().toISOString(),
+            title: `Citizen Social Audit Discrepancy: ${report.natureOfAnomaly || 'Observation'}`,
+            description: report.specificEvidence || 'Verified citizen observation lead.',
+            relevance: isDirectlyLinkedToFinding
+              ? `Citizen social audit observation directly linked to finding "${stableFindingId}" during nodal review.`
+              : `Verified citizen social audit discrepancy connected to official monitoring exception [${report.linkedExceptionId}].`,
+            classification: 'DIRECT',
+            metrics: {
+              severity: report.linkedExceptionId ? 'HIGH' : 'MEDIUM',
+              natureOfAnomaly: report.natureOfAnomaly,
+              createdExceptionId: report.linkedExceptionId,
+            },
+            recordSnippet: {
+              reportId: report.reportId,
+              projectId: report.projectId,
+              natureOfAnomaly: report.natureOfAnomaly,
+              reporterMode: report.reporterMode,
+              locationDetails: report.locationDetails,
+              specificEvidence: report.specificEvidence,
+              createdExceptionId: report.linkedExceptionId,
+              linkedFindingId: report.linkedFindingId,
+              verifiedBy: report.verifiedByName,
+              verifiedAt: report.verifiedAt,
+            },
+          });
+        }
+      }
+
+      // Live Firestore lookup: never fall back to or merge local cache
+      return results;
+    }
+
+    // 2. Demonstration / offline session handling: strictly non-authoritative
+    const results: EvidenceReference[] = [];
+    try {
+      const { CitizenReportService } = await import('../citizen/citizenReportService.js');
+      const verifiedReports = await CitizenReportService.getReports({
+        projectId,
+        status: 'VERIFIED_DISCREPANCY',
+      });
+
+      for (const report of verifiedReports) {
+        const isDirectlyLinkedToFinding = Boolean(
+          report.linkedFindingId &&
+          (report.linkedFindingId === stableFindingId || report.linkedFindingId === anomaly.id)
+        );
+
+        const isDirectlyLinkedToException = Boolean(
+          report.linkedExceptionId &&
+          ((anomaly as any).exceptionId === report.linkedExceptionId ||
+           anomaly.metrics?.createdExceptionId === report.linkedExceptionId ||
+           anomaly.metrics?.exceptionId === report.linkedExceptionId)
+        );
+
+        if (isDirectlyLinkedToFinding || isDirectlyLinkedToException) {
+          const evidenceId = `ev-cpr-${report.reportId}`;
+          results.push({
+            evidenceId,
+            sourceType: 'CITIZEN_REPORT',
+            sourceId: report.reportId,
+            projectId: report.projectId,
+            timestamp: report.verifiedAt || report.submittedAt || new Date().toISOString(),
+            title: `Citizen Social Audit Discrepancy: ${report.natureOfAnomaly || 'Observation'}`,
+            description: report.specificEvidence || 'Verified citizen observation lead.',
+            relevance: isDirectlyLinkedToFinding
+              ? `Citizen social audit observation directly linked to finding "${stableFindingId}" during nodal review.`
+              : `Verified citizen social audit discrepancy connected to official monitoring exception [${report.linkedExceptionId}].`,
+            classification: 'DIRECT',
+            metrics: {
+              severity: report.linkedExceptionId ? 'HIGH' : 'MEDIUM',
+              natureOfAnomaly: report.natureOfAnomaly,
+              createdExceptionId: report.linkedExceptionId,
+            },
+            recordSnippet: {
+              reportId: report.reportId,
+              projectId: report.projectId,
+              natureOfAnomaly: report.natureOfAnomaly,
+              reporterMode: report.reporterMode,
+              locationDetails: report.locationDetails,
+              specificEvidence: report.specificEvidence,
+              createdExceptionId: report.linkedExceptionId,
+              linkedFindingId: report.linkedFindingId,
+              verifiedBy: report.verifiedByName,
+              verifiedAt: report.verifiedAt,
+            },
+          });
+        }
+      }
+    } catch (demoErr) {
+      console.warn('[EvidenceChainService] Demo citizen report lookup error:', demoErr);
+    }
+
+    try {
+      const cachedItems = getLocalItems<EvidenceReference>(LOCAL_STORAGE_LINKED_EVIDENCE_KEY, []);
+      for (const item of cachedItems) {
+        if (item.projectId === projectId) {
+          const itemFindingId = item.recordSnippet?.linkedFindingId;
+          const itemExceptionId = item.recordSnippet?.createdExceptionId;
+          const isLinked = Boolean(
+            (itemFindingId && (itemFindingId === stableFindingId || itemFindingId === anomaly.id)) ||
+            (itemExceptionId && (
+              (anomaly as any).exceptionId === itemExceptionId ||
+              anomaly.metrics?.createdExceptionId === itemExceptionId ||
+              anomaly.metrics?.exceptionId === itemExceptionId
+            ))
+          );
+          if (isLinked && !results.some((r) => r.sourceId === item.sourceId)) {
+            results.push(item);
+          }
+        }
+      }
+    } catch (cacheErr) {
+      console.warn('[EvidenceChainService] Non-authoritative local evidence cache read error:', cacheErr);
+    }
+
+    return results;
+  }
+
+  /**
+   * Links a verified citizen social audit report into the authoritative evidence chain.
+   * Creates and links an actual EvidenceReference (sourceType: CITIZEN_REPORT) retrievable
+   * through the existing Phase 8 Evidence Chain mechanism and viewable in the Evidence Record Modal.
+   */
+  static async addCitizenReportEvidence(params: {
+    projectId: string;
+    reportId: string;
+    title: string;
+    summary: string;
+    severity?: 'LOW' | 'MEDIUM' | 'HIGH';
+    natureOfAnomaly?: string;
+    specificEvidence?: string;
+    reporterMode?: string;
+    locationDetails?: string;
+    createdExceptionId?: string;
+    linkedFindingId?: string;
+    linkedFindingTitle?: string;
+    officerName?: string;
+    timestamp?: string;
+    relevance?: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<EvidenceReference> {
+    if (!params.projectId) {
+      throw new Error('Project ID is required to link citizen report evidence.');
+    }
+    if (!params.reportId) {
+      throw new Error('Report ID is required to link citizen report evidence.');
+    }
+
+    const findingId = params.linkedFindingId || `finding-cpr-${params.reportId}`;
+    const evidenceId = `ev-cpr-${params.reportId}`;
+    const timestamp = params.timestamp || new Date().toISOString();
+
+    const evidenceReference: EvidenceReference = {
+      evidenceId,
+      sourceType: 'CITIZEN_REPORT',
+      sourceId: params.reportId,
+      projectId: params.projectId,
+      timestamp,
+      title: params.title || `Citizen Social Audit Discrepancy: ${params.natureOfAnomaly || 'Observation'}`,
+      description: params.summary || params.specificEvidence || 'Citizen report field observation.',
+      relevance:
+        params.relevance ||
+        (params.linkedFindingId
+          ? `Verified citizen social audit report directly linked to finding "${findingId}" during nodal review.`
+          : `Verified citizen social audit report substantiating ground-level physical or financial discrepancy.`),
+      classification: 'DIRECT',
+      metrics: {
+        severity: params.severity || 'MEDIUM',
+        natureOfAnomaly: params.natureOfAnomaly,
+        createdExceptionId: params.createdExceptionId,
+      },
+      recordSnippet: {
+        reportId: params.reportId,
+        projectId: params.projectId,
+        natureOfAnomaly: params.natureOfAnomaly,
+        reporterMode: params.reporterMode,
+        locationDetails: params.locationDetails,
+        specificEvidence: params.specificEvidence || params.summary,
+        createdExceptionId: params.createdExceptionId,
+        linkedFindingId: params.linkedFindingId,
+        linkedFindingTitle: params.linkedFindingTitle,
+        verifiedBy: params.officerName || 'District Nodal Officer',
+        verifiedAt: timestamp,
+        ...(params.metadata || {}),
+      },
+    };
+
+    // Persist into linked citizen evidence cache ONLY for explicit demo / offline sessions.
+    // In live Firestore sessions, do not write to local cache — Firestore citizenProjectReports is the sole authoritative source of truth.
+    if (!isLiveFirestoreSession()) {
+      const existing = getLocalItems<EvidenceReference>(LOCAL_STORAGE_LINKED_EVIDENCE_KEY, []);
+      const filtered = existing.filter((e) => !(e.sourceId === params.reportId && e.projectId === params.projectId));
+      filtered.unshift(evidenceReference);
+      saveLocalItems(LOCAL_STORAGE_LINKED_EVIDENCE_KEY, filtered);
+    }
+
+    return evidenceReference;
   }
 }

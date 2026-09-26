@@ -21,6 +21,8 @@ import {
   Activity,
   AlertTriangle,
   ListChecks,
+  MessageSquare,
+  MapPin,
 } from 'lucide-react';
 
 interface EvidenceRecordModalProps {
@@ -98,6 +100,11 @@ export const EvidenceRecordModal: React.FC<EvidenceRecordModalProps> = ({
 
   const isInspection = evidence.sourceType === 'INSPECTION';
   const inspectionRecord: any = isInspection
+    ? { ...(evidence.recordSnippet || {}), ...(fetchedRecord || {}) }
+    : null;
+
+  const isCitizenReport = evidence.sourceType === 'CITIZEN_REPORT';
+  const citizenRecord: any = isCitizenReport
     ? { ...(evidence.recordSnippet || {}), ...(fetchedRecord || {}) }
     : null;
 
@@ -444,9 +451,128 @@ export const EvidenceRecordModal: React.FC<EvidenceRecordModalProps> = ({
         )}
 
         {/* ------------------------------------------------------------- */}
+        {/* SOURCE-SPECIFIC VIEW: CITIZEN SOCIAL AUDIT OBSERVATION RECORD  */}
+        {/* ------------------------------------------------------------- */}
+        {isCitizenReport && citizenRecord && (
+          <div className="space-y-4">
+            {/* Citizen Social Audit Header Card */}
+            <div className="p-4 bg-white border border-slate-200 rounded-xl space-y-3 shadow-xs">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                <div className="flex items-center gap-2">
+                  <MessageSquare className="w-4 h-4 text-emerald-700" />
+                  <span className="text-xs font-bold text-slate-900 uppercase tracking-wide">
+                    Citizen Social Audit Discrepancy Lead
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200">
+                    {citizenRecord.natureOfAnomaly ? String(citizenRecord.natureOfAnomaly).replace(/_/g, ' ') : 'OBSERVATION LEAD'}
+                  </span>
+                  <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
+                    {citizenRecord.reporterMode === 'ANONYMOUS' ? 'Anonymous Lead' : 'Identified Lead'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div>
+                  <span className="text-[11px] font-medium text-slate-500 block">Report Reference</span>
+                  <span className="font-mono font-bold text-slate-900">{citizenRecord.reportId || evidence.sourceId}</span>
+                </div>
+                <div>
+                  <span className="text-[11px] font-medium text-slate-500 block">Submission Date</span>
+                  <span className="font-semibold text-slate-800">
+                    {citizenRecord.submittedAt ? new Date(citizenRecord.submittedAt).toLocaleString('en-IN') : 'Recorded'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Field Observation & Evidence */}
+            <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
+              <span className="text-xs font-bold text-slate-900 uppercase tracking-wide flex items-center gap-1.5">
+                <FileText className="w-4 h-4 text-slate-600" />
+                Citizen Field Observation & Specific Evidence
+              </span>
+              <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-wrap bg-white p-3 rounded-lg border border-slate-200/80">
+                {citizenRecord.specificEvidence || evidence.description || 'Field observation recorded.'}
+              </p>
+            </div>
+
+            {/* Location Details if provided */}
+            {citizenRecord.locationDetails && (
+              <div className="p-3 bg-white border border-slate-200 rounded-xl space-y-1 text-xs">
+                <span className="font-bold text-slate-800 flex items-center gap-1.5">
+                  <MapPin className="w-3.5 h-3.5 text-slate-500" />
+                  Site Location & Landmark Details
+                </span>
+                <p className="text-slate-600 pl-5">{citizenRecord.locationDetails}</p>
+              </div>
+            )}
+
+            {/* Official Nodal Officer Verification Decision */}
+            <div className="p-4 bg-emerald-50/70 border border-emerald-200 rounded-xl space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-emerald-950 flex items-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-700" />
+                  Government Social Audit Verification
+                </span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-200 text-emerald-900">
+                  VERIFIED DISCREPANCY
+                </span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-emerald-900">
+                <div>
+                  <span className="text-[11px] text-emerald-700 block">Verified By</span>
+                  <span className="font-semibold">{citizenRecord.verifiedBy || citizenRecord.verifiedByName || 'District Nodal Officer'}</span>
+                </div>
+                {citizenRecord.verifiedAt && (
+                  <div>
+                    <span className="text-[11px] text-emerald-700 block">Verification Timestamp</span>
+                    <span>{new Date(citizenRecord.verifiedAt).toLocaleString('en-IN')}</span>
+                  </div>
+                )}
+              </div>
+              {citizenRecord.verificationNotes && (
+                <div className="mt-2 pt-2 border-t border-emerald-200 text-emerald-950">
+                  <span className="text-[11px] font-bold block mb-1">Nodal Officer Decision Notes:</span>
+                  <p className="italic bg-white/70 p-2 rounded border border-emerald-200">
+                    "{citizenRecord.verificationNotes}"
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Downstream Linkages */}
+            {(citizenRecord.createdExceptionId || citizenRecord.linkedFindingId) && (
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2 text-xs">
+                <span className="font-bold text-slate-800 uppercase tracking-wide text-[11px]">
+                  Authoritative Downstream Linkages
+                </span>
+                <div className="space-y-1">
+                  {citizenRecord.createdExceptionId && (
+                    <div className="flex items-center justify-between bg-white px-3 py-1.5 rounded border border-slate-200">
+                      <span className="text-slate-600">Institutional Exception ID:</span>
+                      <span className="font-mono font-bold text-rose-700">{citizenRecord.createdExceptionId}</span>
+                    </div>
+                  )}
+                  {citizenRecord.linkedFindingId && (
+                    <div className="flex items-center justify-between bg-white px-3 py-1.5 rounded border border-slate-200">
+                      <span className="text-slate-600">Linked Anomaly Finding:</span>
+                      <span className="font-mono font-bold text-indigo-700">{citizenRecord.linkedFindingId}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ------------------------------------------------------------- */}
         {/* NON-INSPECTION SOURCES: Live Authoritative Stored Payload      */}
         {/* ------------------------------------------------------------- */}
         {!isInspection &&
+          !isCitizenReport &&
           fetchedRecord &&
           typeof fetchedRecord === 'object' &&
           Object.keys(fetchedRecord).length > 0 && (
@@ -478,6 +604,7 @@ export const EvidenceRecordModal: React.FC<EvidenceRecordModalProps> = ({
 
         {/* Raw Record Snippet & Stored Attributes for Non-Inspection Sources */}
         {!isInspection &&
+          !isCitizenReport &&
           (!fetchedRecord || Object.keys(fetchedRecord).length === 0) &&
           evidence.recordSnippet &&
           Object.keys(evidence.recordSnippet).length > 0 && (

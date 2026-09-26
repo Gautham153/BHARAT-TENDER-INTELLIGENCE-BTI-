@@ -31,6 +31,7 @@ import { ProposalReview } from './pages/government/ProposalReview';
 import { RiskAlerts } from './pages/government/RiskAlerts';
 import { FraudInvestigations } from './pages/government/FraudInvestigations';
 import { ProjectMonitoring } from './pages/government/ProjectMonitoring';
+import { CitizenReportsDeskPage } from './pages/government/CitizenReportsDeskPage';
 import { AuditLogsPage } from './pages/government/AuditLogsPage';
 import { AnalyticsReportsPage } from './pages/government/AnalyticsReportsPage';
 import { SettingsSecurityPage } from './pages/government/SettingsSecurityPage';
@@ -99,6 +100,8 @@ function AppContent() {
             return <FraudInvestigations onNavigate={navigate} />;
           case '/government/projects':
             return <ProjectMonitoring onNavigate={navigate} />;
+          case '/government/citizen-reports':
+            return <CitizenReportsDeskPage onNavigate={navigate} />;
           case '/government/projects/map':
             return <PublicMapPage onNavigate={navigate} />;
           case '/government/audit-logs':
@@ -108,7 +111,13 @@ function AppContent() {
           case '/government/settings':
             return <SettingsSecurityPage onNavigate={navigate} />;
           default: {
-            if (currentPath.startsWith('/government/tenders/')) {
+            if (currentPath.startsWith('/government/citizen-reports/')) {
+              const rawSubPath = currentPath.substring('/government/citizen-reports/'.length);
+              const reportId = rawSubPath.split('?')[0].split('#')[0].replace(/\/+$/, '');
+              if (reportId.length > 0) {
+                return <CitizenReportsDeskPage onNavigate={navigate} initialReportId={reportId} />;
+              }
+            } else if (currentPath.startsWith('/government/tenders/')) {
               const rawSubPath = currentPath.substring('/government/tenders/'.length);
               const cleanSubPath = rawSubPath.split('?')[0].split('#')[0].replace(/\/+$/, '');
               if (cleanSubPath.endsWith('/edit')) {

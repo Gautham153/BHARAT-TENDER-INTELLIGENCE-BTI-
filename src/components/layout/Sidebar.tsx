@@ -18,6 +18,7 @@ import {
   ShieldCheck,
   ShieldAlert,
   UserCheck,
+  Flag,
 } from 'lucide-react';
 import { BtiLogo } from '../common/BtiLogo';
 
@@ -59,6 +60,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'gov-risks', label: 'Anomaly & Risk Alerts', path: '/government/risk-alerts', icon: AlertTriangle, badge: 3, badgeVariant: 'danger' },
     { id: 'gov-inves', label: 'Fraud Investigations', path: '/government/investigations', icon: SearchCheck, badge: 2, badgeVariant: 'warning' },
     { id: 'gov-projects', label: 'Project Monitoring', path: '/government/projects', icon: FolderKanban },
+    { id: 'gov-citizen-reports', label: 'Citizen Reports Desk', path: '/government/citizen-reports', icon: Flag, badge: 'Social Audit', badgeVariant: 'warning' },
     { id: 'gov-map', label: 'National GIS Map', path: '/government/projects/map', icon: MapPin },
     { id: 'gov-analytics', label: 'Reports & Analytics', path: '/government/analytics', icon: BarChart3 },
     { id: 'gov-audit', label: 'System Audit Logs', path: '/government/audit-logs', icon: History },

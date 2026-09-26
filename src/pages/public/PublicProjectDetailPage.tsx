@@ -20,6 +20,7 @@ import {
   User,
   AlertTriangle,
   ClipboardList,
+  Flag,
 } from 'lucide-react';
 import { PublicTransparencyService } from '../../services/transparency/publicTransparencyService';
 import { PublicProjectDTO } from '../../types/publicTransparency';
@@ -27,6 +28,7 @@ import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { StatusBadge } from '../../components/ui/StatusBadge';
 import { ProgressBar } from '../../components/ui/ProgressBar';
+import { CitizenReportModal } from '../../components/public/CitizenReportModal';
 
 export interface PublicProjectDetailPageProps {
   projectId: string;
@@ -39,6 +41,7 @@ export const PublicProjectDetailPage: React.FC<PublicProjectDetailPageProps> = (
 }) => {
   const [project, setProject] = useState<PublicProjectDTO | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -197,15 +200,27 @@ export const PublicProjectDetailPage: React.FC<PublicProjectDetailPageProps> = (
             </div>
           </div>
 
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => onNavigate('/transparency/projects')}
-            icon={ArrowLeft}
-            className="self-start text-xs border-slate-300 text-slate-700 shrink-0 font-bold"
-          >
-            Back to Directory
-          </Button>
+          <div className="flex flex-wrap items-center gap-2.5 self-start">
+            <Button
+              id="report-project-issue-btn"
+              variant="gov"
+              size="sm"
+              onClick={() => setIsReportModalOpen(true)}
+              icon={Flag}
+              className="text-xs bg-amber-700 hover:bg-amber-800 text-white font-bold shadow-xs border border-amber-600"
+            >
+              Report a Project Issue
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onNavigate('/transparency/projects')}
+              icon={ArrowLeft}
+              className="text-xs border-slate-300 text-slate-700 shrink-0 font-bold"
+            >
+              Back to Directory
+            </Button>
+          </div>
         </div>
 
         {project.description && (
@@ -628,6 +643,31 @@ export const PublicProjectDetailPage: React.FC<PublicProjectDetailPageProps> = (
         </div>
       </div>
 
+      {/* Participatory Social Audit Callout */}
+      <div className="p-6 rounded-2xl bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200/90 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <span className="p-1.5 rounded-lg bg-amber-100 text-amber-800">
+              <Flag className="w-4 h-4" />
+            </span>
+            <h3 className="font-bold text-slate-900 text-sm">Participatory Citizen Social Audit</h3>
+          </div>
+          <p className="text-xs text-slate-600 max-w-2xl leading-relaxed">
+            Notice discrepancies between published milestones and on-ground execution? Citizens can submit geo-referenced observations and photo evidence for official verification by district monitoring engineers.
+          </p>
+        </div>
+        <Button
+          id="participatory-audit-action-btn"
+          variant="gov"
+          size="sm"
+          onClick={() => setIsReportModalOpen(true)}
+          icon={Flag}
+          className="bg-amber-700 hover:bg-amber-800 text-white font-bold text-xs shrink-0 shadow-xs"
+        >
+          Submit Observation
+        </Button>
+      </div>
+
       {/* SECTION 8: Data Sources / Provenance & Disclaimer */}
       <div className="p-6 sm:p-8 rounded-2xl bg-slate-50 border border-slate-200/90 space-y-4 text-xs">
         <div>
@@ -658,6 +698,15 @@ export const PublicProjectDetailPage: React.FC<PublicProjectDetailPageProps> = (
           {project.dataProvenance.disclaimer}
         </div>
       </div>
+
+      {/* Citizen Report Modal */}
+      {project && (
+        <CitizenReportModal
+          project={project}
+          isOpen={isReportModalOpen}
+          onClose={() => setIsReportModalOpen(false)}
+        />
+      )}
     </div>
   );
 };

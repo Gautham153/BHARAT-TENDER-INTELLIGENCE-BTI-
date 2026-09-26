@@ -3,7 +3,7 @@
 // Evaluates project data, deterministic anomalies, and milestones to generate decision-support narrative.
 
 import { GoogleGenAI } from '@google/genai';
-import { verifyServerAuth } from '../evaluation/serverAuth.js';
+import { verifyServerAuth, isServerDemoModeEnabled } from '../evaluation/serverAuth.js';
 import { parseFirestoreDoc } from '../evaluation/authoritativeDataService.js';
 import { RiskIntelligenceResult, RiskLevel } from '../../src/types/anomaly.js';
 import {
@@ -13,9 +13,10 @@ import {
   DEMONSTRATION_INSPECTIONS,
   DEMONSTRATION_PROGRESS_UPDATES,
 } from '../../src/data/demonstrationProjects.js';
+import { DEMONSTRATION_CITIZEN_REPORTS } from '../../src/data/demonstrationCitizenReports.js';
 
 const GEMINI_MODEL = 'gemini-3.8-flash';
-const ADVISORY_GEMINI_MODEL = 'gemini-3.5-flash';
+const ADVISORY_GEMINI_MODEL = 'gemini-3.8-flash';
 let geminiClientInstance: GoogleGenAI | null = null;
 
 function getGeminiClient(): GoogleGenAI | null {
@@ -56,6 +57,11 @@ export class ProjectRiskAiServerService {
     // Phase 8: Finding-specific Investigation Intelligence Advisory
     if ((params as any).mode === 'INVESTIGATION_ADVISORY' || (params as any).findingId) {
       return this.analyzeFindingInvestigation(params as any) as any;
+    }
+
+    // Phase 10: Citizen Grievance & Social Audit Comparison Advisory
+    if ((params as any).mode === 'CITIZEN_REPORT_ADVISORY' || (params as any).reportId || (params as any).report) {
+      return this.analyzeCitizenReportAdvisory(params as any) as any;
     }
 
     // 1. Authoritative Server-Side Token Authentication & RBAC Check
@@ -353,9 +359,14 @@ Return a single JSON object with these keys:
           token === 'bti-token-usr-ag-001' ||
           token.includes('usr-ag-001'))
     );
-    const isLiveAuth = Boolean(firebaseProjectId && token && !isDemoToken);
 
-    if (isLiveAuth) {
+    if (!isDemoToken) {
+      if (!firebaseProjectId) {
+        const error: any = new Error('Server Configuration Error: Firebase Project ID is not configured for production records.');
+        error.statusCode = 500;
+        throw error;
+      }
+
       let projRes: Response;
       try {
         projRes = await fetch(
@@ -463,6 +474,12 @@ Return a single JSON object with these keys:
     }
 
     // Ground truth fallback: ONLY accessible in explicit demonstration context
+    if (!isServerDemoModeEnabled()) {
+      const err: any = new Error('Unauthorized: Demonstration mode is not permitted in this production environment.');
+      err.statusCode = 401;
+      throw err;
+    }
+
     const demoProj = DEMONSTRATION_PROJECTS.find((p) => p.id === projectId);
     if (demoProj) {
       const demoMilestones = DEMONSTRATION_MILESTONES.filter((m) => m.projectId === projectId);
@@ -1127,6 +1144,282 @@ RESPONSE SCHEMA (RFC 8259 JSON ONLY):
       model: 'deterministic-rules-v1.0',
       version: '1.0',
       timestamp: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Phase 10: Citizen Grievance & Social Audit Advisory Analyzer
+   * Compares citizen claims & visual evidence against authoritative project baselines,
+   * milestones, verified financials, and inspections. Strictly decision-support.
+   */
+  async analyzeCitizenReportAdvisory(params: {
+    projectId: string;
+    reportId?: string;
+    report?: any;
+    authHeader?: string;
+  }): Promise<any> {
+    const { projectId, authHeader } = params;
+    const reportId = params.reportId || params.report?.reportId;
+
+    if (!reportId) {
+      const err: any = new Error('A valid citizen report ID (reportId) is required for advisory evaluation.');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    // 1. Authoritative Server-Side Token Authentication & RBAC Check
+    const authResult = await verifyServerAuth(authHeader);
+    const roleLower = (authResult.role || '').toLowerCase();
+    if (!roleLower.includes('gov')) {
+      const err: any = new Error(
+        `Access Denied: Citizen Report AI Advisory is restricted strictly to authorized government officers. Authenticated role: '${authResult.role}'.`
+      );
+      err.statusCode = 403;
+      throw err;
+    }
+
+    const rawToken = authHeader?.replace(/^Bearer\s+/i, '').trim();
+
+    // 2. Resolve authoritative project data
+    const authoritative = await this.resolveAuthoritativeProjectData(projectId, rawToken);
+    const project = authoritative.project;
+    if (!project) {
+      const err: any = new Error(`Project "${projectId}" not found in authoritative records.`);
+      err.statusCode = 404;
+      throw err;
+    }
+
+    const milestones = authoritative.milestonesSummary || [];
+    const financial = authoritative.financialSummary;
+    const inspections = authoritative.inspectionSummary || [];
+
+    // 3. Resolve authoritative citizen report document from server-side ground truth (Firestore / Demonstration)
+    let authoritativeReport: any = null;
+    const firebaseProjectId = process.env.VITE_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID;
+    const isDemoToken = Boolean(
+      rawToken &&
+        (rawToken.startsWith('mock-') ||
+          rawToken.startsWith('demo-') ||
+          rawToken.startsWith('bti-') ||
+          rawToken.includes('demo') ||
+          rawToken.includes('usr-gov-001') ||
+          rawToken === 'gov-officer-token')
+    );
+
+    if (!isDemoToken) {
+      if (!firebaseProjectId) {
+        const err: any = new Error('Server Configuration Error: Firebase Project ID is not configured for production records.');
+        err.statusCode = 500;
+        throw err;
+      }
+
+      let reportRes: Response;
+      try {
+        reportRes = await fetch(
+          `https://firestore.googleapis.com/v1/projects/${firebaseProjectId}/databases/(default)/documents/citizenProjectReports/${reportId}`,
+          { headers: { Authorization: `Bearer ${rawToken}` } }
+        );
+      } catch (fetchErr: any) {
+        console.error('[ProjectRiskAiServerService] Firestore report query error:', fetchErr);
+        const err: any = new Error(`Failed to query authoritative Firestore citizen report records: ${fetchErr?.message || fetchErr}`);
+        err.statusCode = 502;
+        throw err;
+      }
+
+      if (reportRes.ok) {
+        const docJson = await reportRes.json();
+        authoritativeReport = parseFirestoreDoc(docJson);
+      } else if (reportRes.status === 404) {
+        const err: any = new Error(`Citizen report "${reportId}" not found in authoritative records.`);
+        err.statusCode = 404;
+        throw err;
+      } else {
+        const err: any = new Error(`Failed to retrieve authoritative citizen report (status ${reportRes.status}).`);
+        err.statusCode = reportRes.status === 403 ? 403 : 502;
+        throw err;
+      }
+    } else {
+      // Demo / fallback ground truth lookup: strictly restricted to demo sessions or explicit demo tokens
+      if (!isServerDemoModeEnabled()) {
+        const err: any = new Error('Unauthorized: Demonstration mode is not permitted in this production environment.');
+        err.statusCode = 401;
+        throw err;
+      }
+      authoritativeReport = DEMONSTRATION_CITIZEN_REPORTS.find((r) => r.reportId === reportId);
+      if (!authoritativeReport) {
+        const err: any = new Error(`Citizen report "${reportId}" not found in demonstration records.`);
+        err.statusCode = 404;
+        throw err;
+      }
+    }
+
+    // Verify report corresponds to the target project
+    if (authoritativeReport.projectId && authoritativeReport.projectId !== projectId) {
+      const err: any = new Error(`Citizen report "${reportId}" does not belong to project "${projectId}".`);
+      err.statusCode = 404;
+      throw err;
+    }
+
+    const report = authoritativeReport;
+    const nature = report.natureOfAnomaly || 'GENERAL_DISCREPANCY';
+    const evidenceText = report.specificEvidence || '';
+    const location = report.locationDetails || '';
+    const media = Array.isArray(report.media) ? report.media : [];
+
+    const gemini = getGeminiClient();
+    if (gemini) {
+      try {
+        const prompt = `Analyze this citizen social audit observation against official MPLAD project records.
+Provide an objective, neutral institutional comparison advisory for the reviewing government officer.
+
+OFFICIAL PROJECT DATA:
+Project: ${project?.title || project?.projectName || 'MPLAD Project'} (ID: ${projectId})
+Sector: ${project?.sector || 'Civil Infrastructure'} | District: ${project?.district || 'District'}
+Physical Progress: ${project?.physicalProgressPercent || 0}%
+Status: ${project?.status || 'IN_PROGRESS'}
+Sanctioned Budget: ₹${project?.sanctionedAmount || 0}
+Verified Disbursal: ₹${financial?.totalVerified || financial?.verifiedDisbursement || 0}
+Milestones: ${JSON.stringify(milestones.map((m: any) => ({ title: m.title, progress: m.progress, status: m.status })))}
+Recent Field Inspections: ${JSON.stringify(inspections.map((i: any) => ({ date: i.date, progress: i.observedProgress, issuesCount: i.issuesCount })))}
+
+CITIZEN SOCIAL AUDIT OBSERVATION:
+Report ID: ${reportId}
+Nature of Observation: ${nature}
+Citizen Claim & Observation: "${evidenceText}"
+Site Location Specifics: "${location}"
+Attached Media Items Count: ${media.length} (${media.map((m: any) => m.name || m.caption || 'image').join(', ') || 'None'})
+
+MANDATORY INSTRUCTIONS:
+1. Provide an objective, grounded institutional comparison advisory for a reviewing government nodal officer.
+2. Base all observations strictly on the supplied project parameters, milestone progress, and citizen text.
+3. VISUAL EVIDENCE RULE: Text-based comparison only; do NOT claim image/vision AI analysis occurred. State whether media metadata is present and note that physical on-site engineering inspection is required.
+4. STRICT TERMINOLOGY RULE: NEVER declare fraud, corruption, or guilt. Use institutional terms like "Implementation Discrepancy", "Monitoring Variance", or "Divergence Requiring On-Site Verification".
+
+Return ONLY valid RFC 8259 JSON matching this exact structure:
+{
+  "advisorySummary": "Objective summary comparing citizen observation to official milestone & progress records.",
+  "evidenceConsistency": "CONSISTENT" | "INCONCLUSIVE" | "INCONSISTENT" | "INSUFFICIENT_EVIDENCE",
+  "visualEvidenceAssessment": "Accurate description of whether visual media metadata exists, noting that text/metadata comparison was performed and physical on-site engineering verification is required.",
+  "officialComparison": {
+    "milestoneComparison": {
+      "claimedDiscrepancy": "${evidenceText.replace(/"/g, "'").slice(0, 150)}",
+      "officialReportedProgress": ${project?.physicalProgressPercent || 0},
+      "completedMilestones": ["..."],
+      "pendingMilestones": ["..."]
+    },
+    "financialComparison": {
+      "sanctionedAmount": ${project?.sanctionedAmount || 0},
+      "verifiedExpenditure": ${financial?.totalVerified || financial?.verifiedDisbursement || 0},
+      "utilizationPercent": ${Math.round(((financial?.totalVerified || 0) / (Number(project?.sanctionedAmount) || 1)) * 100)}
+    },
+    "inspectionComparison": {
+      "lastInspectionDate": "${inspections[0]?.date || 'None recorded'}",
+      "lastInspectedProgress": ${inspections[0]?.observedProgress || 0},
+      "findingsSummary": "${(inspections[0]?.hasCorrectiveActions ? 'Corrective actions noted in prior inspection' : 'Routine monitoring').replace(/"/g, "'")}"
+    }
+  },
+  "recommendedVerificationAreas": ["...", "..."],
+  "missingEvidence": ["...", "..."],
+  "limitations": "Advisory assessment only. Citizen observations are preliminary leads and do not constitute an official finding. Human verification and statutory engineering inspection by an authorized officer are required."
+}`;
+
+        const response = await gemini.models.generateContent({
+          model: ADVISORY_GEMINI_MODEL,
+          contents: prompt,
+          config: {
+            systemInstruction: SYSTEM_INSTRUCTION,
+            responseMimeType: 'application/json',
+            temperature: 0.2,
+          },
+        });
+
+        if (response.text) {
+          const parsed = JSON.parse(response.text);
+          return {
+            advisorySummary: this.sanitizeTerminology(parsed.advisorySummary || 'Institutional comparison advisory.'),
+            evidenceConsistency: parsed.evidenceConsistency || 'INCONCLUSIVE',
+            visualEvidenceAssessment: media.length > 0
+              ? `${media.length} visual asset metadata attached on file. Note: Multi-modal vision analysis was not performed in this text-based evaluation pass; metadata indicates ${media.length} file(s) present. Ground-level physical verification by an authorized engineering officer is required.`
+              : 'No visual evidence attached to this report. Evaluation is based on the citizen\'s textual observation, location details, and comparison with official project milestone/financial records.',
+            officialComparison: parsed.officialComparison || {},
+            recommendedVerificationAreas: Array.isArray(parsed.recommendedVerificationAreas)
+              ? parsed.recommendedVerificationAreas.map((r: string) => this.sanitizeTerminology(r))
+              : [],
+            missingEvidence: Array.isArray(parsed.missingEvidence) ? parsed.missingEvidence : [],
+            limitations: parsed.limitations || 'Advisory decision support grounded strictly in project records.',
+            provider: 'Gemini 3.8 Flash via Google GenAI SDK',
+            model: ADVISORY_GEMINI_MODEL,
+            generatedAt: new Date().toISOString(),
+          };
+        }
+      } catch (geminiErr) {
+        console.warn('[ProjectRiskAiServerService] Gemini citizen report advisory error, falling back to deterministic:', geminiErr);
+      }
+    }
+
+    // Deterministic Institutional Fallback
+    const verifiedDisb = Number(financial?.totalVerified || financial?.verifiedDisbursement || 0);
+    const sanctioned = Number(project?.sanctionedAmount || 1);
+    const utilPct = Math.round((verifiedDisb / sanctioned) * 100);
+    const physProg = Number(project?.physicalProgressPercent || 0);
+
+    let consistency: 'CONSISTENT' | 'INCONCLUSIVE' | 'INCONSISTENT' | 'INSUFFICIENT_EVIDENCE' = 'INCONCLUSIVE';
+    let advisorySummary = '';
+
+    if (nature === 'GHOST_PROJECT' || nature === 'PROGRESS_MISREPRESENTATION') {
+      if (physProg > 30) {
+        consistency = 'CONSISTENT';
+        advisorySummary = `Official records reflect ${physProg}% physical completion while citizen observation reports substantial absence of ground work. There is a tangible variance requiring priority engineering verification.`;
+      } else {
+        consistency = 'INCONCLUSIVE';
+        advisorySummary = `Official recorded progress is low (${physProg}%). Citizen claim of minimal physical structure may align with initial stage; on-site inspection recommended.`;
+      }
+    } else if (nature === 'FINANCIAL_WORK_MISMATCH') {
+      consistency = utilPct > 50 && physProg < 30 ? 'CONSISTENT' : 'INCONCLUSIVE';
+      advisorySummary = `Verified financial disbursal is ₹${verifiedDisb.toLocaleString('en-IN')} (${utilPct}%) versus ${physProg}% physical progress. Verification of measurement book entries recommended.`;
+    } else {
+      consistency = media.length > 0 ? 'CONSISTENT' : 'INSUFFICIENT_EVIDENCE';
+      advisorySummary = `Citizen observation registered under ${nature}. Official records show project active with ${physProg}% completion.`;
+    }
+
+    return {
+      advisorySummary,
+      evidenceConsistency: consistency,
+      visualEvidenceAssessment: media.length > 0
+        ? `${media.length} visual asset(s) metadata attached. Multi-modal vision analysis was not performed in this text-based evaluation pass; metadata indicates ${media.length} file(s) present. Ground-level physical verification by an authorized engineering officer is required.`
+        : 'No visual evidence uploaded. Observation based on citizen statement and location specifics.',
+      officialComparison: {
+        milestoneComparison: {
+          claimedDiscrepancy: evidenceText,
+          officialReportedProgress: physProg,
+          completedMilestones: milestones.filter((m: any) => m.status === 'COMPLETED').map((m: any) => m.title || m.name),
+          pendingMilestones: milestones.filter((m: any) => m.status !== 'COMPLETED').map((m: any) => m.title || m.name),
+        },
+        financialComparison: {
+          sanctionedAmount: sanctioned,
+          verifiedExpenditure: verifiedDisb,
+          utilizationPercent: utilPct,
+        },
+        inspectionComparison: inspections[0] ? {
+          lastInspectionDate: inspections[0].date,
+          lastInspectedProgress: inspections[0].observedProgress,
+          findingsSummary: inspections[0].hasCorrectiveActions ? 'Inspection notes required corrective actions' : 'Routine inspection record',
+        } : undefined,
+      },
+      recommendedVerificationAreas: [
+        'Deploy designated Assistant Engineer for geo-tagged photographic inspection',
+        'Verify measurement book entries against physical stage on site',
+        'Cross-examine contractor daily progress log sheets and material delivery receipts',
+      ],
+      missingEvidence: [
+        'Authoritative field engineering inspection report',
+        'Certified contractor measurement sheets',
+      ],
+      limitations:
+        'Advisory assessment only. Citizen observations are preliminary evidence leads and do not constitute an official finding. Human verification and statutory engineering inspection by an authorized officer are required.',
+      provider: 'BTI Institutional Grounded Comparator',
+      model: 'deterministic-rules-v1.0',
+      generatedAt: new Date().toISOString(),
     };
   }
 }

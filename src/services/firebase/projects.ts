@@ -9,6 +9,7 @@ import {
   setDoc,
   updateDoc,
   writeBatch,
+  type WriteBatch,
   query,
   where,
   orderBy,
@@ -2688,6 +2689,98 @@ export class ProjectService {
     }
 
     return newException;
+  }
+
+  /**
+   * Creates an authoritative Project Monitoring Exception originating from a verified Citizen Social Audit Report.
+   * Phase 10 integration: Seamlessly bridges citizen verified reports into the official monitoring and explanation request workflows.
+   */
+  static async createExceptionFromCitizenReport(params: {
+    projectId: string;
+    report: any;
+    user: any;
+    severity?: ProjectExceptionSeverity;
+    verificationNotes?: string;
+    batch?: WriteBatch;
+  }): Promise<ProjectException & { exception: ProjectException; auditEvent: ProjectAuditEvent }> {
+    const { projectId, report, user, severity = 'MEDIUM', verificationNotes = '', batch } = params;
+
+    let exceptionType: string = 'PROGRESS_VERIFICATION_VARIANCE';
+    if (report.natureOfAnomaly === 'UNREASONABLE_DELAY') {
+      exceptionType = 'SCHEDULE_DELAY';
+    } else if (report.natureOfAnomaly === 'FINANCIAL_WORK_MISMATCH') {
+      exceptionType = 'FINANCIAL_PROGRESS_MISMATCH';
+    } else if (report.natureOfAnomaly === 'CONTRACTOR_NEGLIGENCE') {
+      exceptionType = 'STALLED_PROJECT';
+    } else if (report.natureOfAnomaly === 'SUBSTANDARD_MATERIAL' || report.natureOfAnomaly === 'WORK_QUALITY_CONCERN') {
+      exceptionType = 'PROGRESS_VERIFICATION_VARIANCE';
+    }
+
+    const id = `exc-cpr-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    const nowIso = new Date().toISOString();
+
+    const newException: ProjectException = {
+      id,
+      projectId,
+      type: exceptionType,
+      severity,
+      title: `Citizen Social Audit Discrepancy Verified [${report.reportId}]`,
+      description: `[Official Monitoring Exception logged by ${user.name || 'Authorized Officer'} from Verified Citizen Social Audit Report ${report.reportId}]: ${report.specificEvidence} (Location: ${report.locationDetails || 'Site'}). Verification Rationale: ${verificationNotes}`,
+      detectedAt: nowIso,
+      source: 'SYSTEM_RULE',
+      status: 'OPEN',
+      originatingObservationTitle: `Citizen Report ${report.reportId} (${report.natureOfAnomaly})`,
+      originatingIndicator: report.natureOfAnomaly,
+      reportedByOfficerId: getAuthoritativeUid(user),
+      reportedByOfficerName: user.name || 'Authorized Officer',
+    };
+
+    // Aligns strictly with Firestore security rules: exceptionDetectedAuditId(id) === 'evt-exc-detect-' + id
+    const eventId = `evt-exc-detect-${id}`;
+    const auditEvent: ProjectAuditEvent = {
+      eventId,
+      projectId,
+      action: 'EXCEPTION_DETECTED',
+      actorId: getAuthoritativeUid(user),
+      actorRole: 'government',
+      actorName: user.name || 'Authorized Officer',
+      timestamp: nowIso,
+      newState: {
+        exceptionId: id,
+        type: exceptionType,
+        severity,
+        status: 'OPEN',
+      },
+      metadata: {
+        source: 'CITIZEN_SOCIAL_AUDIT',
+        reportId: report.reportId,
+        natureOfAnomaly: report.natureOfAnomaly,
+      },
+      notes: `Official monitoring exception logged by ${user.name || 'Authorized Officer'} from Verified Citizen Report [${report.reportId}]`,
+    };
+
+    if (isLiveFirestoreSession() && db) {
+      if (batch) {
+        // Enlist in caller's atomic batch to prevent partial verification state
+        batch.set(doc(db, EXCEPTIONS_COLLECTION, id), sanitizeFirestorePayload(newException));
+        batch.set(doc(db, AUDIT_EVENTS_COLLECTION, eventId), sanitizeFirestorePayload(auditEvent));
+      } else {
+        const localBatch = writeBatch(db);
+        localBatch.set(doc(db, EXCEPTIONS_COLLECTION, id), sanitizeFirestorePayload(newException));
+        localBatch.set(doc(db, AUDIT_EVENTS_COLLECTION, eventId), sanitizeFirestorePayload(auditEvent));
+        await localBatch.commit();
+      }
+    } else {
+      const local = getLocalItems<ProjectException>(LOCAL_STORAGE_EXCEPTIONS_KEY, []);
+      local.unshift(newException);
+      saveLocalItems(LOCAL_STORAGE_EXCEPTIONS_KEY, local);
+
+      const localEvents = getLocalItems<ProjectAuditEvent>(LOCAL_STORAGE_EVENTS_KEY, INITIAL_DEMO_EVENTS);
+      localEvents.unshift(auditEvent);
+      saveLocalItems(LOCAL_STORAGE_EVENTS_KEY, localEvents);
+    }
+
+    return Object.assign(newException, { exception: newException, auditEvent });
   }
 
   static async getExceptionRequests(projectId: string): Promise<ProjectExceptionExplanationRequest[]> {

@@ -1553,65 +1553,108 @@ service cloud.firestore {
             'ANOMALY_UNDER_REVIEW',
             'ANOMALY_RESOLVED',
             'ANOMALY_DISMISSED',
-            'INVESTIGATION_NOTE_ADDED'
+            'INVESTIGATION_NOTE_ADDED',
+            'INVESTIGATION_ADVISORY_GENERATED',
+            'CITIZEN_REPORT_SUBMITTED',
+            'CITIZEN_REPORT_REVIEWED',
+            'CITIZEN_REPORT_STATUS_CHANGED',
+            'CITIZEN_REPORT_VERIFIED',
+            'CITIZEN_REPORT_NOT_SUBSTANTIATED',
+            'CITIZEN_REPORT_DISMISSED',
+            'CITIZEN_REPORT_CLOSED',
+            'CITIZEN_REPORT_INFO_REQUESTED',
+            'CITIZEN_REPORT_LINKED_TO_FINDING',
+            'CITIZEN_REPORT_LINKED_TO_EXCEPTION',
+            'CITIZEN_REPORT_EVIDENCE_VIEWED'
           ] && exists(/databases/$(database)/documents/projects/$(incoming().projectId)))
         );
       }
 
       // Audit Trail Security: Append-only, strict actor role & ownership binding
-      allow create: if isSignedIn()
-        && isValidId(eventId)
-        && incoming().eventId == eventId
-        && incoming().actorId == request.auth.uid
-        && incoming().projectId is string
-        && getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.id == incoming().projectId
-        && isValidAuditMutation()
-        && (
-          // Case 1: Agency actions
-          (
-            isVerifiedAgency()
-            && incoming().actorRole == 'agency'
-            && getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.organizationId == getUserOrgId()
-            && incoming().action in [
-              'PROGRESS_UPDATE_SUBMITTED',
-              'FINANCIAL_RECORD_SUBMITTED',
-              'MILESTONE_UPDATED',
-              'EXCEPTION_EXPLANATION_SUBMITTED'
-            ]
+      allow create: if (
+        // Case 1 & 2: Signed-in authenticated users (Agency and Government)
+        (
+          isSignedIn()
+          && isValidId(eventId)
+          && incoming().eventId == eventId
+          && incoming().actorId == request.auth.uid
+          && incoming().projectId is string
+          && exists(/databases/$(database)/documents/projects/$(incoming().projectId))
+          && isValidAuditMutation()
+          && (
+            // Agency actions
+            (
+              isVerifiedAgency()
+              && incoming().actorRole == 'agency'
+              && get(/databases/$(database)/documents/projects/$(incoming().projectId)).data.organizationId == getUserOrgId()
+              && incoming().action in [
+                'PROGRESS_UPDATE_SUBMITTED',
+                'FINANCIAL_RECORD_SUBMITTED',
+                'MILESTONE_UPDATED',
+                'EXCEPTION_EXPLANATION_SUBMITTED'
+              ]
+            )
+            ||
+            // Government actions
+            (
+              isGovernmentUser()
+              && incoming().actorRole == 'government'
+              && incoming().action in [
+                'PROJECT_CREATED',
+                'PROJECT_UPDATED',
+                'STATUS_CHANGED',
+                'DISCLOSURE_STATUS_CHANGED',
+                'MILESTONE_CREATED',
+                'MILESTONE_UPDATED',
+                'PROGRESS_UPDATE_SUBMITTED',
+                'FINANCIAL_RECORD_SUBMITTED',
+                'FINANCIAL_RECORD_VERIFIED',
+                'FINANCIAL_RECORD_REJECTED',
+                'INSPECTION_CREATED',
+                'EXCEPTION_DETECTED',
+                'EXCEPTION_ACKNOWLEDGED',
+                'EXCEPTION_RESOLVED',
+                'EXCEPTION_EXPLANATION_REQUESTED',
+                'ANOMALY_DETECTED',
+                'AI_RISK_ANALYSIS_REQUESTED',
+                'AI_RISK_ANALYSIS_COMPLETED',
+                'AI_RISK_ANALYSIS_FAILED',
+                'ANOMALY_ACKNOWLEDGED',
+                'ANOMALY_UNDER_REVIEW',
+                'ANOMALY_RESOLVED',
+                'ANOMALY_DISMISSED',
+                'INVESTIGATION_NOTE_ADDED',
+                'INVESTIGATION_ADVISORY_GENERATED',
+                'CITIZEN_REPORT_SUBMITTED',
+                'CITIZEN_REPORT_REVIEWED',
+                'CITIZEN_REPORT_STATUS_CHANGED',
+                'CITIZEN_REPORT_VERIFIED',
+                'CITIZEN_REPORT_NOT_SUBSTANTIATED',
+                'CITIZEN_REPORT_DISMISSED',
+                'CITIZEN_REPORT_CLOSED',
+                'CITIZEN_REPORT_INFO_REQUESTED',
+                'CITIZEN_REPORT_LINKED_TO_FINDING',
+                'CITIZEN_REPORT_LINKED_TO_EXCEPTION',
+                'CITIZEN_REPORT_EVIDENCE_VIEWED'
+              ]
+            )
           )
-          ||
-          // Case 2: Government actions
-          (
-            isGovernmentUser()
-            && incoming().actorRole == 'government'
-            && incoming().action in [
-              'PROJECT_CREATED',
-              'PROJECT_UPDATED',
-              'STATUS_CHANGED',
-              'DISCLOSURE_STATUS_CHANGED',
-              'MILESTONE_CREATED',
-              'MILESTONE_UPDATED',
-              'PROGRESS_UPDATE_SUBMITTED',
-              'FINANCIAL_RECORD_SUBMITTED',
-              'FINANCIAL_RECORD_VERIFIED',
-              'FINANCIAL_RECORD_REJECTED',
-              'INSPECTION_CREATED',
-              'EXCEPTION_DETECTED',
-              'EXCEPTION_ACKNOWLEDGED',
-              'EXCEPTION_RESOLVED',
-              'EXCEPTION_EXPLANATION_REQUESTED',
-              'ANOMALY_DETECTED',
-              'AI_RISK_ANALYSIS_REQUESTED',
-              'AI_RISK_ANALYSIS_COMPLETED',
-              'AI_RISK_ANALYSIS_FAILED',
-              'ANOMALY_ACKNOWLEDGED',
-              'ANOMALY_UNDER_REVIEW',
-              'ANOMALY_RESOLVED',
-              'ANOMALY_DISMISSED',
-              'INVESTIGATION_NOTE_ADDED'
-            ]
+        )
+        ||
+        // Case 3: Public Citizen Social Audit Report submission
+        (
+          isValidId(eventId)
+          && incoming().eventId == eventId
+          && incoming().actorRole == 'public'
+          && incoming().action == 'CITIZEN_REPORT_SUBMITTED'
+          && incoming().projectId is string
+          && exists(/databases/$(database)/documents/projects/$(incoming().projectId))
+          && (
+            get(/databases/$(database)/documents/projects/$(incoming().projectId)).data.get('publicDisclosureStatus', '') == 'PUBLIC' ||
+            get(/databases/$(database)/documents/projects/$(incoming().projectId)).data.get('isPubliclyVisible', false) == true
           )
-        );
+        )
+      );
 
       allow update, delete: if false;
     }
@@ -1653,6 +1696,54 @@ service cloud.firestore {
           get(/databases/$(database)/documents/projects/$(projectId)).data.get('isPubliclyVisible', false) == true
         );
       allow delete: if isSignedIn() && isGovernmentUser();
+    }
+
+    // 25. Citizen Project Reports Collection (/citizenProjectReports/{reportId})
+    // Phase 10: Citizen Grievance & Participatory Social Audit Layer
+    // Citizens (unauthenticated public or identified) can create reports on existing projects.
+    // Reading and updating reports is strictly restricted to authorized Government Officers to protect citizen privacy and whistle-blower identities.
+    match /citizenProjectReports/{reportId} {
+      allow get, list: if isSignedIn() && isGovernmentUser();
+
+      allow create: if request.resource.data.reportId == reportId
+        && request.resource.data.projectId is string
+        && exists(/databases/$(database)/documents/projects/$(request.resource.data.projectId))
+        && (
+          get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.get('publicDisclosureStatus', '') == 'PUBLIC' ||
+          get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.get('isPubliclyVisible', false) == true
+        )
+        && request.resource.data.natureOfAnomaly in [
+          'GHOST_PROJECT',
+          'PROGRESS_MISREPRESENTATION',
+          'SUBSTANDARD_MATERIAL',
+          'WORK_QUALITY_CONCERN',
+          'UNREASONABLE_DELAY',
+          'FINANCIAL_WORK_MISMATCH',
+          'CONTRACTOR_NEGLIGENCE',
+          'GENERAL_DISCREPANCY',
+          'OTHER'
+        ]
+        && request.resource.data.specificEvidence is string
+        && request.resource.data.specificEvidence.size() >= 10
+        && request.resource.data.specificEvidence.size() <= 5000
+        && request.resource.data.status in [
+          'SUBMITTED', 'UNDER_REVIEW', 'VERIFICATION_REQUIRED', 'VERIFIED',
+          'VERIFIED_DISCREPANCY', 'NOT_SUBSTANTIATED', 'INCONCLUSIVE',
+          'DISMISSED', 'DUPLICATE_OR_INVALID', 'ACTIONED', 'CLOSED'
+        ]
+        && request.resource.data.reporterMode in ['ANONYMOUS', 'IDENTIFIED'];
+
+      allow update: if isSignedIn()
+        && isGovernmentUser()
+        && request.resource.data.reportId == existing().reportId
+        && request.resource.data.projectId == existing().projectId
+        && request.resource.data.status in [
+          'SUBMITTED', 'UNDER_REVIEW', 'VERIFICATION_REQUIRED', 'VERIFIED',
+          'VERIFIED_DISCREPANCY', 'NOT_SUBSTANTIATED', 'INCONCLUSIVE',
+          'DISMISSED', 'DUPLICATE_OR_INVALID', 'ACTIONED', 'CLOSED'
+        ];
+
+      allow delete: if false;
     }
   }
 }

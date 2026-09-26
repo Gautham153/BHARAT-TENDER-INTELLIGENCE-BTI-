@@ -16,7 +16,8 @@ export type EvidenceSourceType =
   | 'RISK_ASSESSMENT'
   | 'PROPOSAL'
   | 'TENDER'
-  | 'ORGANIZATION';
+  | 'ORGANIZATION'
+  | 'CITIZEN_REPORT';
 
 export type EvidenceClassification = 'DIRECT' | 'CALCULATED' | 'RELATED' | 'MISSING';
 

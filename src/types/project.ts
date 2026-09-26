@@ -357,14 +357,25 @@ export type ProjectAuditAction =
   | 'ANOMALY_RESOLVED'
   | 'ANOMALY_DISMISSED'
   | 'INVESTIGATION_NOTE_ADDED'
-  | 'INVESTIGATION_ADVISORY_GENERATED';
+  | 'INVESTIGATION_ADVISORY_GENERATED'
+  | 'CITIZEN_REPORT_SUBMITTED'
+  | 'CITIZEN_REPORT_REVIEWED'
+  | 'CITIZEN_REPORT_STATUS_CHANGED'
+  | 'CITIZEN_REPORT_VERIFIED'
+  | 'CITIZEN_REPORT_NOT_SUBSTANTIATED'
+  | 'CITIZEN_REPORT_DISMISSED'
+  | 'CITIZEN_REPORT_CLOSED'
+  | 'CITIZEN_REPORT_INFO_REQUESTED'
+  | 'CITIZEN_REPORT_LINKED_TO_FINDING'
+  | 'CITIZEN_REPORT_LINKED_TO_EXCEPTION'
+  | 'CITIZEN_REPORT_EVIDENCE_VIEWED';
 
 export interface ProjectAuditEvent {
   eventId: string;
   projectId: string;
   action: ProjectAuditAction;
   actorId: string;
-  actorRole: 'agency' | 'government' | 'system';
+  actorRole: 'agency' | 'government' | 'system' | 'public';
   actorName?: string;
   timestamp: string;
   previousState?: Record<string, unknown>;
