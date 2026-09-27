@@ -780,6 +780,42 @@
         "isDemonstrationData": { "type": "boolean" }
       },
       "required": ["reportId", "submittedAt", "updatedAt", "status", "statusLabel", "statusDescription", "statusColorClass", "projectTitle", "projectId", "natureOfAnomalyLabel"]
+    },
+    "ProjectDocument": {
+      "title": "ProjectDocument",
+      "description": "Securely ingested project execution document with structured AI extraction and deterministic cross-validation models",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 100 },
+        "projectId": { "type": "string", "maxLength": 128 },
+        "projectNumber": { "type": "string", "maxLength": 100 },
+        "projectTitle": { "type": "string", "maxLength": 300 },
+        "tenderId": { "type": "string", "maxLength": 100 },
+        "proposalId": { "type": "string", "maxLength": 100 },
+        "organizationId": { "type": "string", "maxLength": 128 },
+        "organizationName": { "type": "string", "maxLength": 200 },
+        "documentType": { "type": "string", "maxLength": 50 },
+        "originalFileName": { "type": "string", "maxLength": 300 },
+        "storageReference": { "type": "string", "maxLength": 500 },
+        "fileHash": { "type": "string", "maxLength": 100 },
+        "mimeType": { "type": "string", "maxLength": 100 },
+        "fileSize": { "type": "number" },
+        "uploadedBy": { "type": "string", "maxLength": 128 },
+        "uploaderName": { "type": "string", "maxLength": 200 },
+        "uploaderRole": { "type": "string", "enum": ["government", "agency"] },
+        "uploadedAt": { "type": "string", "maxLength": 50 },
+        "processingStatus": { "type": "string", "maxLength": 50 },
+        "extractionStatus": { "type": "string", "maxLength": 50 },
+        "validationStatus": { "type": "string", "maxLength": 50 },
+        "reviewStatus": { "type": "string", "maxLength": 50 },
+        "extractedData": { "type": "object" },
+        "crossValidationResults": { "type": "array" },
+        "crossValidationSummary": { "type": "object" },
+        "isDemonstrationData": { "type": "boolean" },
+        "createdAt": { "type": "string", "maxLength": 50 },
+        "updatedAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["id", "projectId", "documentType", "originalFileName", "storageReference", "uploadedBy", "uploadedAt", "processingStatus"]
     }
   },
   "firestore": {
@@ -858,6 +894,10 @@
     "/publicCitizenReportTrackings/{reportId}": {
       "schema": "PublicCitizenReportTracking",
       "description": "Sanitized public tracking projections for anonymous citizen status lookups"
+    },
+    "/projectDocuments/{documentId}": {
+      "schema": "ProjectDocument",
+      "description": "Securely ingested project execution documents with extracted data and cross-validation models"
     }
   }
 }

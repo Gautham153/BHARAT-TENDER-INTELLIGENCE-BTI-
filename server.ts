@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { createServer as createViteServer } from 'vite';
 import { ProposalEvaluationServerService } from './server/evaluation/ProposalEvaluationServerService.js';
 import { ProjectRiskAiServerService } from './server/anomaly/ProjectRiskAiServerService.js';
+import { DocumentIntelligenceServerService } from './server/document/DocumentIntelligenceServerService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -16,10 +17,11 @@ async function startServer() {
   const PORT = 3000;
 
   // JSON request body parser
-  app.use(express.json({ limit: '10mb' }));
+  app.use(express.json({ limit: '20mb' }));
 
   const evaluationServer = new ProposalEvaluationServerService();
   const projectRiskAiServer = new ProjectRiskAiServerService();
+  const documentIntelligenceServer = new DocumentIntelligenceServerService();
 
   // API Routes FIRST
   app.get('/api/health', (_req, res) => {
@@ -66,6 +68,80 @@ async function startServer() {
         (err?.message && err.message.includes('Access Denied') ? 403 : err?.message && err.message.includes('Unauthorized') ? 401 : 400);
       const message = err instanceof Error ? err.message : 'Evaluation service error occurred.';
       res.status(statusCode).json({ success: false, error: message });
+    }
+  });
+
+  // Phase 11: Document Storage Vault Upload Endpoint
+  app.post('/api/documents/upload', async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization || (req.headers['authorization'] as string | undefined);
+      const { documentId, projectId, fileName, mimeType, fileDataUrl, bufferBase64 } = req.body || {};
+
+      if (!documentId || !fileName || (!fileDataUrl && !bufferBase64)) {
+        return res.status(400).json({ success: false, error: 'Missing required document upload parameters.' });
+      }
+
+      const stored = await documentIntelligenceServer.storeDocumentFile({
+        documentId,
+        projectId,
+        fileName,
+        mimeType: mimeType || 'application/pdf',
+        bufferOrBase64: fileDataUrl || bufferBase64,
+        authHeader,
+      });
+
+      res.status(200).json({ success: true, ...stored });
+    } catch (err: any) {
+      const statusCode = err?.statusCode || (err?.message?.includes('Access Denied') ? 403 : 400);
+      res.status(statusCode).json({ success: false, error: err instanceof Error ? err.message : 'Upload failed' });
+    }
+  });
+
+  // Phase 11: Document Extraction Endpoint (Server-Side Gemini)
+  app.post('/api/documents/extract', async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization || (req.headers['authorization'] as string | undefined);
+      const payload = req.body || {};
+
+      const result = await documentIntelligenceServer.extractDocument({
+        ...payload,
+        authHeader,
+      });
+
+      res.status(200).json({ success: true, ...result });
+    } catch (err: any) {
+      const statusCode = err?.statusCode || (err?.message?.includes('Access Denied') ? 403 : 400);
+      const message =
+        err instanceof Error
+          ? err.message
+          : 'Document extraction is currently unavailable. The original document has been preserved for manual review.';
+      res.status(statusCode).json({ success: false, error: message });
+    }
+  });
+
+  // Phase 11: Document Download / Vault Stream Endpoint
+  app.get('/api/documents/download', async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization || (req.headers['authorization'] as string | undefined);
+      const storageReference = (req.query.ref || req.query.storageReference) as string | undefined;
+      const documentId = req.query.documentId as string | undefined;
+
+      if (!storageReference && !documentId) {
+        return res.status(400).json({ success: false, error: 'Storage reference or document ID is required.' });
+      }
+
+      const fileData = await documentIntelligenceServer.getDocumentFile({
+        storageReference: storageReference || '',
+        documentId,
+        authHeader,
+      });
+
+      res.setHeader('Content-Type', fileData.mimeType);
+      res.setHeader('Content-Disposition', `inline; filename="${path.basename(storageReference || 'document.pdf')}"`);
+      res.send(fileData.buffer);
+    } catch (err: any) {
+      const statusCode = err?.statusCode || (err?.message?.includes('Access Denied') ? 403 : 404);
+      res.status(statusCode).json({ success: false, error: err instanceof Error ? err.message : 'File not found' });
     }
   });
 

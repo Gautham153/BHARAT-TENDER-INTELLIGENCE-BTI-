@@ -80,6 +80,7 @@ import {
   isProjectPubliclyDisclosed,
 } from '../../types/project';
 import { formatCurrencyINR } from '../../components/tenders/TenderOpportunityCard';
+import { DocumentIntelligenceWorkspace } from '../../components/document/DocumentIntelligenceWorkspace';
 
 type ActiveTab =
   | 'overview'
@@ -87,6 +88,7 @@ type ActiveTab =
   | 'progress'
   | 'financials'
   | 'inspections'
+  | 'documents'
   | 'exceptions'
   | 'risk_intelligence'
   | 'audit';
@@ -1472,6 +1474,7 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
                 { id: 'progress', label: `Site Updates (${progressUpdates.length})`, icon: Activity },
                 { id: 'financials', label: `Expenditures (${financialRecords.length})`, icon: Coins },
                 { id: 'inspections', label: `Inspections (${inspections.length})`, icon: ShieldCheck },
+                { id: 'documents', label: 'Documents & Intelligence', icon: FileText },
                 {
                   id: 'exceptions',
                   label: `Exceptions (${exceptions.filter((e) => e.status !== 'RESOLVED').length})`,
@@ -2626,6 +2629,15 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
                   )}
                 </div>
               </div>
+            )}
+
+            {/* Tab: Documents & Intelligence (Phase 11) */}
+            {activeTab === 'documents' && selectedProject && (
+              <DocumentIntelligenceWorkspace
+                project={selectedProject}
+                userRole="government"
+                onNavigate={onNavigate}
+              />
             )}
 
             {/* Tab 7: Audit Trail */}

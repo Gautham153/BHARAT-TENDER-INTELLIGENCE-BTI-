@@ -13,6 +13,7 @@ export * from './anomaly.js';
 export * from './evidence.js';
 export * from './publicTransparency.js';
 export * from './citizenReport.js';
+export * from './document.js';
 
 export type UserRole = 'government' | 'agency' | 'public' | 'government_admin' | 'government_officer' | 'agency_user' | 'public_citizen';
 

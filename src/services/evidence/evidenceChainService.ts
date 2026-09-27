@@ -2177,4 +2177,73 @@ export class EvidenceChainService {
 
     return evidenceReference;
   }
+
+  /**
+   * Phase 11: Registers a Project Document and its cross-validation results into the Evidence Chain graph.
+   * Traceable links point back to original document, extracted values, authoritative project baseline, and discrepancy calculations.
+   */
+  static async addDocumentEvidence(params: {
+    projectId: string;
+    documentId: string;
+    title: string;
+    summary: string;
+    documentType: string;
+    originalFileName: string;
+    inconsistencies?: string[];
+    linkedFindingId?: string;
+    comparisonSnippet?: Record<string, unknown>;
+    officerName?: string;
+    timestamp?: string;
+    relevance?: string;
+  }): Promise<EvidenceReference> {
+    if (!params.projectId) {
+      throw new Error('Project ID is required to link document evidence.');
+    }
+    if (!params.documentId) {
+      throw new Error('Document ID is required to link document evidence.');
+    }
+
+    const evidenceId = `ev-doc-${params.documentId}`;
+    const timestamp = params.timestamp || new Date().toISOString();
+
+    const evidenceReference: EvidenceReference = {
+      evidenceId,
+      sourceType: 'DOCUMENT',
+      sourceId: params.documentId,
+      projectId: params.projectId,
+      timestamp,
+      title: params.title || `Document Intelligence: ${params.documentType}`,
+      description: params.summary || `Extracted document evidence from ${params.originalFileName}.`,
+      relevance:
+        params.relevance ||
+        (params.inconsistencies && params.inconsistencies.length > 0
+          ? `Document cross-validation detected variance requiring verification: ${params.inconsistencies.join(', ')}.`
+          : 'Verified project document aligned with authoritative project baseline records.'),
+      classification: params.inconsistencies && params.inconsistencies.length > 0 ? 'CALCULATED' : 'DIRECT',
+      metrics: {
+        documentType: params.documentType,
+        originalFileName: params.originalFileName,
+        inconsistencyCount: params.inconsistencies?.length || 0,
+      },
+      recordSnippet: {
+        documentId: params.documentId,
+        projectId: params.projectId,
+        documentType: params.documentType,
+        originalFileName: params.originalFileName,
+        inconsistencies: params.inconsistencies || [],
+        comparisonSnippet: params.comparisonSnippet || {},
+        verifiedBy: params.officerName || 'District Monitoring Officer',
+        verifiedAt: timestamp,
+      },
+    };
+
+    if (!isLiveFirestoreSession()) {
+      const existing = getLocalItems<EvidenceReference>(LOCAL_STORAGE_LINKED_EVIDENCE_KEY, []);
+      const filtered = existing.filter((e) => !(e.sourceId === params.documentId && e.projectId === params.projectId));
+      filtered.unshift(evidenceReference);
+      saveLocalItems(LOCAL_STORAGE_LINKED_EVIDENCE_KEY, filtered);
+    }
+
+    return evidenceReference;
+  }
 }

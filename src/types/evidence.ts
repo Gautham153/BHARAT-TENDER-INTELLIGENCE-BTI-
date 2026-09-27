@@ -17,7 +17,8 @@ export type EvidenceSourceType =
   | 'PROPOSAL'
   | 'TENDER'
   | 'ORGANIZATION'
-  | 'CITIZEN_REPORT';
+  | 'CITIZEN_REPORT'
+  | 'DOCUMENT';
 
 export type EvidenceClassification = 'DIRECT' | 'CALCULATED' | 'RELATED' | 'MISSING';
 
@@ -59,7 +60,9 @@ export interface ProjectTimelineEvent {
     | 'FINANCIAL_VERIFIED'
     | 'INSPECTION_CONDUCTED'
     | 'ANOMALY_DETECTED'
-    | 'INVESTIGATION_ACTION';
+    | 'INVESTIGATION_ACTION'
+    | 'DOCUMENT_UPLOADED'
+    | 'DOCUMENT_CROSS_VALIDATED';
   title: string;
   description: string;
   sourceType: EvidenceSourceType;

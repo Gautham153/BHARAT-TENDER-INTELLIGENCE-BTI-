@@ -9,6 +9,7 @@ export interface AuthenticatedUser {
   email?: string;
   role: string;
   name?: string;
+  organizationId?: string;
 }
 
 const SERVER_DEMO_USERS = {
@@ -23,6 +24,14 @@ const SERVER_DEMO_USERS = {
     email: 'contact@apexinfra.co.in',
     role: 'agency',
     name: 'Vikramaditya Sharma',
+    organizationId: 'org-demo-1',
+  },
+  agency_b: {
+    uid: 'usr-ag-002',
+    email: 'contact@apexbuildtech.in',
+    role: 'agency',
+    name: 'Suresh Chandra Mehta',
+    organizationId: 'org-demo-2',
   },
 };
 
@@ -204,15 +213,18 @@ async function verifyFirebaseIdToken(token: string): Promise<{ uid: string; emai
 }
 
 /**
- * Resolves authoritative user role strictly from the authoritative Firestore users/{uid} document.
+ * Resolves authoritative user role and organization strictly from the authoritative Firestore users/{uid} document.
  * Never guesses roles, never trusts client-supplied role claims, and never relies on email domain.
  */
-async function resolveAuthoritativeRole(uid: string, token: string): Promise<string> {
+async function resolveAuthoritativeUser(
+  uid: string,
+  token: string
+): Promise<{ role: string; organizationId?: string }> {
   const projectId = process.env.VITE_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID;
   if (!projectId || projectId.trim().length === 0) {
     // If Firebase project ID is not configured and demo mode is active
     if (isServerDemoModeEnabled()) {
-      return 'government';
+      return { role: 'government' };
     }
     const err: any = new Error(
       'Server Configuration Error: Firebase Project ID is not configured. Authoritative user role cannot be verified.'
@@ -222,6 +234,7 @@ async function resolveAuthoritativeRole(uid: string, token: string): Promise<str
   }
 
   let firestoreRole: string | undefined = undefined;
+  let firestoreOrgId: string | undefined = undefined;
   try {
     const userDocRes = await fetch(
       `https://firestore.googleapis.com/v1/projects/${projectId.trim()}/databases/(default)/documents/users/${uid}`,
@@ -247,6 +260,7 @@ async function resolveAuthoritativeRole(uid: string, token: string): Promise<str
 
     const userDocJson = await userDocRes.json();
     firestoreRole = userDocJson?.fields?.role?.stringValue;
+    firestoreOrgId = userDocJson?.fields?.organizationId?.stringValue;
   } catch (fetchErr: any) {
     if (fetchErr.statusCode) throw fetchErr;
     const err: any = new Error(
@@ -262,7 +276,10 @@ async function resolveAuthoritativeRole(uid: string, token: string): Promise<str
     throw err;
   }
 
-  return firestoreRole.trim();
+  return {
+    role: firestoreRole.trim(),
+    organizationId: firestoreOrgId?.trim() || undefined,
+  };
 }
 
 /**
@@ -300,11 +317,16 @@ export async function verifyServerAuth(authHeader?: string): Promise<Authenticat
     token.includes('demo-token-government') ||
     token === 'bti-demo-token-government';
 
-  const isAgencyDemo =
-    token === 'bti-token-usr-ag-001' ||
+  const isAgencyBDemo =
     token === 'bti-token-usr-ag-002' ||
-    token.includes('usr-ag-001') ||
     token.includes('usr-ag-002') ||
+    token.includes('agency-b') ||
+    token.includes('agency_b');
+
+  const isAgencyDemo =
+    isAgencyBDemo ||
+    token === 'bti-token-usr-ag-001' ||
+    token.includes('usr-ag-001') ||
     token.includes('demo-token-agency');
 
   if (isGovDemo || isAgencyDemo) {
@@ -326,25 +348,38 @@ export async function verifyServerAuth(authHeader?: string): Promise<Authenticat
       };
     }
 
+    if (isAgencyBDemo) {
+      const agB = SERVER_DEMO_USERS.agency_b;
+      return {
+        uid: agB.uid,
+        email: agB.email,
+        role: agB.role,
+        name: agB.name,
+        organizationId: agB.organizationId,
+      };
+    }
+
     const ag = SERVER_DEMO_USERS.agency;
     return {
       uid: ag.uid,
       email: ag.email,
       role: ag.role,
       name: ag.name,
+      organizationId: ag.organizationId,
     };
   }
 
   // 4. Real Firebase ID Token Cryptographic Verification
   const verifiedUser = await verifyFirebaseIdToken(token);
 
-  // 5. Authoritative Role Resolution from Firestore users/{uid}
-  const authoritativeRole = await resolveAuthoritativeRole(verifiedUser.uid, token);
+  // 5. Authoritative Role & Organization Resolution from Firestore users/{uid}
+  const authoritativeUser = await resolveAuthoritativeUser(verifiedUser.uid, token);
 
   return {
     uid: verifiedUser.uid,
     email: verifiedUser.email,
-    role: authoritativeRole,
+    role: authoritativeUser.role,
     name: verifiedUser.name,
+    organizationId: authoritativeUser.organizationId,
   };
 }

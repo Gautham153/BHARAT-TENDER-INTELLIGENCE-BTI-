@@ -1816,6 +1816,105 @@ service cloud.firestore {
 
       allow delete: if false;
     }
+
+    // 27. Project Documents Collection (/projectDocuments/{documentId})
+    // Phase 11: Document Ingestion, Structured Document Extraction & Deterministic Cross-Validation
+    match /projectDocuments/{documentId} {
+      allow get: if isSignedIn() && (
+        isGovernmentUser() ||
+        (
+          isAgencyUser()
+          && resource.data.organizationId == getUserOrgId()
+          && exists(/databases/$(database)/documents/projects/$(resource.data.projectId))
+          && get(/databases/$(database)/documents/projects/$(resource.data.projectId)).data.organizationId == getUserOrgId()
+        )
+      );
+
+      allow list: if isSignedIn() && (
+        isGovernmentUser() ||
+        (
+          isAgencyUser()
+          && (
+            resource.data.organizationId == getUserOrgId() ||
+            (
+              exists(/databases/$(database)/documents/projects/$(resource.data.projectId))
+              && get(/databases/$(database)/documents/projects/$(resource.data.projectId)).data.organizationId == getUserOrgId()
+            )
+          )
+        )
+      );
+
+      allow create: if isSignedIn() && (
+        // Case 1: Government upload
+        (
+          isGovernmentUser()
+          && request.resource.data.id == documentId
+          && request.resource.data.projectId is string
+          && exists(/databases/$(database)/documents/projects/$(request.resource.data.projectId))
+        )
+        ||
+        // Case 2: Agency upload
+        (
+          isAgencyUser()
+          && request.resource.data.id == documentId
+          && request.resource.data.projectId is string
+          && request.resource.data.organizationId == getUserOrgId()
+          && request.resource.data.uploadedBy == request.auth.uid
+          && (request.resource.data.uploaderRole in ['agency', 'AGENCY'])
+          && exists(/databases/$(database)/documents/projects/$(request.resource.data.projectId))
+          && get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.organizationId == getUserOrgId()
+        )
+      );
+
+      allow update: if isSignedIn() && (
+        // Case 1: Government review and lifecycle decision update
+        (
+          isGovernmentUser()
+          && request.resource.data.id == resource.data.id
+          && request.resource.data.projectId == resource.data.projectId
+        )
+        ||
+        // Case 2: Agency operational update (strictly preserving all authoritative, extraction, review, and validation fields)
+        (
+          isAgencyUser()
+          && resource.data.organizationId == getUserOrgId()
+          && exists(/databases/$(database)/documents/projects/$(resource.data.projectId))
+          && get(/databases/$(database)/documents/projects/$(resource.data.projectId)).data.organizationId == getUserOrgId()
+          // Strict immutability of identity, ownership, project linkage, and storage provenance
+          && request.resource.data.id == resource.data.id
+          && request.resource.data.projectId == resource.data.projectId
+          && request.resource.data.organizationId == resource.data.organizationId
+          && request.resource.data.uploadedBy == resource.data.uploadedBy
+          && request.resource.data.uploaderRole == resource.data.uploaderRole
+          && request.resource.data.storageReference == resource.data.storageReference
+          && request.resource.data.get('fileHash', '') == resource.data.get('fileHash', '')
+          && request.resource.data.createdAt == resource.data.createdAt
+          // Strict immutability of review status, decisions, and review audit fields
+          && request.resource.data.reviewStatus == resource.data.reviewStatus
+          && request.resource.data.get('reviewedBy', '') == resource.data.get('reviewedBy', '')
+          && request.resource.data.get('reviewedByName', '') == resource.data.get('reviewedByName', '')
+          && request.resource.data.get('reviewedAt', '') == resource.data.get('reviewedAt', '')
+          && request.resource.data.get('reviewNotes', '') == resource.data.get('reviewNotes', '')
+          // Strict immutability of intelligence, extraction, cross-validation, and processing fields
+          && request.resource.data.processingStatus == resource.data.processingStatus
+          && request.resource.data.extractionStatus == resource.data.extractionStatus
+          && request.resource.data.validationStatus == resource.data.validationStatus
+          && request.resource.data.get('extractedData', {}) == resource.data.get('extractedData', {})
+          && request.resource.data.get('extractionProvider', '') == resource.data.get('extractionProvider', '')
+          && request.resource.data.get('extractionModel', '') == resource.data.get('extractionModel', '')
+          && request.resource.data.get('extractionTimestamp', '') == resource.data.get('extractionTimestamp', '')
+          && request.resource.data.get('extractionWarnings', []) == resource.data.get('extractionWarnings', [])
+          && request.resource.data.get('processingError', '') == resource.data.get('processingError', '')
+          && request.resource.data.get('crossValidationResults', []) == resource.data.get('crossValidationResults', [])
+          && request.resource.data.get('crossValidationSummary', {}) == resource.data.get('crossValidationSummary', {})
+          && request.resource.data.get('evidenceId', '') == resource.data.get('evidenceId', '')
+          && request.resource.data.get('detectedDocumentType', '') == resource.data.get('detectedDocumentType', '')
+          && request.resource.data.updatedAt == resource.data.updatedAt
+        )
+      );
+
+      allow delete: if false;
+    }
   }
 }
 

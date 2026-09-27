@@ -87,7 +87,7 @@ let cachedServerAccessToken: { token: string; expiresAt: number } | null = null;
 /**
  * Acquires a Google Cloud service account access token for server-side authoritative Firestore operations.
  */
-async function getServerFirestoreAccessToken(): Promise<string | null> {
+export async function getServerFirestoreAccessToken(): Promise<string | null> {
   const now = Date.now();
   if (cachedServerAccessToken && cachedServerAccessToken.expiresAt > now) {
     return cachedServerAccessToken.token;

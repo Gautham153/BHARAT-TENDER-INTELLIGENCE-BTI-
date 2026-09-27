@@ -48,8 +48,9 @@ import {
   ExpenditureType,
 } from '../../types/project';
 import { formatCurrencyINR } from '../../components/tenders/TenderOpportunityCard';
+import { DocumentIntelligenceWorkspace } from '../../components/document/DocumentIntelligenceWorkspace';
 
-type AgencyTab = 'milestones' | 'progress' | 'financials' | 'inspections';
+type AgencyTab = 'milestones' | 'progress' | 'financials' | 'inspections' | 'documents';
 
 export const ProjectMilestonesPage: React.FC<{ onNavigate: (path: string) => void }> = ({ onNavigate }) => {
   const { user, status: authStatus } = useAuth();
@@ -628,6 +629,7 @@ export const ProjectMilestonesPage: React.FC<{ onNavigate: (path: string) => voi
                   label: `Inspections & Flags (${inspections.length + exceptions.filter((e) => e.status !== 'RESOLVED').length})`,
                   icon: ShieldCheck,
                 },
+                { id: 'documents', label: 'Documents & Claims', icon: FileText },
               ].map((tab) => {
                 const IconComponent = tab.icon;
                 return (
@@ -1013,6 +1015,15 @@ export const ProjectMilestonesPage: React.FC<{ onNavigate: (path: string) => voi
                   </div>
                 )}
               </div>
+            )}
+
+            {/* Tab 5: Documents & Invoices (Phase 11) */}
+            {activeTab === 'documents' && selectedProject && (
+              <DocumentIntelligenceWorkspace
+                project={selectedProject}
+                userRole="agency"
+                onNavigate={onNavigate}
+              />
             )}
           </div>
         )}
