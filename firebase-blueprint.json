@@ -735,6 +735,51 @@
         "lastUpdated": { "type": "string", "maxLength": 50 }
       },
       "required": ["projectId", "projectName", "category", "status", "sanctionedAmount", "verifiedExpenditure", "physicalProgressPercent"]
+    },
+    "CitizenProjectReport": {
+      "title": "CitizenProjectReport",
+      "description": "Private, authoritative citizen grievance and participatory social audit report",
+      "type": "object",
+      "properties": {
+        "reportId": { "type": "string", "maxLength": 100 },
+        "projectId": { "type": "string", "maxLength": 128 },
+        "projectNameSnapshot": { "type": "string", "maxLength": 300 },
+        "projectLocationSnapshot": { "type": "string", "maxLength": 200 },
+        "constituencySnapshot": { "type": "string", "maxLength": 200 },
+        "projectNumberSnapshot": { "type": "string", "maxLength": 100 },
+        "reporterMode": { "type": "string", "enum": ["ANONYMOUS", "IDENTIFIED"] },
+        "reporterName": { "type": "string", "maxLength": 200 },
+        "reporterMobile": { "type": "string", "maxLength": 20 },
+        "natureOfAnomaly": { "type": "string", "maxLength": 100 },
+        "specificEvidence": { "type": "string", "minLength": 10, "maxLength": 5000 },
+        "locationDetails": { "type": "string", "maxLength": 1000 },
+        "media": { "type": "array" },
+        "submittedAt": { "type": "string", "maxLength": 50 },
+        "updatedAt": { "type": "string", "maxLength": 50 },
+        "status": { "type": "string", "maxLength": 50 },
+        "isDemonstrationData": { "type": "boolean" }
+      },
+      "required": ["reportId", "projectId", "natureOfAnomaly", "specificEvidence", "submittedAt", "status", "reporterMode"]
+    },
+    "PublicCitizenReportTracking": {
+      "title": "PublicCitizenReportTracking",
+      "description": "Sanitized, public-safe tracking projection for anonymous citizen report tracking",
+      "type": "object",
+      "properties": {
+        "reportId": { "type": "string", "maxLength": 100 },
+        "submittedAt": { "type": "string", "maxLength": 50 },
+        "updatedAt": { "type": "string", "maxLength": 50 },
+        "status": { "type": "string", "maxLength": 50 },
+        "statusLabel": { "type": "string", "maxLength": 100 },
+        "statusDescription": { "type": "string", "maxLength": 500 },
+        "statusColorClass": { "type": "string", "maxLength": 200 },
+        "projectTitle": { "type": "string", "maxLength": 300 },
+        "projectId": { "type": "string", "maxLength": 128 },
+        "natureOfAnomalyLabel": { "type": "string", "maxLength": 100 },
+        "locationSnapshot": { "type": "string", "maxLength": 200 },
+        "isDemonstrationData": { "type": "boolean" }
+      },
+      "required": ["reportId", "submittedAt", "updatedAt", "status", "statusLabel", "statusDescription", "statusColorClass", "projectTitle", "projectId", "natureOfAnomalyLabel"]
     }
   },
   "firestore": {
@@ -805,6 +850,14 @@
     "/publicProjects/{projectId}": {
       "schema": "PublicProject",
       "description": "Strictly allowlisted public transparency projections for citizen oversight"
+    },
+    "/citizenProjectReports/{reportId}": {
+      "schema": "CitizenProjectReport",
+      "description": "Private citizen reports accessible exclusively to authorized government reviewers"
+    },
+    "/publicCitizenReportTrackings/{reportId}": {
+      "schema": "PublicCitizenReportTracking",
+      "description": "Sanitized public tracking projections for anonymous citizen status lookups"
     }
   }
 }

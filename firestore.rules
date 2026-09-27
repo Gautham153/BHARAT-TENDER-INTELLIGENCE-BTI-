@@ -1726,11 +1726,7 @@ service cloud.firestore {
         && request.resource.data.specificEvidence is string
         && request.resource.data.specificEvidence.size() >= 10
         && request.resource.data.specificEvidence.size() <= 5000
-        && request.resource.data.status in [
-          'SUBMITTED', 'UNDER_REVIEW', 'VERIFICATION_REQUIRED', 'VERIFIED',
-          'VERIFIED_DISCREPANCY', 'NOT_SUBSTANTIATED', 'INCONCLUSIVE',
-          'DISMISSED', 'DUPLICATE_OR_INVALID', 'ACTIONED', 'CLOSED'
-        ]
+        && request.resource.data.status == 'SUBMITTED'
         && request.resource.data.reporterMode in ['ANONYMOUS', 'IDENTIFIED'];
 
       allow update: if isSignedIn()
@@ -1742,6 +1738,81 @@ service cloud.firestore {
           'VERIFIED_DISCREPANCY', 'NOT_SUBSTANTIATED', 'INCONCLUSIVE',
           'DISMISSED', 'DUPLICATE_OR_INVALID', 'ACTIONED', 'CLOSED'
         ];
+
+      allow delete: if false;
+    }
+
+    // 26. Public Citizen Report Tracking Projection Collection (/publicCitizenReportTrackings/{reportId})
+    // Phase 10: Sanitized Public Tracking Projection Layer
+    // Public users can query single report status by exact ID without exposing private reporter data, internal notes, or investigation records.
+    // Projections are derivable only from the corresponding authoritative citizen report in the same atomic transaction/batch.
+    match /publicCitizenReportTrackings/{reportId} {
+      allow get: if true;
+      allow list: if isSignedIn() && isGovernmentUser();
+
+      allow create: if request.resource.data.reportId == reportId
+        && request.resource.data.projectId is string
+        && exists(/databases/$(database)/documents/projects/$(request.resource.data.projectId))
+        && (
+          get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.get('publicDisclosureStatus', '') == 'PUBLIC' ||
+          get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.get('isPubliclyVisible', false) == true
+        )
+        && existsAfter(/databases/$(database)/documents/citizenProjectReports/$(reportId))
+        && getAfter(/databases/$(database)/documents/citizenProjectReports/$(reportId)).data.reportId == reportId
+        && getAfter(/databases/$(database)/documents/citizenProjectReports/$(reportId)).data.projectId == request.resource.data.projectId
+        && getAfter(/databases/$(database)/documents/citizenProjectReports/$(reportId)).data.submittedAt == request.resource.data.submittedAt
+        && getAfter(/databases/$(database)/documents/citizenProjectReports/$(reportId)).data.status == 'SUBMITTED'
+        && request.resource.data.status == 'SUBMITTED'
+        && request.resource.data.keys().hasOnly([
+          'reportId', 'submittedAt', 'updatedAt', 'status', 'statusLabel',
+          'statusDescription', 'statusColorClass', 'projectTitle', 'projectId',
+          'natureOfAnomalyLabel', 'locationSnapshot', 'isDemonstrationData'
+        ])
+        && !request.resource.data.keys().hasAny([
+          'reporterName', 'reporterMobile', 'reporterMode', 'specificEvidence',
+          'locationDetails', 'media', 'reviewedBy', 'reviewedByName', 'reviewedAt',
+          'reviewNotes', 'verificationDecision', 'verificationNotes', 'verifiedBy',
+          'verifiedByName', 'verifiedAt', 'aiAdvisory', 'linkedFindingId',
+          'linkedFindingTitle', 'linkedExceptionId', 'linkedExceptionTitle',
+          'auditHistory', 'riskScore', 'evidenceChain', 'findings', 'internalNotes',
+          'fraudSignals', 'investigationState'
+        ]);
+
+      allow update: if isSignedIn()
+        && isGovernmentUser()
+        && request.resource.data.reportId == existing().reportId
+        && request.resource.data.projectId == existing().projectId
+        && request.resource.data.submittedAt == existing().submittedAt
+        && (
+          existsAfter(/databases/$(database)/documents/citizenProjectReports/$(reportId))
+            ? (
+                getAfter(/databases/$(database)/documents/citizenProjectReports/$(reportId)).data.projectId == request.resource.data.projectId &&
+                getAfter(/databases/$(database)/documents/citizenProjectReports/$(reportId)).data.status == request.resource.data.status
+              )
+            : (
+                get(/databases/$(database)/documents/citizenProjectReports/$(reportId)).data.projectId == request.resource.data.projectId &&
+                get(/databases/$(database)/documents/citizenProjectReports/$(reportId)).data.status == request.resource.data.status
+              )
+        )
+        && request.resource.data.status in [
+          'SUBMITTED', 'UNDER_REVIEW', 'VERIFICATION_REQUIRED', 'VERIFIED',
+          'VERIFIED_DISCREPANCY', 'NOT_SUBSTANTIATED', 'INCONCLUSIVE',
+          'DISMISSED', 'DUPLICATE_OR_INVALID', 'ACTIONED', 'CLOSED'
+        ]
+        && request.resource.data.keys().hasOnly([
+          'reportId', 'submittedAt', 'updatedAt', 'status', 'statusLabel',
+          'statusDescription', 'statusColorClass', 'projectTitle', 'projectId',
+          'natureOfAnomalyLabel', 'locationSnapshot', 'isDemonstrationData'
+        ])
+        && !request.resource.data.keys().hasAny([
+          'reporterName', 'reporterMobile', 'reporterMode', 'specificEvidence',
+          'locationDetails', 'media', 'reviewedBy', 'reviewedByName', 'reviewedAt',
+          'reviewNotes', 'verificationDecision', 'verificationNotes', 'verifiedBy',
+          'verifiedByName', 'verifiedAt', 'aiAdvisory', 'linkedFindingId',
+          'linkedFindingTitle', 'linkedExceptionId', 'linkedExceptionTitle',
+          'auditHistory', 'riskScore', 'evidenceChain', 'findings', 'internalNotes',
+          'fraudSignals', 'investigationState'
+        ]);
 
       allow delete: if false;
     }

@@ -462,13 +462,31 @@ export const CitizenReportsDeskPage: React.FC<CitizenReportsDeskPageProps> = ({
                 <div className="p-3 bg-white rounded-lg border border-slate-200 space-y-1">
                   <span className="text-slate-400 text-[10px] uppercase font-semibold block">Physical Progress</span>
                   <div className="font-bold text-slate-900 flex items-center justify-between">
-                    <span>{authoritativeProject?.physicalProgressPercent ?? authoritativeProject?.physicalProgress ?? selectedReport.projectSnapshot?.physicalProgressPercent ?? 0}%</span>
+                    <span>
+                      {authoritativeProject?.governmentVerifiedPhysicalProgressPercent ??
+                        authoritativeProject?.agencyReportedPhysicalProgressPercent ??
+                        authoritativeProject?.physicalProgressPercent ??
+                        authoritativeProject?.physicalProgress ??
+                        selectedReport.projectSnapshot?.physicalProgressPercent ??
+                        0}%
+                    </span>
                   </div>
                   <div className="w-full h-1.5 rounded-full bg-slate-100 overflow-hidden mt-1">
                     <div
                       className="h-full bg-emerald-500 rounded-full transition-all"
                       style={{
-                        width: `${Math.min(100, Math.max(0, authoritativeProject?.physicalProgressPercent ?? authoritativeProject?.physicalProgress ?? selectedReport.projectSnapshot?.physicalProgressPercent ?? 0))}%`,
+                        width: `${Math.min(
+                          100,
+                          Math.max(
+                            0,
+                            authoritativeProject?.governmentVerifiedPhysicalProgressPercent ??
+                              authoritativeProject?.agencyReportedPhysicalProgressPercent ??
+                              authoritativeProject?.physicalProgressPercent ??
+                              authoritativeProject?.physicalProgress ??
+                              selectedReport.projectSnapshot?.physicalProgressPercent ??
+                              0
+                          )
+                        )}%`,
                       }}
                     />
                   </div>

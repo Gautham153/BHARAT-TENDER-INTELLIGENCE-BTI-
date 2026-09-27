@@ -37,9 +37,61 @@ import { PublicTransparencyService } from '../transparency/publicTransparencySer
 import { EvidenceChainService } from '../evidence/evidenceChainService.js';
 
 const CITIZEN_REPORTS_COLLECTION = 'citizenProjectReports';
+const PUBLIC_TRACKINGS_COLLECTION = 'publicCitizenReportTrackings';
 const AUDIT_EVENTS_COLLECTION = 'projectAuditEvents';
 const LOCAL_STORAGE_REPORTS_KEY = 'bti_citizen_reports_cache_v1';
+const LOCAL_STORAGE_PUBLIC_TRACKINGS_KEY = 'bti_public_citizen_report_trackings_cache_v1';
 const LOCAL_STORAGE_EVENTS_KEY = 'bti_project_audit_events_cache_v1';
+
+/**
+ * Builds a strictly sanitized, allowlisted Public Tracking Projection DTO from an authoritative citizen report.
+ * Builds projection exclusively from explicit allowlisted properties.
+ * Never leaks reporter identity, mobile numbers, reporterMode, specific evidence, media attachments,
+ * officer details, verification notes, internal findings, AI advisory, risk scores, or audit logs.
+ */
+export function buildPublicCitizenReportTracking(
+  report: CitizenProjectReport | {
+    reportId: string;
+    projectId: string;
+    submittedAt: string;
+    updatedAt?: string;
+    status: CitizenReportStatus;
+    projectNameSnapshot?: string;
+    projectLocationSnapshot?: string;
+    constituencySnapshot?: string;
+    natureOfAnomaly: string;
+    isDemonstrationData?: boolean;
+  }
+): PublicCitizenReportStatusDTO {
+  const status = report.status || 'SUBMITTED';
+  const statusCfg = CITIZEN_REPORT_STATUS_CONFIG[status] || {
+    label: status,
+    description: 'Report is logged in the official BTI monitoring registry.',
+    colorClass: 'bg-slate-100 text-slate-700 border-slate-200',
+  };
+  const natureCfg = CITIZEN_REPORT_NATURE_LABELS[report.natureOfAnomaly] || {
+    label: 'Implementation Observation',
+    description: '',
+  };
+
+  const projectTitle = report.projectNameSnapshot || (report as any).projectTitle || 'MPLAD Project';
+  const locationSnapshot = report.constituencySnapshot || report.projectLocationSnapshot || undefined;
+
+  return {
+    reportId: report.reportId,
+    submittedAt: report.submittedAt,
+    updatedAt: report.updatedAt || report.submittedAt,
+    status,
+    statusLabel: statusCfg.label,
+    statusDescription: statusCfg.description,
+    statusColorClass: statusCfg.colorClass,
+    projectTitle,
+    projectId: report.projectId,
+    natureOfAnomalyLabel: natureCfg.label,
+    ...(locationSnapshot ? { locationSnapshot } : {}),
+    isDemonstrationData: Boolean(report.isDemonstrationData),
+  };
+}
 
 function getLocalReports(): CitizenProjectReport[] {
   try {
@@ -62,6 +114,33 @@ function saveLocalReports(reports: CitizenProjectReport[]): void {
     localStorage.setItem(LOCAL_STORAGE_REPORTS_KEY, JSON.stringify(reports));
   } catch (err) {
     console.warn('[CitizenReportService] Failed to cache local reports:', err);
+  }
+}
+
+function getLocalPublicTrackings(): PublicCitizenReportStatusDTO[] {
+  try {
+    const raw = localStorage.getItem(LOCAL_STORAGE_PUBLIC_TRACKINGS_KEY);
+    if (!raw) {
+      if (isDemoSession() || !isLiveFirestoreSession()) {
+        const demoTrackings = DEMONSTRATION_CITIZEN_REPORTS.map(buildPublicCitizenReportTracking);
+        localStorage.setItem(LOCAL_STORAGE_PUBLIC_TRACKINGS_KEY, JSON.stringify(demoTrackings));
+        return demoTrackings;
+      }
+      return [];
+    }
+    return JSON.parse(raw) as PublicCitizenReportStatusDTO[];
+  } catch {
+    return isDemoSession() || !isLiveFirestoreSession()
+      ? DEMONSTRATION_CITIZEN_REPORTS.map(buildPublicCitizenReportTracking)
+      : [];
+  }
+}
+
+function saveLocalPublicTrackings(trackings: PublicCitizenReportStatusDTO[]): void {
+  try {
+    localStorage.setItem(LOCAL_STORAGE_PUBLIC_TRACKINGS_KEY, JSON.stringify(trackings));
+  } catch (err) {
+    console.warn('[CitizenReportService] Failed to cache local public trackings:', err);
   }
 }
 
@@ -194,19 +273,28 @@ export class CitizenReportService {
       notes: `Citizen social audit observation filed [${reportId}] on project "${projectTitle}". Status: SUBMITTED.`,
     };
 
+    // Build sanitized allowlisted tracking projection
+    const trackingProjection = buildPublicCitizenReportTracking(report);
+
     const isLive = isLiveFirestoreSession() && db;
 
     if (isLive) {
       const batch = writeBatch(db);
       const reportRef = doc(db, CITIZEN_REPORTS_COLLECTION, reportId);
+      const trackingRef = doc(db, PUBLIC_TRACKINGS_COLLECTION, reportId);
       const auditRef = doc(db, AUDIT_EVENTS_COLLECTION, eventId);
       batch.set(reportRef, sanitizeFirestorePayload(report));
+      batch.set(trackingRef, sanitizeFirestorePayload(trackingProjection));
       batch.set(auditRef, sanitizeFirestorePayload(auditEvent));
       await batch.commit();
     } else {
       const local = getLocalReports();
       local.unshift(report);
       saveLocalReports(local);
+
+      const localTrackings = getLocalPublicTrackings().filter((t) => t.reportId !== reportId);
+      localTrackings.unshift(trackingProjection);
+      saveLocalPublicTrackings(localTrackings);
 
       const localEvents = getLocalAuditEvents();
       localEvents.unshift(auditEvent);
@@ -334,47 +422,78 @@ export class CitizenReportService {
 
   /**
    * Public-facing tracking endpoint:
-   * Retrieves a strictly sanitized, public-safe status for a submitted citizen report.
-   * Section 33A fail-closed: If not found or invalid, returns null without exposing internal state.
-   * Absolutely never reveals reporter identity, officer names, internal memos, risk score, AI advisory, or evidence chain.
+   * Queries ONLY the sanitized public tracking projection (publicCitizenReportTrackings/{reportId}).
+   * In live Firestore mode:
+   * - Reads ONLY publicCitizenReportTrackings/{reportId} via getDoc.
+   * - Never calls getReportById() or queries citizenProjectReports.
+   * - Section 33A fail-closed: If not found or not public, returns null without revealing whether a private report exists.
+   * - Never exposes reporter identity, phone, private evidence, media, officer names, internal notes, risk scores, or AI advice.
+   * - Isolated demo context: Only looks in demo/offline cache if explicitly configured or running in non-live mode.
    */
   static async trackReportPublic(reportId: string): Promise<PublicCitizenReportStatusDTO | null> {
     if (!reportId || !reportId.trim()) return null;
     const cleanId = reportId.trim();
 
-    try {
-      const report = await this.getReportById(cleanId);
-      if (!report) return null;
+    const isLive = isLiveFirestoreSession() && db;
+    const isExplicitDemo = cleanId.startsWith('CPR-DEMO-') || cleanId.startsWith('demo-');
 
-      const status = report.status || 'SUBMITTED';
-      const statusCfg = CITIZEN_REPORT_STATUS_CONFIG[status] || {
-        label: status,
-        description: 'Report is logged in the official BTI monitoring registry.',
-        colorClass: 'bg-slate-100 text-slate-700 border-slate-200',
-      };
-      const natureCfg = CITIZEN_REPORT_NATURE_LABELS[report.natureOfAnomaly] || {
-        label: 'Implementation Observation',
-        description: '',
-      };
+    if (isLive && !isExplicitDemo) {
+      try {
+        const trackingDocRef = doc(db, PUBLIC_TRACKINGS_COLLECTION, cleanId);
+        const snap = await getDoc(trackingDocRef);
+        if (!snap.exists()) {
+          return null;
+        }
 
-      return {
-        reportId: report.reportId,
-        submittedAt: report.submittedAt,
-        projectTitle: report.projectNameSnapshot || (report as any).projectTitle || 'MPLAD Project',
-        projectId: report.projectId,
-        status,
-        statusLabel: statusCfg.label,
-        statusDescription: statusCfg.description,
-        statusColorClass: statusCfg.colorClass,
-        updatedAt: report.updatedAt || report.submittedAt,
-        natureOfAnomalyLabel: natureCfg.label,
-        locationSnapshot: report.constituencySnapshot || report.projectLocationSnapshot,
-        isDemonstrationData: report.isDemonstrationData,
-      };
-    } catch (err) {
-      console.warn('[CitizenReportService] Public report tracking resolution error:', err);
-      return null;
+        const data = snap.data();
+        if (!data || data.reportId !== cleanId) {
+          return null;
+        }
+
+        const status = data.status || 'SUBMITTED';
+        const statusCfg = CITIZEN_REPORT_STATUS_CONFIG[status] || {
+          label: status,
+          description: 'Report is logged in the official BTI monitoring registry.',
+          colorClass: 'bg-slate-100 text-slate-700 border-slate-200',
+        };
+        const natureCfg = CITIZEN_REPORT_NATURE_LABELS[data.natureOfAnomaly] || {
+          label: data.natureOfAnomalyLabel || 'Implementation Observation',
+          description: '',
+        };
+
+        // Return strictly the sanitized allowlisted DTO
+        return {
+          reportId: data.reportId,
+          submittedAt: data.submittedAt,
+          updatedAt: data.updatedAt || data.submittedAt,
+          status,
+          statusLabel: data.statusLabel || statusCfg.label,
+          statusDescription: data.statusDescription || statusCfg.description,
+          statusColorClass: data.statusColorClass || statusCfg.colorClass,
+          projectTitle: data.projectTitle || 'MPLAD Project',
+          projectId: data.projectId || '',
+          natureOfAnomalyLabel: data.natureOfAnomalyLabel || natureCfg.label,
+          locationSnapshot: data.locationSnapshot || undefined,
+          isDemonstrationData: Boolean(data.isDemonstrationData),
+        };
+      } catch (err) {
+        console.warn('[CitizenReportService] Public report tracking resolution error:', err);
+        // Fail-closed: Never fall back to local/demo data on a failed live Firestore read
+        return null;
+      }
     }
+
+    // Isolated demo/offline session lookup
+    const localTrackings = getLocalPublicTrackings();
+    const found = localTrackings.find((t) => t.reportId === cleanId);
+    if (found) return found;
+
+    const demoReport = DEMONSTRATION_CITIZEN_REPORTS.find((r) => r.reportId === cleanId);
+    if (demoReport) {
+      return buildPublicCitizenReportTracking(demoReport);
+    }
+
+    return null;
   }
 
   /**
@@ -440,6 +559,8 @@ export class CitizenReportService {
       linkedExceptionId: linkedExceptionId || report.linkedExceptionId,
     };
 
+    const trackingProjection = buildPublicCitizenReportTracking(updated);
+
     // Statutory Audit Event
     const eventId = `evt-cpr-status-${reportId}-${Date.now()}`;
     const auditEvent: ProjectAuditEvent = {
@@ -466,14 +587,20 @@ export class CitizenReportService {
     if (isLiveFirestoreSession() && db) {
       const batch = writeBatch(db);
       const docRef = doc(db, CITIZEN_REPORTS_COLLECTION, reportId);
+      const trackingRef = doc(db, PUBLIC_TRACKINGS_COLLECTION, reportId);
       const auditRef = doc(db, AUDIT_EVENTS_COLLECTION, eventId);
       batch.update(docRef, sanitizeFirestorePayload(updated));
+      batch.set(trackingRef, sanitizeFirestorePayload(trackingProjection));
       batch.set(auditRef, sanitizeFirestorePayload(auditEvent));
       await batch.commit();
     } else {
       const events = getLocalAuditEvents();
       events.unshift(auditEvent);
       saveLocalAuditEvents(events);
+
+      const localTrackings = getLocalPublicTrackings().filter((t) => t.reportId !== reportId);
+      localTrackings.unshift(trackingProjection);
+      saveLocalPublicTrackings(localTrackings);
     }
 
     const local = getLocalReports().filter((r) => r.reportId !== reportId);
@@ -603,12 +730,16 @@ export class CitizenReportService {
       notes: `Official verification decision recorded for Citizen Report [${reportId}]: ${status} (${verificationDecision || 'PROCESSED'}) by ${user?.name || 'Authorized Officer'}.`,
     };
 
+    const trackingProjection = buildPublicCitizenReportTracking(updated);
+
     // Atomic write batch prevents partial verification states in Firestore
     if (liveBatch && db) {
       try {
         const docRef = doc(db, CITIZEN_REPORTS_COLLECTION, reportId);
+        const trackingRef = doc(db, PUBLIC_TRACKINGS_COLLECTION, reportId);
         const auditRef = doc(db, AUDIT_EVENTS_COLLECTION, eventId);
         liveBatch.update(docRef, sanitizeFirestorePayload(updated));
+        liveBatch.set(trackingRef, sanitizeFirestorePayload(trackingProjection));
         liveBatch.set(auditRef, sanitizeFirestorePayload(auditEvent));
         await liveBatch.commit();
       } catch (commitErr) {
@@ -623,6 +754,10 @@ export class CitizenReportService {
       const events = getLocalAuditEvents();
       events.unshift(auditEvent);
       saveLocalAuditEvents(events);
+
+      const localTrackings = getLocalPublicTrackings().filter((t) => t.reportId !== reportId);
+      localTrackings.unshift(trackingProjection);
+      saveLocalPublicTrackings(localTrackings);
     }
 
     const local = getLocalReports().filter((r) => r.reportId !== reportId);

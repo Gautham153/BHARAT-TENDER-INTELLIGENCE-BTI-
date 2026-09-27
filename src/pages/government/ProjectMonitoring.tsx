@@ -1013,6 +1013,7 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
       render: (p) => {
         const agencyProg = p.agencyReportedPhysicalProgressPercent ?? p.physicalProgressPercent ?? p.physicalProgress ?? 0;
         const govProg = p.governmentVerifiedPhysicalProgressPercent;
+        const primaryProg = p.governmentVerifiedPhysicalProgressPercent ?? p.agencyReportedPhysicalProgressPercent ?? p.physicalProgressPercent ?? p.physicalProgress ?? 0;
         const variance = govProg !== undefined ? Math.abs(agencyProg - govProg) : 0;
         return (
           <div className="w-full space-y-1">
@@ -1027,9 +1028,9 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
               )}
             </div>
             <ProgressBar
-              value={govProg !== undefined ? govProg : agencyProg}
+              value={primaryProg}
               size="sm"
-              color={govProg !== undefined ? (govProg >= 80 ? 'emerald' : govProg >= 40 ? 'blue' : 'amber') : (agencyProg >= 80 ? 'emerald' : agencyProg >= 40 ? 'blue' : 'amber')}
+              color={primaryProg >= 80 ? 'emerald' : primaryProg >= 40 ? 'blue' : 'amber'}
               showPercentage={false}
             />
           </div>
@@ -1384,15 +1385,6 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
             <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
-                  <ProgressBar
-                    label="Agency-Reported Physical Progress"
-                    value={selectedProject.agencyReportedPhysicalProgressPercent ?? selectedProject.physicalProgressPercent ?? selectedProject.physicalProgress ?? 0}
-                    color="emerald"
-                    size="md"
-                    showPercentage={true}
-                  />
-                </div>
-                <div>
                   <div className="flex items-center justify-between mb-1">
                     <span className="font-medium text-slate-700">Gov-Verified Physical Progress</span>
                     <span className="font-mono font-bold text-slate-900">
@@ -1406,6 +1398,15 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
                     color={selectedProject.governmentVerifiedPhysicalProgressPercent !== undefined ? 'emerald' : 'slate'}
                     size="md"
                     showPercentage={false}
+                  />
+                </div>
+                <div>
+                  <ProgressBar
+                    label="Agency-Reported Physical Progress"
+                    value={selectedProject.agencyReportedPhysicalProgressPercent ?? selectedProject.physicalProgressPercent ?? selectedProject.physicalProgress ?? 0}
+                    color="emerald"
+                    size="md"
+                    showPercentage={true}
                   />
                 </div>
               </div>
