@@ -2,8 +2,12 @@
 // Consolidated /api/ai serverless function for Vercel Hobby & Cloud deployment
 
 import { ProposalEvaluationServerService } from '../server/evaluation/ProposalEvaluationServerService.js';
+import { DocumentIntelligenceServerService } from '../server/document/DocumentIntelligenceServerService.js';
+import { ProjectRiskAiServerService } from '../server/anomaly/ProjectRiskAiServerService.js';
 
 const evaluationServer = new ProposalEvaluationServerService();
+const documentIntelligenceServer = new DocumentIntelligenceServerService();
+const projectRiskAiServer = new ProjectRiskAiServerService();
 
 function resolveStatusCode(err: any): number {
   // 1. Existing application err.statusCode values are preserved
@@ -112,6 +116,27 @@ export default async function handler(req: any, res: any) {
   try {
     const authHeader = req.headers?.authorization || req.headers?.['authorization'];
     const payload = req.body || {};
+    const action = payload.action;
+
+    // Phase 11: Document Intelligence Extraction
+    if (action === 'document-analysis' || action === 'extract-document') {
+      const result = await documentIntelligenceServer.extractDocument({
+        ...payload,
+        authHeader,
+      });
+      return res.status(200).json({ success: true, ...result });
+    }
+
+    // Phase 7: Project Risk Intelligence AI
+    if (action === 'project-risk-intelligence' || action === 'risk-analysis') {
+      const result = await projectRiskAiServer.analyzeProjectRisk({
+        ...payload,
+        authHeader,
+      });
+      return res.status(200).json({ success: true, assessment: result, advisory: result });
+    }
+
+    // Default: Proposal Evaluation
     const result = await evaluationServer.evaluateProposal({
       ...payload,
       authHeader,

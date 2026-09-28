@@ -195,29 +195,19 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
 
     setSelectedFile(file);
 
-    // Read Base64 and compute preview hash
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const b64 = reader.result as string;
-      setFileBase64(b64);
-
-      // Compute client-side SHA-256 preview
-      try {
-        const cleanB64 = b64.replace(/^data:[^;]+;base64,/, '');
-        const binary = atob(cleanB64);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) {
-          bytes[i] = binary.charCodeAt(i);
-        }
-        const hashBuf = await crypto.subtle.digest('SHA-256', bytes);
+    // Compute client-side SHA-256 preview directly from arrayBuffer
+    try {
+      file.arrayBuffer().then(async (arrayBuffer) => {
+        const hashBuf = await crypto.subtle.digest('SHA-256', arrayBuffer);
         const hashArr = Array.from(new Uint8Array(hashBuf));
         const hashHex = hashArr.map((b) => b.toString(16).padStart(2, '0')).join('');
         setFileHashPreview(hashHex);
-      } catch (err) {
+      }).catch(() => {
         setFileHashPreview('');
-      }
-    };
-    reader.readAsDataURL(file);
+      });
+    } catch {
+      setFileHashPreview('');
+    }
   };
 
   // Handle Document Upload
@@ -237,7 +227,7 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
           originalFileName: selectedFile.name,
           mimeType: selectedFile.type || 'application/pdf',
           fileSize: selectedFile.size,
-          fileDataUrl: fileBase64,
+          file: selectedFile,
           notes: uploadNotes,
         },
         user

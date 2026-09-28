@@ -844,10 +844,11 @@ export class CitizenReportService {
 
     let response: Response;
     try {
-      response = await fetch('/api/ai/project-risk-intelligence', {
+      response = await fetch('/api/ai', {
         method: 'POST',
         headers,
         body: JSON.stringify({
+          action: 'project-risk-intelligence',
           projectId: report.projectId,
           reportId: report.reportId,
           mode: 'CITIZEN_REPORT_ADVISORY',

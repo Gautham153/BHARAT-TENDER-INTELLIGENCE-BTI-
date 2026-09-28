@@ -1397,10 +1397,11 @@ export class AnomalyDetectionService {
         headers['Authorization'] = `Bearer ${idToken}`;
       }
 
-      const response = await fetch('/api/ai/project-risk-intelligence', {
+      const response = await fetch('/api/ai', {
         method: 'POST',
         headers,
         body: JSON.stringify({
+          action: 'project-risk-intelligence',
           projectId,
           project,
           anomalies,

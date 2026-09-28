@@ -107,7 +107,7 @@ export async function getServerFirestoreAccessToken(): Promise<string | null> {
       const header = { alg: 'RS256', typ: 'JWT' };
       const payload = {
         iss: sa.client_email,
-        scope: 'https://www.googleapis.com/auth/datastore',
+        scope: 'https://www.googleapis.com/auth/datastore https://www.googleapis.com/auth/devstorage.read_write https://www.googleapis.com/auth/cloud-platform',
         aud: 'https://oauth2.googleapis.com/token',
         exp: nowSec + 3600,
         iat: nowSec,

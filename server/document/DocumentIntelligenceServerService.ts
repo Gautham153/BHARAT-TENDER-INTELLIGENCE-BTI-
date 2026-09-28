@@ -1,6 +1,7 @@
 // Bharat Tender Intelligence (BTI) — Document Intelligence Server Service
 // Phase 11: Server-Side Ingestion, Secure Vault Storage & Extraction Orchestration
-// Enhanced with Authoritative Resource-Level Authorization (Project & Organization Boundaries)
+// Enhanced with Persistent Firebase / Google Cloud Storage Vault for Serverless Vercel Deployment
+// Authoritative Resource-Level Authorization (Project & Organization Boundaries)
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -14,6 +15,15 @@ import {
   getAuthoritativeDocumentByStorageRef,
   recordInMemoryDocument,
 } from './authoritativeDocumentResolver.js';
+import {
+  uploadToCloudStorage,
+  downloadFromCloudStorage,
+  deleteFromCloudStorage,
+  deleteOrphanObjectsByPrefix,
+  checkCloudStorageObjectExists,
+  isCloudStorageConfigured,
+  normalizeStorageReference,
+} from './cloudStorageService.js';
 
 function extractToken(authHeader?: string): string | undefined {
   if (!authHeader) return undefined;
@@ -25,22 +35,25 @@ function extractToken(authHeader?: string): string | undefined {
 
 export class DocumentIntelligenceServerService {
   private extractionProvider: GeminiDocumentExtractionProvider;
-  private storageDir: string;
+  private localDevStorageDir?: string;
 
   constructor() {
     this.extractionProvider = new GeminiDocumentExtractionProvider();
-    this.storageDir = path.join(process.cwd(), 'storage', 'documents');
-    if (!fs.existsSync(this.storageDir)) {
+    // Local filesystem storage is strictly isolated for offline demonstration/development mode
+    if (isServerDemoModeEnabled()) {
       try {
-        fs.mkdirSync(this.storageDir, { recursive: true });
-      } catch (err) {
-        console.warn('[DocumentIntelligenceServerService] Warning creating storage dir:', err);
+        this.localDevStorageDir = path.join(process.cwd(), 'storage', 'documents');
+        if (!fs.existsSync(this.localDevStorageDir)) {
+          fs.mkdirSync(this.localDevStorageDir, { recursive: true });
+        }
+      } catch {
+        // Ephemeral environments might restrict filesystem access
       }
     }
   }
 
   /**
-   * Securely saves document binary to the private server vault.
+   * Securely saves document binary to the persistent Cloud Storage document vault.
    * Computes SHA-256 hash for provenance and duplicate detection.
    * Authorizes against authoritative project ownership.
    * Rejects overwriting existing authoritative documents with HTTP 409.
@@ -50,10 +63,23 @@ export class DocumentIntelligenceServerService {
     projectId?: string;
     fileName: string;
     mimeType: string;
-    bufferOrBase64: string | Buffer;
+    storageReference?: string;
+    fileHash?: string;
+    fileSize?: number;
+    bufferOrBase64?: string | Buffer;
     authHeader?: string;
   }): Promise<{ storageReference: string; fileHash: string; fileSize: number }> {
-    const { documentId, projectId, fileName, mimeType, bufferOrBase64, authHeader } = params;
+    const {
+      documentId,
+      projectId,
+      fileName,
+      mimeType,
+      storageReference: suppliedStorageRef,
+      fileHash: suppliedFileHash,
+      fileSize: suppliedFileSize,
+      bufferOrBase64,
+      authHeader,
+    } = params;
 
     // MIME type validation
     const normalizedMime = (mimeType || '').trim().toLowerCase();
@@ -133,7 +159,87 @@ export class DocumentIntelligenceServerService {
       }
     }
 
-    // 4. Validate binary & volumetric boundaries
+    const safeName = `${documentId}_${path.basename(fileName).replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+    const expectedStorageRef = `storage/documents/${project.id}/${safeName}`;
+
+    // CASE A: Client performed direct cloud storage upload (preferred for large files up to 15MB)
+    if (suppliedStorageRef && !bufferOrBase64) {
+      const cleanSuppliedRef = normalizeStorageReference(suppliedStorageRef);
+
+      // Verify the supplied storageReference matches the exact authoritative project and document path
+      if (
+        cleanSuppliedRef !== expectedStorageRef ||
+        cleanSuppliedRef.includes('..') ||
+        cleanSuppliedRef.includes('\\') ||
+        cleanSuppliedRef.includes('\0')
+      ) {
+        const err: any = new Error(
+          'Security Violation: Invalid or unauthorized storage reference provided for document.'
+        );
+        err.statusCode = 400;
+        throw err;
+      }
+
+      // Verify object exists in Cloud Storage vault
+      if (isCloudStorageConfigured()) {
+        const existsInVault = await checkCloudStorageObjectExists(cleanSuppliedRef, token);
+        if (!existsInVault) {
+          const err: any = new Error(
+            'Document Storage Error: Uploaded binary not found in cloud storage vault.'
+          );
+          err.statusCode = 404;
+          throw err;
+        }
+
+        // Verify volumetric boundary & compute authoritative SHA-256 hash
+        const cloudFile = await downloadFromCloudStorage({
+          objectPath: cleanSuppliedRef,
+          userToken: token,
+        });
+
+        if (cloudFile.buffer.length > 15 * 1024 * 1024) {
+          const err: any = new Error('Document Integrity Error: Stored binary exceeds the 15MB limit.');
+          err.statusCode = 400;
+          throw err;
+        }
+
+        const calculatedHash = crypto.createHash('sha256').update(cloudFile.buffer).digest('hex');
+        if (
+          suppliedFileHash &&
+          suppliedFileHash.trim().length > 0 &&
+          calculatedHash.toLowerCase() !== suppliedFileHash.trim().toLowerCase()
+        ) {
+          const err: any = new Error(
+            'Document Integrity Error: SHA-256 hash mismatch during storage verification.'
+          );
+          err.statusCode = 400;
+          throw err;
+        }
+
+        return {
+          storageReference: cleanSuppliedRef,
+          fileHash: calculatedHash,
+          fileSize: cloudFile.buffer.length,
+        };
+      } else if (isServerDemoModeEnabled()) {
+        // Fallback for demo mode
+        return {
+          storageReference: cleanSuppliedRef,
+          fileHash: suppliedFileHash || crypto.createHash('sha256').update(Buffer.from(documentId)).digest('hex'),
+          fileSize: suppliedFileSize || 1024,
+        };
+      }
+    }
+
+    // CASE B: Binary payload provided through server endpoint (small files / demo mode)
+    if (!bufferOrBase64) {
+      const err: any = new Error(
+        'Invalid Request: Either storageReference or binary payload must be provided.'
+      );
+      err.statusCode = 400;
+      throw err;
+    }
+
     let buffer: Buffer;
     if (Buffer.isBuffer(bufferOrBase64)) {
       buffer = bufferOrBase64;
@@ -149,23 +255,45 @@ export class DocumentIntelligenceServerService {
       throw err;
     }
 
-    // Secure sanitized filename
-    const safeName = `${documentId}_${path.basename(fileName).replace(/[^a-zA-Z0-9._-]/g, '_')}`;
-    const filePath = path.join(this.storageDir, safeName);
-    if (fs.existsSync(filePath)) {
-      const err: any = new Error(
-        `Conflict: Document file '${safeName}' already exists in the storage vault.`
-      );
-      err.statusCode = 409;
-      throw err;
-    }
-
-    // SHA-256 hash
+    const storageReference = expectedStorageRef;
     const fileHash = crypto.createHash('sha256').update(buffer).digest('hex');
 
-    fs.writeFileSync(filePath, buffer);
+    // Persist binary to Persistent Cloud Storage (or local dev storage strictly in demo mode)
+    if (isCloudStorageConfigured()) {
+      const alreadyInCloud = await checkCloudStorageObjectExists(storageReference, token);
+      if (alreadyInCloud) {
+        const err: any = new Error(
+          `Conflict: Document file '${safeName}' already exists in the storage vault.`
+        );
+        err.statusCode = 409;
+        throw err;
+      }
 
-    const storageReference = `storage/documents/${safeName}`;
+      await uploadToCloudStorage({
+        objectPath: storageReference,
+        buffer,
+        mimeType: normalizedMime,
+        userToken: token,
+      });
+    } else if (isServerDemoModeEnabled()) {
+      if (this.localDevStorageDir) {
+        const filePath = path.join(this.localDevStorageDir, `${project.id}_${safeName}`);
+        if (fs.existsSync(filePath)) {
+          const err: any = new Error(
+            `Conflict: Document file '${safeName}' already exists in the storage vault.`
+          );
+          err.statusCode = 409;
+          throw err;
+        }
+        fs.writeFileSync(filePath, buffer);
+      }
+    } else {
+      const err: any = new Error(
+        'Server Configuration Error: Persistent Cloud Storage bucket is not configured for production document persistence.'
+      );
+      err.statusCode = 500;
+      throw err;
+    }
 
     // Record in-memory session cache only when explicit demo mode is enabled
     if (isServerDemoModeEnabled()) {
@@ -177,7 +305,7 @@ export class DocumentIntelligenceServerService {
         originalFileName: fileName,
         storageReference,
         fileHash,
-        mimeType: mimeType || 'application/pdf',
+        mimeType: normalizedMime,
         fileSize: buffer.length,
         uploadedBy: authResult.uid,
         uploaderRole: isGov ? 'government' : 'agency',
@@ -206,9 +334,10 @@ export class DocumentIntelligenceServerService {
   async cleanupOrphanVaultFile(params: {
     documentId: string;
     projectId: string;
+    storageReference?: string;
     authHeader?: string;
   }): Promise<{ success: boolean; cleaned: boolean }> {
-    const { documentId, projectId, authHeader } = params;
+    const { documentId, projectId, storageReference, authHeader } = params;
 
     if (!documentId || typeof documentId !== 'string' || !documentId.startsWith('doc-')) {
       const err: any = new Error('Invalid Request: Valid documentId is required.');
@@ -289,13 +418,37 @@ export class DocumentIntelligenceServerService {
       throw err;
     }
 
-    // 4. Find matching orphan vault file specifically prefixed by `${documentId}_`
+    // 4. Delete orphan cloud storage object(s) strictly prefixed by `storage/documents/${project.id}/${documentId}_`
     let cleaned = false;
-    if (fs.existsSync(this.storageDir)) {
-      const files = fs.readdirSync(this.storageDir);
+    const projectScopedPrefix = `storage/documents/${project.id}/${documentId}_`;
+
+    if (isCloudStorageConfigured()) {
+      if (storageReference) {
+        const cleanRef = normalizeStorageReference(storageReference);
+        if (cleanRef.startsWith(projectScopedPrefix)) {
+          const directDeleted = await deleteFromCloudStorage({
+            objectPath: cleanRef,
+            userToken: token,
+          });
+          if (directDeleted) cleaned = true;
+        }
+      }
+
+      const prefixResult = await deleteOrphanObjectsByPrefix({
+        prefix: projectScopedPrefix,
+        userToken: token,
+      });
+      if (prefixResult.deletedCount > 0) {
+        cleaned = true;
+      }
+    }
+
+    // Local dev fallback cleanup in demo mode
+    if (isServerDemoModeEnabled() && this.localDevStorageDir && fs.existsSync(this.localDevStorageDir)) {
+      const files = fs.readdirSync(this.localDevStorageDir);
       for (const f of files) {
-        if (f.startsWith(`${documentId}_`)) {
-          const filePath = path.join(this.storageDir, f);
+        if (f.startsWith(`${documentId}_`) || f.startsWith(`${project.id}_${documentId}_`)) {
+          const filePath = path.join(this.localDevStorageDir, f);
           try {
             fs.unlinkSync(filePath);
             cleaned = true;
@@ -310,7 +463,7 @@ export class DocumentIntelligenceServerService {
   }
 
   /**
-   * Reads stored document binary from the vault.
+   * Reads stored document binary from the persistent Cloud Storage vault.
    * Enforces matching between document ID and storage reference.
    * Verifies SHA-256 binary hash integrity against authoritative document metadata.
    * Authorizes against authoritative document & project ownership.
@@ -366,8 +519,8 @@ export class DocumentIntelligenceServerService {
 
       // If storageReference was also provided, require exact match with authoritative record
       if (storageReference) {
-        const normSupplied = storageReference.trim().replace(/^\.?\//, '');
-        const normDocRef = (doc.storageReference || '').trim().replace(/^\.?\//, '');
+        const normSupplied = normalizeStorageReference(storageReference);
+        const normDocRef = normalizeStorageReference(doc.storageReference || '');
         if (normSupplied !== normDocRef && path.basename(normSupplied) !== path.basename(normDocRef)) {
           const err: any = new Error(
             'Invalid Request: Supplied storage reference does not match authoritative document record.'
@@ -439,33 +592,55 @@ export class DocumentIntelligenceServerService {
       }
     }
 
-    // 5. Read file safely from storage vault
-    const safeBaseName = path.basename(effectiveStorageRef).replace(/[^a-zA-Z0-9._-]/g, '_');
-    const filePath = path.join(this.storageDir, safeBaseName);
+    // 5. Read file safely from persistent Cloud Storage vault (or local fallback in demo mode)
+    let buffer: Buffer | null = null;
+    let mimeType = doc.mimeType || 'application/pdf';
 
-    if (!fs.existsSync(filePath)) {
-      // In demo mode ONLY, synthesize placeholder PDF for authorized demo documents if not yet on disk
-      if (isServerDemoModeEnabled() && (doc.isDemonstrationData || doc.id.startsWith('doc-demo-'))) {
-        const samplePdfContent = Buffer.from(
-          `%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj 2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj 3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Contents 4 0 R>>endobj 4 0 obj<</Length 68>>stream\nBT /F1 12 Tf 72 712 Td (${doc.originalFileName || doc.id}) Tj ET\nendstream\nendobj\nxref\n0 5\n0000000000 65535 f\n0000000009 00000 n\n0000000058 00000 n\n0000000115 00000 n\n0000000214 00000 n\ntrailer<</Size 5/Root 1 0 R>>\nstartxref\n333\n%%EOF`
-        );
-        try {
-          fs.writeFileSync(filePath, samplePdfContent);
-        } catch {
-          // ignore
+    if (isCloudStorageConfigured()) {
+      try {
+        const cloudFile = await downloadFromCloudStorage({
+          objectPath: effectiveStorageRef,
+          userToken: token,
+        });
+        buffer = cloudFile.buffer;
+        if (cloudFile.mimeType) {
+          mimeType = cloudFile.mimeType;
         }
-        return {
-          buffer: samplePdfContent,
-          mimeType: doc.mimeType || 'application/pdf',
-        };
+      } catch (cloudErr: any) {
+        // If demo mode is enabled and doc is demo data, fall through to demo synthesis
+        if (!isServerDemoModeEnabled() || (!doc.isDemonstrationData && !doc.id.startsWith('doc-demo-'))) {
+          const err: any = new Error(
+            `Document file not found in storage vault (${cloudErr.message || 'Cloud storage retrieval failed'}).`
+          );
+          err.statusCode = cloudErr.statusCode || 404;
+          throw err;
+        }
+      }
+    }
+
+    // Fallback for local development/demo mode
+    if (!buffer && isServerDemoModeEnabled()) {
+      const safeBaseName = path.basename(effectiveStorageRef).replace(/[^a-zA-Z0-9._-]/g, '_');
+      if (this.localDevStorageDir) {
+        const filePath = path.join(this.localDevStorageDir, safeBaseName);
+        if (fs.existsSync(filePath)) {
+          buffer = fs.readFileSync(filePath);
+        }
       }
 
+      if (!buffer && (doc.isDemonstrationData || doc.id.startsWith('doc-demo-'))) {
+        // Synthesize placeholder PDF for authorized demo documents
+        buffer = Buffer.from(
+          `%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj 2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj 3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Contents 4 0 R>>endobj 4 0 obj<</Length 68>>stream\nBT /F1 12 Tf 72 712 Td (${doc.originalFileName || doc.id}) Tj ET\nendstream\nendobj\nxref\n0 5\n0000000000 65535 f\n0000000009 00000 n\n0000000058 00000 n\n0000000115 00000 n\n0000000214 00000 n\ntrailer<</Size 5/Root 1 0 R>>\nstartxref\n333\n%%EOF`
+        );
+      }
+    }
+
+    if (!buffer) {
       const err: any = new Error('Document file not found in storage vault.');
       err.statusCode = 404;
       throw err;
     }
-
-    const buffer = fs.readFileSync(filePath);
 
     // Volumetric boundary verification: max 15MB
     if (buffer.length > 15 * 1024 * 1024) {
@@ -479,7 +654,7 @@ export class DocumentIntelligenceServerService {
       const calculatedHash = crypto.createHash('sha256').update(buffer).digest('hex');
       if (calculatedHash.toLowerCase() !== doc.fileHash.toLowerCase().trim()) {
         const err: any = new Error(
-          `Document Integrity Error: Stored document binary SHA-256 hash mismatch. File may be corrupted or modified.`
+          'Document Integrity Error: Stored document binary SHA-256 hash mismatch. File may be corrupted or modified.'
         );
         err.statusCode = 500;
         throw err;
@@ -488,7 +663,7 @@ export class DocumentIntelligenceServerService {
 
     return {
       buffer,
-      mimeType: doc.mimeType || (safeBaseName.endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream'),
+      mimeType,
     };
   }
 
@@ -561,7 +736,7 @@ export class DocumentIntelligenceServerService {
       organizationId: project.organizationId,
     };
 
-    // 6. Resolve Authoritative Document Binary from Vault
+    // 5. Resolve Authoritative Document Binary from Vault
     let fileBase64: string = '';
     const effectiveStorageRef = doc.storageReference;
 

@@ -13,7 +13,8 @@ import {
   orderBy,
   writeBatch,
 } from 'firebase/firestore';
-import { db, auth } from '../firebase/firebase.js';
+import { ref, uploadBytes } from 'firebase/storage';
+import { db, auth, storage } from '../firebase/firebase.js';
 import {
   isLiveFirestoreSession,
   isDemoSession,
@@ -117,7 +118,7 @@ export class DocumentService {
    * Performs validation, stores binary in secure vault, creates metadata record, and triggers extraction.
    */
   static async uploadDocument(input: DocumentUploadInput, user: any): Promise<ProjectDocument> {
-    const { projectId, documentType, originalFileName, mimeType, fileSize, fileDataUrl } = input;
+    const { projectId, documentType, originalFileName, mimeType, fileSize, file, fileDataUrl } = input;
 
     if (!projectId) {
       throw new Error('Project ID is required.');
@@ -156,56 +157,154 @@ export class DocumentService {
 
     const nowIso = new Date().toISOString();
     const documentId = `doc-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
-
-    let storageReference = `storage/documents/${projectId}/${documentId}_${originalFileName.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+    const safeFileName = originalFileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+    let storageReference = `storage/documents/${project.id}/${documentId}_${safeFileName}`;
     let fileHash: string | undefined;
 
-    // Call server storage vault endpoint to securely store binary
-    if (fileDataUrl) {
-      let token = '';
-      if (auth?.currentUser) {
-        token = await auth.currentUser.getIdToken();
+    // Compute client-side SHA-256 hash
+    try {
+      if (file) {
+        const arrayBuffer = await file.arrayBuffer();
+        const hashBuf = await crypto.subtle.digest('SHA-256', arrayBuffer);
+        fileHash = Array.from(new Uint8Array(hashBuf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+      } else if (fileDataUrl) {
+        const cleanB64 = fileDataUrl.replace(/^data:[^;]+;base64,/, '');
+        const binary = atob(cleanB64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+        const hashBuf = await crypto.subtle.digest('SHA-256', bytes);
+        fileHash = Array.from(new Uint8Array(hashBuf)).map((b) => b.toString(16).padStart(2, '0')).join('');
       }
-      let vaultRes: Response;
-      try {
-        vaultRes = await fetch('/api/documents/upload', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: JSON.stringify({
-            documentId,
-            projectId,
-            fileName: originalFileName,
-            mimeType,
-            fileDataUrl,
-          }),
-        });
-      } catch (vaultErr: any) {
+    } catch {
+      // hash calculation fallback
+    }
+
+    let uploadedDirectlyToStorage = false;
+
+    // Direct binary upload to Firebase Cloud Storage (bypasses 4.5MB serverless JSON request limit)
+    if (file) {
+      if (!storage) {
         throw new Error(
-          `Document Vault Error: Unable to upload file to storage vault (${vaultErr?.message || 'Network error'}).`
+          'Document Storage Error: Firebase Storage is not configured. Please ensure storage bucket is configured.'
         );
       }
+      try {
+        const fileStorageRef = ref(storage, storageReference);
+        await uploadBytes(fileStorageRef, file, { contentType: mimeType || 'application/pdf' });
+        uploadedDirectlyToStorage = true;
+      } catch (storageErr: any) {
+        throw new Error(
+          `Document Storage Upload Failed: ${storageErr?.message || 'Direct cloud storage upload was rejected.'}`
+        );
+      }
+    } else if (fileDataUrl) {
+      // Base64 is strictly allowed only for small legacy/demo payloads (<= 2MB)
+      if (fileSize > 2 * 1024 * 1024) {
+        throw new Error(
+          'Document Upload Error: Documents exceeding 2MB must be uploaded as a binary file directly to storage.'
+        );
+      }
+    } else {
+      throw new Error('Document Upload Error: Document file binary is required.');
+    }
 
-      if (!vaultRes.ok) {
-        let errMsg = `Storage vault upload failed with status ${vaultRes.status}`;
+    // Call server storage vault endpoint to authorize, verify provenance, and register storageReference
+    let token = '';
+    if (auth?.currentUser) {
+      token = await auth.currentUser.getIdToken();
+    }
+
+    const uploadPayload: any = {
+      action: 'document-upload',
+      documentId,
+      projectId: project.id,
+      fileName: originalFileName,
+      mimeType,
+      storageReference,
+      fileHash,
+      fileSize,
+    };
+
+    // If file was not passed and small base64 was provided (demo mode), supply it
+    if (!file && fileDataUrl) {
+      uploadPayload.fileDataUrl = fileDataUrl;
+    }
+
+    let vaultRes: Response;
+    try {
+      vaultRes = await fetch('/api/data', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(uploadPayload),
+      });
+    } catch (vaultErr: any) {
+      if (uploadedDirectlyToStorage) {
         try {
-          const errJson = await vaultRes.json();
-          if (errJson?.error) {
-            errMsg = errJson.error;
-          }
-        } catch {
-          // ignore json parse error
+          await fetch('/api/data', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify({
+              action: 'document-cleanup-orphan',
+              documentId,
+              projectId: project.id,
+              storageReference,
+            }),
+          });
+        } catch (cleanupErr) {
+          console.warn('[DocumentService] Orphan cleanup warning after network error:', cleanupErr);
         }
-        throw new Error(`Document Vault Error: ${errMsg}`);
+      }
+      throw new Error(
+        `Document Vault Error: Unable to upload file to storage vault (${vaultErr?.message || 'Network error'}).`
+      );
+    }
+
+    if (!vaultRes.ok) {
+      let errMsg = `Storage vault upload failed with status ${vaultRes.status}`;
+      try {
+        const errJson = await vaultRes.json();
+        if (errJson?.error) {
+          errMsg = errJson.error;
+        }
+      } catch {
+        // ignore json parse error
       }
 
-      const vaultJson = await vaultRes.json();
-      if (vaultJson.storageReference) {
-        storageReference = vaultJson.storageReference;
-        fileHash = vaultJson.fileHash;
+      if (uploadedDirectlyToStorage) {
+        try {
+          await fetch('/api/data', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify({
+              action: 'document-cleanup-orphan',
+              documentId,
+              projectId: project.id,
+              storageReference,
+            }),
+          });
+        } catch (cleanupErr) {
+          console.warn('[DocumentService] Orphan cleanup warning after /api/data rejection:', cleanupErr);
+        }
       }
+
+      throw new Error(`Document Vault Error: ${errMsg}`);
+    }
+
+    const vaultJson = await vaultRes.json();
+    if (vaultJson.storageReference) {
+      storageReference = vaultJson.storageReference;
+      fileHash = vaultJson.fileHash || fileHash;
     }
 
     const newDoc: ProjectDocument = {
@@ -271,28 +370,28 @@ export class DocumentService {
       await batch.commit();
     } catch (batchErr: any) {
       // If vault upload was performed, clean up the orphaned binary on Firestore registration failure
-      if (fileDataUrl) {
-        let token = '';
-        if (auth?.currentUser) {
-          try {
-            token = await auth.currentUser.getIdToken();
-          } catch {}
-        }
+      let orphanToken = '';
+      if (auth?.currentUser) {
         try {
-          await fetch('/api/documents/cleanup-orphan', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(token ? { Authorization: `Bearer ${token}` } : {}),
-            },
-            body: JSON.stringify({
-              documentId,
-              projectId,
-            }),
-          });
-        } catch (cleanupErr) {
-          console.warn('[DocumentService] Orphan document binary cleanup warning:', cleanupErr);
-        }
+          orphanToken = await auth.currentUser.getIdToken();
+        } catch {}
+      }
+      try {
+        await fetch('/api/data', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(orphanToken ? { Authorization: `Bearer ${orphanToken}` } : {}),
+          },
+          body: JSON.stringify({
+            action: 'document-cleanup-orphan',
+            documentId,
+            projectId,
+            storageReference,
+          }),
+        });
+      } catch (cleanupErr) {
+        console.warn('[DocumentService] Orphan document binary cleanup warning:', cleanupErr);
       }
       throw batchErr;
     }
@@ -300,7 +399,7 @@ export class DocumentService {
     // Trigger asynchronous extraction and deterministic cross-validation for government users only
     const isGov = userRole.includes('gov');
     if (isGov) {
-      this.processDocumentExtraction(documentId, user, fileDataUrl).catch((procErr) => {
+      this.processDocumentExtraction(documentId, user).catch((procErr) => {
         console.warn('[DocumentService] Background extraction warning:', procErr);
       });
     }
@@ -362,19 +461,19 @@ export class DocumentService {
         token = await auth.currentUser.getIdToken();
       }
 
-      const res = await fetch('/api/documents/extract', {
+      const res = await fetch('/api/ai', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
+          action: 'document-analysis',
           documentId,
           fileName: existingDoc.originalFileName,
           mimeType: existingDoc.mimeType,
           declaredType: existingDoc.documentType,
           storageReference: existingDoc.storageReference,
-          base64Data: base64Payload,
           projectContext: project
             ? {
                 projectId: project.id,

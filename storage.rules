@@ -1,0 +1,91 @@
+rules_version = '2';
+
+// Bharat Tender Intelligence (BTI) — Firebase Cloud Storage Security Rules
+// Phase 11: Document Vault Multi-Tenant Authorization Boundary & Volumetric Constraints
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Global default-deny catch-all
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions querying Firestore collections
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function getUserData() {
+      return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isGovernmentUser() {
+      return isSignedIn() && (
+        (request.auth.token.role in ['government', 'government_admin', 'government_officer']) ||
+        (firestore.exists(/databases/(default)/documents/users/$(request.auth.uid)) &&
+         getUserData().role in ['government', 'government_admin', 'government_officer'])
+      );
+    }
+
+    function isAgencyUser() {
+      return isSignedIn() && (
+        (request.auth.token.role == 'agency') ||
+        (firestore.exists(/databases/(default)/documents/users/$(request.auth.uid)) &&
+         getUserData().role == 'agency')
+      );
+    }
+
+    function isVerifiedAgency() {
+      return isAgencyUser() && (
+        firestore.exists(/databases/(default)/documents/users/$(request.auth.uid)) &&
+        getUserData().verificationStatus == 'verified'
+      );
+    }
+
+    function isValidDocumentPayload() {
+      return request.resource.size > 0 &&
+             request.resource.size <= 15 * 1024 * 1024 &&
+             (
+               request.resource.contentType.matches('application/pdf') ||
+               request.resource.contentType.matches('image/png') ||
+               request.resource.contentType.matches('image/jpeg') ||
+               request.resource.contentType.matches('image/jpg')
+             );
+    }
+
+    function projectExists(projectId) {
+      return firestore.exists(/databases/(default)/documents/projects/$(projectId));
+    }
+
+    function isAgencyAssignedToProject(projectId) {
+      return projectExists(projectId) &&
+             firestore.get(/databases/(default)/documents/projects/$(projectId)).data.organizationId == getUserData().organizationId;
+    }
+
+    // Phase 11 Project-Scoped Document Vault Storage Boundary: storage/documents/{projectId}/{fileName}
+    match /storage/documents/{projectId}/{fileName} {
+      // 1. Authorized uploads: Strictly restricted to authenticated government officers & verified agency for the specific project
+      // 2. Volumetric & MIME enforcement: Must be <= 15MB and PDF/PNG/JPEG
+      // 3. Document ID prefix validation: File name must start with authoritative doc-* prefix
+      // 4. Overwrite protection: CREATE only; UPDATE is strictly denied
+      allow create: if isSignedIn() &&
+                      isValidDocumentPayload() &&
+                      fileName.matches('^doc-[a-zA-Z0-9_.-]+$') &&
+                      (
+                        (isGovernmentUser() && projectExists(projectId)) ||
+                        (isVerifiedAgency() && isAgencyAssignedToProject(projectId))
+                      );
+
+      // Read access: Restricted to authenticated government and assigned agency personnel (server-side verification provides 2nd layer)
+      allow read: if isSignedIn() &&
+                    (
+                      isGovernmentUser() ||
+                      (isAgencyUser() && isAgencyAssignedToProject(projectId))
+                    );
+
+      // Direct client deletion and overwrites prohibited
+      allow update, delete: if false;
+    }
+  }
+}

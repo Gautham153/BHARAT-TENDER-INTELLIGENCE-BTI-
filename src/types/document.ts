@@ -226,6 +226,7 @@ export interface DocumentUploadInput {
   originalFileName: string;
   mimeType: string;
   fileSize: number;
+  file?: File | Blob;
   fileDataUrl?: string; // base64 representation for transport/vault
   fileBuffer?: ArrayBuffer;
   notes?: string;
