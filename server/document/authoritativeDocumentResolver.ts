@@ -103,22 +103,19 @@ export async function getAuthoritativeDocument(
   if (!documentId || typeof documentId !== 'string') return null;
   const cleanId = documentId.trim();
 
-  // 1. Check in-memory session cache
-  if (runtimeDocumentCache.has(cleanId)) {
-    return runtimeDocumentCache.get(cleanId)!;
-  }
-
-  // 2. Check demonstration documents
-  if (cleanId === DEMO_DOCUMENT_AGENCY_B.id) {
-    return DEMO_DOCUMENT_AGENCY_B;
-  }
-  const demoMatch = DEMONSTRATION_DOCUMENTS.find((d) => d.id === cleanId);
-  if (demoMatch) {
-    return demoMatch;
-  }
-
-  // 3. Demo Mode fallthrough
+  // 1. Demo Mode ONLY: Check in-memory session cache and demonstration documents
   if (isServerDemoModeEnabled()) {
+    if (runtimeDocumentCache.has(cleanId)) {
+      return runtimeDocumentCache.get(cleanId)!;
+    }
+    if (cleanId === DEMO_DOCUMENT_AGENCY_B.id) {
+      return DEMO_DOCUMENT_AGENCY_B;
+    }
+    const demoMatch = DEMONSTRATION_DOCUMENTS.find((d) => d.id === cleanId);
+    if (demoMatch) {
+      return demoMatch;
+    }
+
     const projectId = process.env.VITE_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID;
     if (projectId && token && !token.startsWith('bti-token-') && !token.startsWith('demo-token-')) {
       try {
@@ -140,7 +137,7 @@ export async function getAuthoritativeDocument(
     return null;
   }
 
-  // 4. Live Mode: Firestore is authoritative
+  // 2. Live Mode: Firestore is sole authoritative document source (No cache or demo fallback)
   const projectId = process.env.VITE_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID;
   if (!projectId || projectId.trim().length === 0) {
     return null;
@@ -182,20 +179,19 @@ export async function getAuthoritativeProject(
   if (!projectId || typeof projectId !== 'string') return null;
   const cleanId = projectId.trim();
 
-  // 1. Check known demonstration projects
-  if (cleanId === DEMO_PROJECT_AGENCY_A.id) {
-    return DEMO_PROJECT_AGENCY_A;
-  }
-  if (cleanId === DEMO_PROJECT_AGENCY_B.id) {
-    return DEMO_PROJECT_AGENCY_B;
-  }
-  const mockMatch = mockProjects.find((p) => p.id === cleanId || p.projectCode === cleanId);
-  if (mockMatch) {
-    return mockMatch;
-  }
-
-  // 2. Demo Mode
+  // 1. Demo Mode ONLY: Check known demonstration projects and mockData
   if (isServerDemoModeEnabled()) {
+    if (cleanId === DEMO_PROJECT_AGENCY_A.id) {
+      return DEMO_PROJECT_AGENCY_A;
+    }
+    if (cleanId === DEMO_PROJECT_AGENCY_B.id) {
+      return DEMO_PROJECT_AGENCY_B;
+    }
+    const mockMatch = mockProjects.find((p) => p.id === cleanId || p.projectCode === cleanId);
+    if (mockMatch) {
+      return mockMatch;
+    }
+
     const fbProjectId = process.env.VITE_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID;
     if (fbProjectId && token && !token.startsWith('bti-token-') && !token.startsWith('demo-token-')) {
       try {
@@ -217,7 +213,7 @@ export async function getAuthoritativeProject(
     return null;
   }
 
-  // 3. Live Mode: Firestore is authoritative
+  // 2. Live Mode: Firestore is authoritative (No demo/mock fallbacks)
   const fbProjectId = process.env.VITE_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID;
   if (!fbProjectId || fbProjectId.trim().length === 0) {
     return null;
@@ -274,52 +270,52 @@ export async function getAuthoritativeDocumentByStorageRef(
   const normalizedRef = storageReference.trim().replace(/^\.?\//, '');
   const baseName = path.basename(normalizedRef);
 
-  // 1. Check in-memory session cache
-  for (const doc of runtimeDocumentCache.values()) {
-    if (
-      doc.storageReference === normalizedRef ||
-      doc.storageReference === storageReference ||
-      path.basename(doc.storageReference) === baseName
-    ) {
-      return doc;
-    }
-  }
-
-  // 2. Check demonstration documents
-  if (
-    DEMO_DOCUMENT_AGENCY_B.storageReference === normalizedRef ||
-    path.basename(DEMO_DOCUMENT_AGENCY_B.storageReference) === baseName
-  ) {
-    return DEMO_DOCUMENT_AGENCY_B;
-  }
-
-  for (const doc of DEMONSTRATION_DOCUMENTS) {
-    if (
-      doc.storageReference === normalizedRef ||
-      doc.storageReference === storageReference ||
-      path.basename(doc.storageReference) === baseName
-    ) {
-      return doc;
-    }
-  }
-
-  // 3. Try document ID prefix matching from safe name (e.g. "doc-demo-001_invoice.pdf" -> "doc-demo-001")
-  const idMatch = baseName.match(/^(doc-[a-zA-Z0-9_-]+?)(?:_|\.|$)/);
-  if (idMatch && idMatch[1]) {
-    const byId = await getAuthoritativeDocument(idMatch[1], token);
-    if (byId) {
+  // 1. Demo Mode ONLY: Check in-memory session cache and demonstration documents
+  if (isServerDemoModeEnabled()) {
+    for (const doc of runtimeDocumentCache.values()) {
       if (
-        byId.storageReference === normalizedRef ||
-        byId.storageReference === storageReference ||
-        path.basename(byId.storageReference) === baseName ||
-        baseName.startsWith(byId.id)
+        doc.storageReference === normalizedRef ||
+        doc.storageReference === storageReference ||
+        path.basename(doc.storageReference) === baseName
       ) {
-        return byId;
+        return doc;
+      }
+    }
+
+    if (
+      DEMO_DOCUMENT_AGENCY_B.storageReference === normalizedRef ||
+      path.basename(DEMO_DOCUMENT_AGENCY_B.storageReference) === baseName
+    ) {
+      return DEMO_DOCUMENT_AGENCY_B;
+    }
+
+    for (const doc of DEMONSTRATION_DOCUMENTS) {
+      if (
+        doc.storageReference === normalizedRef ||
+        doc.storageReference === storageReference ||
+        path.basename(doc.storageReference) === baseName
+      ) {
+        return doc;
+      }
+    }
+
+    const idMatch = baseName.match(/^(doc-[a-zA-Z0-9_-]+?)(?:_|\.|$)/);
+    if (idMatch && idMatch[1]) {
+      const byId = await getAuthoritativeDocument(idMatch[1], token);
+      if (byId) {
+        if (
+          byId.storageReference === normalizedRef ||
+          byId.storageReference === storageReference ||
+          path.basename(byId.storageReference) === baseName ||
+          baseName.startsWith(byId.id)
+        ) {
+          return byId;
+        }
       }
     }
   }
 
-  // 4. Live Mode Firestore Query: find document by storageReference
+  // 2. Live Mode Firestore Query: find document by storageReference (Authoritative, no demo or runtime cache fallback)
   const fbProjectId = process.env.VITE_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID;
   if (!fbProjectId || fbProjectId.trim().length === 0) {
     return null;

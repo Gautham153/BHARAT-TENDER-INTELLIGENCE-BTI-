@@ -28,7 +28,6 @@ import {
   Download,
   AlertCircle,
   Check,
-  RotateCw,
 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
@@ -48,7 +47,6 @@ import {
 } from '../../types/document';
 import { Project } from '../../types/project';
 import { formatCurrencyINR } from '../tenders/TenderOpportunityCard';
-import { DEMONSTRATION_DOCUMENTS, DEMO_DOCUMENT_NOTICE } from '../../data/demonstrationDocuments';
 
 export interface DocumentIntelligenceWorkspaceProps {
   project: Project;
@@ -97,31 +95,20 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
     if (!project?.id) return;
     try {
       setLoading(true);
-      const docs = await DocumentService.getDocumentsForProject(project.id);
-      
-      // If none found and this is a demo project or has demo documents, load demo docs
-      if (docs.length === 0 && (project.id.includes('demo') || project.id === 'proj-mplad-2026-001')) {
-        const demoDocs = DEMONSTRATION_DOCUMENTS.filter(
-          (d) => d.projectId === project.id || project.id === 'proj-mplad-2026-001'
-        );
-        setDocuments(demoDocs);
-      } else {
-        setDocuments(docs);
-      }
+      const docs = await DocumentService.getDocumentsForProject(project.id, user);
+      setDocuments(docs);
     } catch (err: any) {
       console.warn('[DocumentIntelligenceWorkspace] Failed to fetch documents:', err);
-      // Fallback to local / demo if available
-      const demoDocs = DEMONSTRATION_DOCUMENTS.filter(
-        (d) => d.projectId === project.id || project.id.includes('demo') || project.id === 'proj-mplad-2026-001'
-      );
-      if (demoDocs.length > 0) {
-        setDocuments(demoDocs);
-      }
+      setDocuments([]);
+      showToast('Error Loading Documents', {
+        message: err.message || 'Failed to retrieve authoritative project documents.',
+        type: 'error',
+      });
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [project?.id]);
+  }, [project?.id, user, showToast]);
 
   useEffect(() => {
     loadDocuments();
@@ -180,6 +167,23 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    // Supported formats validation
+    const allowedExtensions = ['.pdf', '.png', '.jpg', '.jpeg'];
+    const fileNameLower = file.name.toLowerCase();
+    const isExtensionAllowed = allowedExtensions.some((ext) => fileNameLower.endsWith(ext));
+    const allowedMimePrefixes = ['application/pdf', 'image/png', 'image/jpeg', 'image/jpg'];
+    const isMimeAllowed = !file.type || allowedMimePrefixes.includes(file.type.toLowerCase());
+
+    if (!isExtensionAllowed || !isMimeAllowed) {
+      showToast('Unsupported Format', {
+        message: 'Only PDF, PNG, and JPEG documents are supported for ingestion & extraction.',
+        type: 'error',
+      });
+      e.target.value = '';
+      setSelectedFile(null);
+      return;
+    }
 
     if (file.size > 15 * 1024 * 1024) {
       showToast('File Too Large', {
@@ -240,7 +244,9 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
       );
 
       showToast('Document Ingested Successfully', {
-        message: `"${selectedFile.name}" registered. Structured extraction & deterministic cross-validation initiated.`,
+        message: isGov
+          ? `"${selectedFile.name}" registered. Structured extraction & deterministic cross-validation initiated.`
+          : `"${selectedFile.name}" uploaded successfully. Awaiting government document processing.`,
         type: 'success',
       });
 
@@ -326,56 +332,26 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
     }
   };
 
-  // Populate Demo Scenarios for demonstration testing
-  const handleLoadDemoScenarios = () => {
-    const demoDocs = DEMONSTRATION_DOCUMENTS.map((d) => ({
-      ...d,
-      projectId: project.id,
-      projectTitle: project.title,
-      projectNumber: project.projectNumber || project.projectCode || project.id,
-    }));
-    setDocuments(demoDocs);
-    setExpandedDocIds(new Set(demoDocs.map((d) => d.id)));
-    showToast('Demonstration Scenarios Loaded', {
-      message: '5 canonical Phase 11 scenarios (Clean Match, Progress Mismatch, Sanction Overrun, Reference Divergence, Entity Discrepancy) loaded for testing.',
-      type: 'info',
-    });
-  };
-
   return (
     <div className="space-y-6">
-      {/* Regulatory Context Banner */}
-      <div className="bg-gradient-to-r from-blue-900 to-[#002B49] text-white p-4 rounded-xl shadow-xs border border-blue-800">
+      {/* Document Intelligence Header */}
+      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-blue-800/80 rounded-lg text-blue-200 shrink-0">
-              <Sparkles className="w-5 h-5 text-amber-300" />
+            <div className="p-2.5 bg-slate-100 rounded-lg text-slate-700 shrink-0">
+              <FileCheck2 className="w-5 h-5 text-blue-700" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h3 className="font-bold text-sm tracking-wide">
-                  Document Intelligence & Deterministic Cross-Validation
-                </h3>
-                <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-blue-800 text-blue-200 border border-blue-700">
-                  Phase 11
-                </span>
-              </div>
-              <p className="text-xs text-blue-200 mt-0.5">
+              <h3 className="font-bold text-sm text-[#002B49] tracking-tight">
+                Document Intelligence & Deterministic Cross-Validation
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">
                 AI structured extraction corroborated against authoritative project baselines, PFMS disbursements, and verified on-site inspection logs.
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleLoadDemoScenarios}
-              className="text-xs bg-blue-800/60 text-blue-100 hover:bg-blue-800 border-blue-700"
-            >
-              <RotateCw className="w-3.5 h-3.5 mr-1.5" />
-              Load Demo Scenarios
-            </Button>
             <Button
               size="sm"
               onClick={() => setShowUploadModal(true)}
@@ -500,14 +476,10 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
                 : 'No official documents have been uploaded for this project yet.'}
             </p>
           </div>
-          <div className="flex items-center justify-center gap-2">
+          <div className="flex items-center justify-center">
             <Button size="sm" onClick={() => setShowUploadModal(true)} className="text-xs">
               <Upload className="w-3.5 h-3.5 mr-1.5" />
               Upload Project Document
-            </Button>
-            <Button variant="outline" size="sm" onClick={handleLoadDemoScenarios} className="text-xs">
-              <RotateCw className="w-3.5 h-3.5 mr-1.5" />
-              Load Demo Scenarios
             </Button>
           </div>
         </div>
@@ -558,11 +530,6 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
                         <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
                           {DOCUMENT_TYPE_LABELS[doc.documentType] || doc.documentType}
                         </span>
-                        {doc.isDemonstrationData && (
-                          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">
-                            Demonstration Data
-                          </span>
-                        )}
                       </div>
 
                       <div className="flex items-center gap-3 text-xs text-slate-500 mt-1 flex-wrap font-mono">
@@ -601,6 +568,11 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
                         <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-600" />
                         Extracting with Gemini...
                       </span>
+                    ) : doc.processingStatus === 'UPLOADED' || doc.extractionStatus === 'PENDING' ? (
+                      <span className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
+                        <Clock className="w-3.5 h-3.5 text-slate-500" />
+                        Uploaded (Awaiting Processing)
+                      </span>
                     ) : (
                       <span className="text-xs font-medium px-2 py-0.5 rounded bg-slate-100 text-slate-600">
                         {doc.processingStatus}
@@ -618,16 +590,6 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
                 {/* Expanded Details Drawer */}
                 {isExpanded && (
                   <div className="border-t border-slate-100 p-4 sm:p-5 space-y-6 bg-slate-50/50 rounded-b-xl">
-                    {/* Demonstration Disclaimer if demo */}
-                    {doc.isDemonstrationData && (
-                      <div className="p-2.5 bg-blue-50/80 border border-blue-200 rounded-lg text-xs text-blue-900 flex items-start gap-2">
-                        <Info className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
-                        <div>
-                          <strong>Demonstration Scenario:</strong> {DEMO_DOCUMENT_NOTICE}
-                        </div>
-                      </div>
-                    )}
-
                     {/* Section 1: Structured Document Understanding (Gemini AI Extraction) */}
                     <div className="bg-white p-4 rounded-xl border border-slate-200 space-y-3">
                       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 border-b border-slate-100 pb-2">
@@ -653,6 +615,11 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
                             {doc.processingError ||
                               'Document extraction is currently unavailable. The original document has been preserved for manual review.'}
                           </span>
+                        </div>
+                      ) : doc.extractionStatus === 'PENDING' || doc.processingStatus === 'UPLOADED' ? (
+                        <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-600 flex items-center gap-2">
+                          <Clock className="w-4 h-4 text-slate-400 shrink-0" />
+                          <span>Awaiting government document processing.</span>
                         </div>
                       ) : (
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -900,23 +867,27 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
                         <p className="text-xs text-slate-500">
                           {doc.validationStatus === 'VALIDATED_CLEAN'
                             ? 'Document fully corroborates official baseline records. No manual intervention required.'
+                            : doc.processingStatus === 'UPLOADED' || doc.extractionStatus === 'PENDING'
+                            ? 'Awaiting government document processing.'
                             : 'Awaiting extraction or validation processing.'}
                         </p>
                       )}
 
-                      {/* Reprocess & Actions Toolbar */}
-                      <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleReprocess(doc.id)}
-                          disabled={isReprocessing}
-                          className="text-xs"
-                        >
-                          <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${isReprocessing ? 'animate-spin' : ''}`} />
-                          Reprocess Extraction
-                        </Button>
-                      </div>
+                      {/* Reprocess & Actions Toolbar (Government Only) */}
+                      {isGov && (
+                        <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleReprocess(doc.id)}
+                            disabled={isReprocessing}
+                            className="text-xs"
+                          >
+                            <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${isReprocessing ? 'animate-spin' : ''}`} />
+                            Reprocess Extraction
+                          </Button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -953,13 +924,13 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
             <label className="block font-bold text-slate-700 mb-1">Select Document File *</label>
             <input
               type="file"
-              accept=".pdf,.png,.jpg,.jpeg,.txt,.docx"
+              accept=".pdf,.png,.jpg,.jpeg"
               onChange={handleFileChange}
               required
               className="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg"
             />
             <span className="text-[11px] text-slate-400 mt-1 block">
-              Supported formats: PDF, PNG, JPG, JPEG, TXT (Maximum: 15MB).
+              Supported formats: PDF, PNG, JPG, JPEG (Maximum: 15MB).
             </span>
           </div>
 

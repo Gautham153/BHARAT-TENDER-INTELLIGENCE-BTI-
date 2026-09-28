@@ -1566,7 +1566,42 @@ service cloud.firestore {
             'CITIZEN_REPORT_LINKED_TO_FINDING',
             'CITIZEN_REPORT_LINKED_TO_EXCEPTION',
             'CITIZEN_REPORT_EVIDENCE_VIEWED'
-          ] && exists(/databases/$(database)/documents/projects/$(incoming().projectId)))
+          ] && exists(/databases/$(database)/documents/projects/$(incoming().projectId))) ||
+
+          // Phase 11: Document Ingestion, Extraction, Validation & Review Actions
+          // DOCUMENT_UPLOADED -> referenced document created in getAfter()
+          (incoming().action == 'DOCUMENT_UPLOADED'
+           && incoming().get('newState', {}).get('documentId', '') is string
+           && incoming().newState.documentId.size() > 0
+           && !exists(/databases/$(database)/documents/projectDocuments/$(incoming().newState.documentId))
+           && getAfter(/databases/$(database)/documents/projectDocuments/$(incoming().newState.documentId)).data.projectId == incoming().projectId) ||
+
+          // DOCUMENT_EXTRACTION_FAILED / DOCUMENT_CROSS_VALIDATION_COMPLETED / DOCUMENT_REVIEW_REQUESTED -> referenced document processed in getAfter()
+          (incoming().action in ['DOCUMENT_EXTRACTION_FAILED', 'DOCUMENT_CROSS_VALIDATION_COMPLETED', 'DOCUMENT_REVIEW_REQUESTED']
+           && incoming().get('newState', {}).get('documentId', '') is string
+           && incoming().newState.documentId.size() > 0
+           && (
+             existsAfter(/databases/$(database)/documents/projectDocuments/$(incoming().newState.documentId))
+               ? getAfter(/databases/$(database)/documents/projectDocuments/$(incoming().newState.documentId)).data.projectId == incoming().projectId
+               : (exists(/databases/$(database)/documents/projectDocuments/$(incoming().newState.documentId)) && get(/databases/$(database)/documents/projectDocuments/$(incoming().newState.documentId)).data.projectId == incoming().projectId)
+           )) ||
+
+          // DOCUMENT_REVIEWED -> referenced document reviewed in getAfter()
+          (incoming().action == 'DOCUMENT_REVIEWED'
+           && incoming().get('newState', {}).get('documentId', '') is string
+           && incoming().newState.documentId.size() > 0
+           && (
+             existsAfter(/databases/$(database)/documents/projectDocuments/$(incoming().newState.documentId))
+               ? getAfter(/databases/$(database)/documents/projectDocuments/$(incoming().newState.documentId)).data.projectId == incoming().projectId
+               : (exists(/databases/$(database)/documents/projectDocuments/$(incoming().newState.documentId)) && get(/databases/$(database)/documents/projectDocuments/$(incoming().newState.documentId)).data.projectId == incoming().projectId)
+           )) ||
+
+          // DOCUMENT_REPROCESS_REQUESTED -> referenced document exists
+          (incoming().action == 'DOCUMENT_REPROCESS_REQUESTED'
+           && incoming().get('newState', {}).get('documentId', '') is string
+           && incoming().newState.documentId.size() > 0
+           && exists(/databases/$(database)/documents/projectDocuments/$(incoming().newState.documentId))
+           && get(/databases/$(database)/documents/projectDocuments/$(incoming().newState.documentId)).data.projectId == incoming().projectId)
         );
       }
 
@@ -1587,56 +1622,80 @@ service cloud.firestore {
               isVerifiedAgency()
               && incoming().actorRole == 'agency'
               && get(/databases/$(database)/documents/projects/$(incoming().projectId)).data.organizationId == getUserOrgId()
-              && incoming().action in [
-                'PROGRESS_UPDATE_SUBMITTED',
-                'FINANCIAL_RECORD_SUBMITTED',
-                'MILESTONE_UPDATED',
-                'EXCEPTION_EXPLANATION_SUBMITTED'
-              ]
+              && (
+                incoming().action in [
+                  'PROGRESS_UPDATE_SUBMITTED',
+                  'FINANCIAL_RECORD_SUBMITTED',
+                  'MILESTONE_UPDATED',
+                  'EXCEPTION_EXPLANATION_SUBMITTED'
+                ]
+                ||
+                (
+                  incoming().action == 'DOCUMENT_UPLOADED'
+                  && incoming().get('newState', {}).get('documentId', '') is string
+                  && getAfter(/databases/$(database)/documents/projectDocuments/$(incoming().newState.documentId)).data.organizationId == getUserOrgId()
+                )
+              )
             )
             ||
             // Government actions
             (
               isGovernmentUser()
-              && incoming().actorRole == 'government'
-              && incoming().action in [
-                'PROJECT_CREATED',
-                'PROJECT_UPDATED',
-                'STATUS_CHANGED',
-                'DISCLOSURE_STATUS_CHANGED',
-                'MILESTONE_CREATED',
-                'MILESTONE_UPDATED',
-                'PROGRESS_UPDATE_SUBMITTED',
-                'FINANCIAL_RECORD_SUBMITTED',
-                'FINANCIAL_RECORD_VERIFIED',
-                'FINANCIAL_RECORD_REJECTED',
-                'INSPECTION_CREATED',
-                'EXCEPTION_DETECTED',
-                'EXCEPTION_ACKNOWLEDGED',
-                'EXCEPTION_RESOLVED',
-                'EXCEPTION_EXPLANATION_REQUESTED',
-                'ANOMALY_DETECTED',
-                'AI_RISK_ANALYSIS_REQUESTED',
-                'AI_RISK_ANALYSIS_COMPLETED',
-                'AI_RISK_ANALYSIS_FAILED',
-                'ANOMALY_ACKNOWLEDGED',
-                'ANOMALY_UNDER_REVIEW',
-                'ANOMALY_RESOLVED',
-                'ANOMALY_DISMISSED',
-                'INVESTIGATION_NOTE_ADDED',
-                'INVESTIGATION_ADVISORY_GENERATED',
-                'CITIZEN_REPORT_SUBMITTED',
-                'CITIZEN_REPORT_REVIEWED',
-                'CITIZEN_REPORT_STATUS_CHANGED',
-                'CITIZEN_REPORT_VERIFIED',
-                'CITIZEN_REPORT_NOT_SUBSTANTIATED',
-                'CITIZEN_REPORT_DISMISSED',
-                'CITIZEN_REPORT_CLOSED',
-                'CITIZEN_REPORT_INFO_REQUESTED',
-                'CITIZEN_REPORT_LINKED_TO_FINDING',
-                'CITIZEN_REPORT_LINKED_TO_EXCEPTION',
-                'CITIZEN_REPORT_EVIDENCE_VIEWED'
-              ]
+              && (
+                (
+                  incoming().actorRole == 'government'
+                  && incoming().action in [
+                    'PROJECT_CREATED',
+                    'PROJECT_UPDATED',
+                    'STATUS_CHANGED',
+                    'DISCLOSURE_STATUS_CHANGED',
+                    'MILESTONE_CREATED',
+                    'MILESTONE_UPDATED',
+                    'PROGRESS_UPDATE_SUBMITTED',
+                    'FINANCIAL_RECORD_SUBMITTED',
+                    'FINANCIAL_RECORD_VERIFIED',
+                    'FINANCIAL_RECORD_REJECTED',
+                    'INSPECTION_CREATED',
+                    'EXCEPTION_DETECTED',
+                    'EXCEPTION_ACKNOWLEDGED',
+                    'EXCEPTION_RESOLVED',
+                    'EXCEPTION_EXPLANATION_REQUESTED',
+                    'ANOMALY_DETECTED',
+                    'AI_RISK_ANALYSIS_REQUESTED',
+                    'AI_RISK_ANALYSIS_COMPLETED',
+                    'AI_RISK_ANALYSIS_FAILED',
+                    'ANOMALY_ACKNOWLEDGED',
+                    'ANOMALY_UNDER_REVIEW',
+                    'ANOMALY_RESOLVED',
+                    'ANOMALY_DISMISSED',
+                    'INVESTIGATION_NOTE_ADDED',
+                    'INVESTIGATION_ADVISORY_GENERATED',
+                    'CITIZEN_REPORT_SUBMITTED',
+                    'CITIZEN_REPORT_REVIEWED',
+                    'CITIZEN_REPORT_STATUS_CHANGED',
+                    'CITIZEN_REPORT_VERIFIED',
+                    'CITIZEN_REPORT_NOT_SUBSTANTIATED',
+                    'CITIZEN_REPORT_DISMISSED',
+                    'CITIZEN_REPORT_CLOSED',
+                    'CITIZEN_REPORT_INFO_REQUESTED',
+                    'CITIZEN_REPORT_LINKED_TO_FINDING',
+                    'CITIZEN_REPORT_LINKED_TO_EXCEPTION',
+                    'CITIZEN_REPORT_EVIDENCE_VIEWED',
+                    'DOCUMENT_UPLOADED',
+                    'DOCUMENT_REVIEWED',
+                    'DOCUMENT_REPROCESS_REQUESTED'
+                  ]
+                )
+                ||
+                (
+                  incoming().actorRole == 'system'
+                  && incoming().action in [
+                    'DOCUMENT_EXTRACTION_FAILED',
+                    'DOCUMENT_CROSS_VALIDATION_COMPLETED',
+                    'DOCUMENT_REVIEW_REQUESTED'
+                  ]
+                )
+              )
             )
           )
         )

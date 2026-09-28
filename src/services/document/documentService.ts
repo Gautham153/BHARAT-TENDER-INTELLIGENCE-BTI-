@@ -29,93 +29,87 @@ import {
   DocumentReviewStatus,
 } from '../../types/document.js';
 import { ProjectAuditEvent, ProjectAuditAction } from '../../types/project.js';
-import { DEMONSTRATION_DOCUMENTS } from '../../data/demonstrationDocuments.js';
+import { AuthUser } from '../../types/auth.js';
+import { AuthService } from '../authService.js';
 import { DocumentCrossValidationService } from './documentCrossValidationService.js';
 import { EvidenceChainService } from '../evidence/evidenceChainService.js';
 
 const DOCUMENTS_COLLECTION = 'projectDocuments';
 const AUDIT_EVENTS_COLLECTION = 'projectAuditEvents';
-const LOCAL_STORAGE_DOCUMENTS_KEY = 'bti_project_documents_cache_v1';
-
-function getLocalDocuments(): ProjectDocument[] {
-  try {
-    const raw = localStorage.getItem(LOCAL_STORAGE_DOCUMENTS_KEY);
-    if (!raw) {
-      if (isDemoSession() || !isLiveFirestoreSession()) {
-        localStorage.setItem(LOCAL_STORAGE_DOCUMENTS_KEY, JSON.stringify(DEMONSTRATION_DOCUMENTS));
-        return [...DEMONSTRATION_DOCUMENTS];
-      }
-      return [];
-    }
-    return JSON.parse(raw) as ProjectDocument[];
-  } catch {
-    return isDemoSession() || !isLiveFirestoreSession() ? [...DEMONSTRATION_DOCUMENTS] : [];
-  }
-}
-
-function saveLocalDocuments(docs: ProjectDocument[]): void {
-  try {
-    localStorage.setItem(LOCAL_STORAGE_DOCUMENTS_KEY, JSON.stringify(docs));
-  } catch (err) {
-    console.warn('[DocumentService] Failed to cache local documents:', err);
-  }
-}
 
 export class DocumentService {
   /**
    * Retrieves all documents for a project.
+   * For agency users, enforces dual constraints (projectId AND organizationId) matching Firestore security rules.
+   * For government users, preserves project-level queries.
+   * Requires an active live Firestore session (sole source of truth).
    */
-  static async getDocumentsForProject(projectId: string): Promise<ProjectDocument[]> {
+  static async getDocumentsForProject(
+    projectId: string,
+    userOrOptions?: AuthUser | { role?: string; organizationId?: string } | null
+  ): Promise<ProjectDocument[]> {
     if (!projectId) return [];
 
     const isLive = isLiveFirestoreSession() && db;
-    const isExplicitDemo = projectId.startsWith('demo-') || projectId.startsWith('proj-demo-');
-
-    if (isLive && !isExplicitDemo) {
-      try {
-        const colRef = collection(db, DOCUMENTS_COLLECTION);
-        const q = query(colRef, where('projectId', '==', projectId));
-        const snap = await getDocs(q);
-        const docs: ProjectDocument[] = [];
-        snap.forEach((d) => docs.push(d.data() as ProjectDocument));
-        return docs.sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime());
-      } catch (err) {
-        console.error(`[DocumentService] Live Firestore error fetching documents for project ${projectId}:`, err);
-        throw err;
-      }
+    if (!isLive) {
+      return [];
     }
 
-    const local = getLocalDocuments();
-    return local
-      .filter((d) => d.projectId === projectId)
-      .sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime());
+    const currentUser = userOrOptions && 'role' in userOrOptions
+      ? userOrOptions
+      : AuthService.getCurrentUser();
+
+    const role = (currentUser?.role || '').toLowerCase();
+    const isGov = role.includes('gov');
+    const isAgency = role.includes('agency');
+    const organizationId = (currentUser as any)?.organizationId || (currentUser as any)?.agencyId;
+
+    try {
+      const colRef = collection(db, DOCUMENTS_COLLECTION);
+      let q;
+      if (isAgency && !isGov && organizationId) {
+        q = query(
+          colRef,
+          where('projectId', '==', projectId),
+          where('organizationId', '==', organizationId)
+        );
+      } else {
+        q = query(colRef, where('projectId', '==', projectId));
+      }
+
+      const snap = await getDocs(q);
+      const docs: ProjectDocument[] = [];
+      snap.forEach((d) => docs.push(d.data() as ProjectDocument));
+      return docs.sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime());
+    } catch (err) {
+      console.error(`[DocumentService] Live Firestore error fetching documents for project ${projectId}:`, err);
+      throw err;
+    }
   }
 
   /**
    * Retrieves a single document by ID.
+   * Requires an active live Firestore session.
    */
   static async getDocumentById(documentId: string): Promise<ProjectDocument | null> {
     if (!documentId) return null;
 
     const isLive = isLiveFirestoreSession() && db;
-    const isExplicitDemo = documentId.startsWith('doc-demo-') || documentId.startsWith('demo-');
-
-    if (isLive && !isExplicitDemo) {
-      try {
-        const docRef = doc(db, DOCUMENTS_COLLECTION, documentId);
-        const snap = await getDoc(docRef);
-        if (snap.exists()) {
-          return snap.data() as ProjectDocument;
-        }
-        return null;
-      } catch (err) {
-        console.error(`[DocumentService] Live Firestore error fetching document ${documentId}:`, err);
-        throw err;
-      }
+    if (!isLive) {
+      return null;
     }
 
-    const local = getLocalDocuments();
-    return local.find((d) => d.id === documentId) || DEMONSTRATION_DOCUMENTS.find((d) => d.id === documentId) || null;
+    try {
+      const docRef = doc(db, DOCUMENTS_COLLECTION, documentId);
+      const snap = await getDoc(docRef);
+      if (snap.exists()) {
+        return snap.data() as ProjectDocument;
+      }
+      return null;
+    } catch (err) {
+      console.error(`[DocumentService] Live Firestore error fetching document ${documentId}:`, err);
+      throw err;
+    }
   }
 
   /**
@@ -155,15 +149,19 @@ export class DocumentService {
       }
     }
 
+    const isLive = isLiveFirestoreSession() && db;
+    if (!isLive) {
+      throw new Error('Document Intelligence requires a live Firestore session.');
+    }
+
     const nowIso = new Date().toISOString();
     const documentId = `doc-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
-    const isLive = isLiveFirestoreSession() && db;
 
     let storageReference = `storage/documents/${projectId}/${documentId}_${originalFileName.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
     let fileHash: string | undefined;
 
-    // In live mode, call server storage vault endpoint to securely store binary
-    if (isLive && fileDataUrl) {
+    // Call server storage vault endpoint to securely store binary
+    if (fileDataUrl) {
       let token = '';
       if (auth?.currentUser) {
         token = await auth.currentUser.getIdToken();
@@ -233,7 +231,7 @@ export class DocumentService {
       extractionStatus: 'PENDING',
       validationStatus: 'NOT_VALIDATED',
       reviewStatus: 'NONE_REQUIRED',
-      isDemonstrationData: isDemoSession() || projectId.includes('demo'),
+      isDemonstrationData: isDemoSession(),
       createdAt: nowIso,
       updatedAt: nowIso,
     };
@@ -263,23 +261,49 @@ export class DocumentService {
       notes: `Document [${documentType}] "${originalFileName}" uploaded by ${user?.name || 'User'}. Initialized for processing.`,
     };
 
-    if (isLive) {
-      const batch = writeBatch(db);
-      const docRef = doc(db, DOCUMENTS_COLLECTION, documentId);
-      const auditRef = doc(db, AUDIT_EVENTS_COLLECTION, eventId);
-      batch.set(docRef, sanitizeFirestorePayload(newDoc));
-      batch.set(auditRef, sanitizeFirestorePayload(auditEvent));
+    const batch = writeBatch(db);
+    const docRef = doc(db, DOCUMENTS_COLLECTION, documentId);
+    const auditRef = doc(db, AUDIT_EVENTS_COLLECTION, eventId);
+    batch.set(docRef, sanitizeFirestorePayload(newDoc));
+    batch.set(auditRef, sanitizeFirestorePayload(auditEvent));
+
+    try {
       await batch.commit();
-    } else {
-      const local = getLocalDocuments();
-      local.unshift(newDoc);
-      saveLocalDocuments(local);
+    } catch (batchErr: any) {
+      // If vault upload was performed, clean up the orphaned binary on Firestore registration failure
+      if (fileDataUrl) {
+        let token = '';
+        if (auth?.currentUser) {
+          try {
+            token = await auth.currentUser.getIdToken();
+          } catch {}
+        }
+        try {
+          await fetch('/api/documents/cleanup-orphan', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify({
+              documentId,
+              projectId,
+            }),
+          });
+        } catch (cleanupErr) {
+          console.warn('[DocumentService] Orphan document binary cleanup warning:', cleanupErr);
+        }
+      }
+      throw batchErr;
     }
 
-    // Trigger asynchronous extraction and deterministic cross-validation
-    this.processDocumentExtraction(documentId, user, fileDataUrl).catch((procErr) => {
-      console.warn('[DocumentService] Background extraction warning:', procErr);
-    });
+    // Trigger asynchronous extraction and deterministic cross-validation for government users only
+    const isGov = userRole.includes('gov');
+    if (isGov) {
+      this.processDocumentExtraction(documentId, user, fileDataUrl).catch((procErr) => {
+        console.warn('[DocumentService] Background extraction warning:', procErr);
+      });
+    }
 
     return newDoc;
   }
@@ -293,6 +317,11 @@ export class DocumentService {
     user: any,
     base64Payload?: string
   ): Promise<ProjectDocument> {
+    const userRole = (user?.role || '').toLowerCase();
+    if (!userRole.includes('gov')) {
+      throw new Error('Access Denied: Only authorized government officers may execute document extraction & cross-validation.');
+    }
+
     const existingDoc = await this.getDocumentById(documentId);
     if (!existingDoc) {
       throw new Error(`Document "${documentId}" not found.`);
@@ -300,6 +329,9 @@ export class DocumentService {
 
     const nowIso = new Date().toISOString();
     const isLive = isLiveFirestoreSession() && db;
+    if (!isLive) {
+      throw new Error('Document Intelligence requires a live Firestore session.');
+    }
 
     // 1. Mark as PROCESSING
     let processingDoc: ProjectDocument = {
@@ -308,12 +340,10 @@ export class DocumentService {
       updatedAt: nowIso,
     };
 
-    if (isLive) {
-      await updateDoc(doc(db, DOCUMENTS_COLLECTION, documentId), {
-        processingStatus: 'PROCESSING',
-        updatedAt: nowIso,
-      });
-    }
+    await updateDoc(doc(db, DOCUMENTS_COLLECTION, documentId), {
+      processingStatus: 'PROCESSING',
+      updatedAt: nowIso,
+    });
 
     // 2. Fetch project context for extraction assistance
     const project = await ProjectService.getProjectById(existingDoc.projectId);
@@ -322,7 +352,7 @@ export class DocumentService {
     let detectedDocumentType = existingDoc.detectedDocumentType;
     let extractionStatus: any = 'COMPLETED';
     let extractionProvider = 'Gemini Document Intelligence';
-    let extractionModel = 'gemini-3.8-flash';
+    let extractionModel = 'gemini-3.5-flash-lite';
     let extractionTimestamp = nowIso;
     let processingError: string | undefined;
 
@@ -482,18 +512,12 @@ export class DocumentService {
       notes: `Document [${existingDoc.id}] processed: extraction ${extractionStatus}, validation ${validationStatus}.`,
     };
 
-    if (isLive) {
-      const batch = writeBatch(db);
-      const docRef = doc(db, DOCUMENTS_COLLECTION, documentId);
-      const auditRef = doc(db, AUDIT_EVENTS_COLLECTION, eventId);
-      batch.update(docRef, sanitizeFirestorePayload(updatedDoc));
-      batch.set(auditRef, sanitizeFirestorePayload(auditEvent));
-      await batch.commit();
-    } else {
-      const local = getLocalDocuments().filter((d) => d.id !== documentId);
-      local.unshift(updatedDoc);
-      saveLocalDocuments(local);
-    }
+    const batch = writeBatch(db);
+    const docRef = doc(db, DOCUMENTS_COLLECTION, documentId);
+    const auditRef = doc(db, AUDIT_EVENTS_COLLECTION, eventId);
+    batch.update(docRef, sanitizeFirestorePayload(updatedDoc));
+    batch.set(auditRef, sanitizeFirestorePayload(auditEvent));
+    await batch.commit();
 
     return updatedDoc;
   }
@@ -511,6 +535,11 @@ export class DocumentService {
     const userRole = (user?.role || '').toLowerCase();
     if (!userRole.includes('gov')) {
       throw new Error('Access Denied: Only authorized government officers can record official document review decisions.');
+    }
+
+    const isLive = isLiveFirestoreSession() && db;
+    if (!isLive) {
+      throw new Error('Document Intelligence requires a live Firestore session.');
     }
 
     const document = await this.getDocumentById(documentId);
@@ -565,19 +594,12 @@ export class DocumentService {
       notes: `Official human review recorded on document [${document.originalFileName}]: ${action} by ${user?.name || 'Officer'}. Notes: ${reviewNotes}`,
     };
 
-    const isLive = isLiveFirestoreSession() && db;
-    if (isLive) {
-      const batch = writeBatch(db);
-      const docRef = doc(db, DOCUMENTS_COLLECTION, documentId);
-      const auditRef = doc(db, AUDIT_EVENTS_COLLECTION, eventId);
-      batch.update(docRef, sanitizeFirestorePayload(updated));
-      batch.set(auditRef, sanitizeFirestorePayload(auditEvent));
-      await batch.commit();
-    } else {
-      const local = getLocalDocuments().filter((d) => d.id !== documentId);
-      local.unshift(updated);
-      saveLocalDocuments(local);
-    }
+    const batch = writeBatch(db);
+    const docRef = doc(db, DOCUMENTS_COLLECTION, documentId);
+    const auditRef = doc(db, AUDIT_EVENTS_COLLECTION, eventId);
+    batch.update(docRef, sanitizeFirestorePayload(updated));
+    batch.set(auditRef, sanitizeFirestorePayload(auditEvent));
+    await batch.commit();
 
     return updated;
   }
@@ -588,8 +610,13 @@ export class DocumentService {
    */
   static async reprocessDocument(documentId: string, user: any): Promise<ProjectDocument> {
     const userRole = (user?.role || '').toLowerCase();
-    if (!userRole.includes('gov') && !userRole.includes('agency')) {
-      throw new Error('Access Denied: Only authorized personnel may request document reprocessing.');
+    if (!userRole.includes('gov')) {
+      throw new Error('Access Denied: Only authorized government officers may request document reprocessing.');
+    }
+
+    const isLive = isLiveFirestoreSession() && db;
+    if (!isLive) {
+      throw new Error('Document Intelligence requires a live Firestore session.');
     }
 
     const nowIso = new Date().toISOString();
@@ -605,18 +632,15 @@ export class DocumentService {
       projectId: document.projectId,
       action: 'DOCUMENT_REPROCESS_REQUESTED',
       actorId: user?.id || user?.uid || 'user',
-      actorRole: userRole.includes('gov') ? 'government' : 'agency',
+      actorRole: 'government',
       actorName: user?.name || user?.displayName || 'Authorized Officer',
       timestamp: nowIso,
       newState: { documentId, action: 'REPROCESS' },
       notes: `Reprocessing requested for document [${document.originalFileName}] by ${user?.name || 'User'}.`,
     };
 
-    const isLive = isLiveFirestoreSession() && db;
-    if (isLive) {
-      const auditRef = doc(db, AUDIT_EVENTS_COLLECTION, eventId);
-      await setDoc(auditRef, sanitizeFirestorePayload(auditEvent));
-    }
+    const auditRef = doc(db, AUDIT_EVENTS_COLLECTION, eventId);
+    await setDoc(auditRef, sanitizeFirestorePayload(auditEvent));
 
     return this.processDocumentExtraction(documentId, user);
   }

@@ -17,7 +17,7 @@ async function startServer() {
   const PORT = 3000;
 
   // JSON request body parser
-  app.use(express.json({ limit: '20mb' }));
+  app.use(express.json({ limit: '25mb' }));
 
   const evaluationServer = new ProposalEvaluationServerService();
   const projectRiskAiServer = new ProjectRiskAiServerService();
@@ -94,6 +94,24 @@ async function startServer() {
     } catch (err: any) {
       const statusCode = err?.statusCode || (err?.message?.includes('Access Denied') ? 403 : 400);
       res.status(statusCode).json({ success: false, error: err instanceof Error ? err.message : 'Upload failed' });
+    }
+  });
+
+  // Phase 11: Document Orphan Cleanup Endpoint (Rollback on Firestore metadata registration failure)
+  app.post('/api/documents/cleanup-orphan', async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization || (req.headers['authorization'] as string | undefined);
+      const payload = req.body || {};
+
+      const result = await documentIntelligenceServer.cleanupOrphanVaultFile({
+        ...payload,
+        authHeader,
+      });
+
+      res.status(200).json({ success: true, ...result });
+    } catch (err: any) {
+      const statusCode = err?.statusCode || (err?.message?.includes('Access Denied') ? 403 : 400);
+      res.status(statusCode).json({ success: false, error: err instanceof Error ? err.message : 'Cleanup failed' });
     }
   });
 
