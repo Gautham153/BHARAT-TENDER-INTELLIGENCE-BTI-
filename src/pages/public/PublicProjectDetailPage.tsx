@@ -186,7 +186,13 @@ export const PublicProjectDetailPage: React.FC<PublicProjectDetailPageProps> = (
               <div className="flex items-center gap-1.5">
                 <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                 <span>
-                  {project.location.district}, {project.location.state} ({project.location.constituency})
+                  {[
+                    project.location.district,
+                    project.location.state,
+                    project.location.constituency ? `(${project.location.constituency})` : undefined,
+                  ]
+                    .filter(Boolean)
+                    .join(', ') || 'Not recorded in the available public record'}
                 </span>
               </div>
               {project.mpName && (
@@ -234,13 +240,13 @@ export const PublicProjectDetailPage: React.FC<PublicProjectDetailPageProps> = (
           <div>
             <div className="text-slate-400">Implementing Agency</div>
             <div className="font-bold text-slate-800 text-sm mt-0.5">
-              {project.implementingAgencyName || 'Designated Public Agency'}
+              {project.implementingAgencyName || 'Not recorded in the available public record'}
             </div>
           </div>
           <div>
             <div className="text-slate-400">Monitoring Authority</div>
             <div className="font-bold text-slate-800 text-sm mt-0.5">
-              {project.authorityName || 'District Planning & Monitoring Cell'}
+              {project.authorityName || 'Not recorded in the available public record'}
             </div>
           </div>
           <div>
@@ -270,9 +276,15 @@ export const PublicProjectDetailPage: React.FC<PublicProjectDetailPageProps> = (
               Authoritative financial allocation, contract values, and verified public fund releases.
             </p>
           </div>
-          <span className="text-xs font-semibold px-2.5 py-1 rounded bg-slate-100 text-slate-600 self-start sm:self-auto">
-            Audit-Verified
-          </span>
+          {project.hasVerifiedExpenditureRecords ? (
+            <span className="text-xs font-semibold px-2.5 py-1 rounded bg-emerald-50 text-emerald-800 border border-emerald-200 self-start sm:self-auto">
+              Audit-Verified
+            </span>
+          ) : (
+            <span className="text-xs font-semibold px-2.5 py-1 rounded bg-slate-100 text-slate-600 self-start sm:self-auto">
+              No verified expenditure record available
+            </span>
+          )}
         </div>
 
         {project.isFinancialIncomplete ? (
@@ -286,9 +298,13 @@ export const PublicProjectDetailPage: React.FC<PublicProjectDetailPageProps> = (
               <div className="p-4 rounded-xl bg-slate-50 border border-slate-200/80">
                 <div className="text-xs text-slate-500 font-medium">Sanctioned Outlay</div>
                 <div className="text-xl font-extrabold text-slate-900 mt-1">
-                  {formatCurrencyCr(project.sanctionedAmount)}
+                  {project.sanctionedAmount !== undefined
+                    ? formatCurrencyCr(project.sanctionedAmount)
+                    : 'No sanctioned amount recorded'}
                 </div>
-                <div className="text-[11px] text-slate-400 mt-1">Approved MPLAD budget</div>
+                <div className="text-[11px] text-slate-400 mt-1">
+                  {project.sanctionedAmount !== undefined ? 'Approved MPLAD budget' : 'Not recorded in available records'}
+                </div>
               </div>
 
               <div className="p-4 rounded-xl bg-slate-50 border border-slate-200/80">
@@ -299,27 +315,41 @@ export const PublicProjectDetailPage: React.FC<PublicProjectDetailPageProps> = (
                 <div className="text-[11px] text-slate-400 mt-1">Contractual award sum</div>
               </div>
 
-              <div className="p-4 rounded-xl bg-emerald-50/70 border border-emerald-200/80">
-                <div className="text-xs text-emerald-800 font-medium">Verified Public Disbursal</div>
-                <div className="text-xl font-extrabold text-emerald-900 mt-1">
-                  {formatCurrencyCr(project.verifiedExpenditure)}
+              <div className={`p-4 rounded-xl ${project.hasVerifiedExpenditureRecords ? 'bg-emerald-50/70 border border-emerald-200/80' : 'bg-slate-50 border border-slate-200/80'}`}>
+                <div className={`text-xs font-medium ${project.hasVerifiedExpenditureRecords ? 'text-emerald-800' : 'text-slate-500'}`}>
+                  Verified Public Disbursal
                 </div>
-                <div className="text-[11px] text-emerald-700 mt-1">
-                  Statutory verified payout
+                <div className={`mt-1 ${project.hasVerifiedExpenditureRecords ? 'text-xl font-extrabold text-emerald-900' : 'text-xs font-bold text-slate-700 leading-tight py-1'}`}>
+                  {project.hasVerifiedExpenditureRecords
+                    ? formatCurrencyCr(project.verifiedExpenditure)
+                    : 'No verified expenditure record available'}
+                </div>
+                <div className={`text-[11px] mt-1 ${project.hasVerifiedExpenditureRecords ? 'text-emerald-700' : 'text-slate-400'}`}>
+                  {project.hasVerifiedExpenditureRecords
+                    ? 'Statutory verified payout'
+                    : 'Awaiting statutory audit verification'}
                 </div>
               </div>
 
-              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200/80">
-                <div className="text-xs text-slate-500 font-medium">Remaining Award Balance</div>
-                <div className="text-xl font-extrabold text-slate-900 mt-1">
-                  {formatCurrencyCr(project.remainingAwardedBalance)}
+              <div className={`p-4 rounded-xl ${project.remainingAwardedBalance !== undefined && project.remainingAwardedBalance < 0 ? 'bg-amber-50/70 border border-amber-200/80' : 'bg-slate-50 border border-slate-200/80'}`}>
+                <div className={`text-xs font-medium ${project.remainingAwardedBalance !== undefined && project.remainingAwardedBalance < 0 ? 'text-amber-800' : 'text-slate-500'}`}>
+                  {project.remainingAwardedBalance !== undefined && project.remainingAwardedBalance < 0 ? 'Expenditure Over Contract Award' : 'Remaining Award Balance'}
                 </div>
-                <div className="text-[11px] text-slate-400 mt-1">Pending milestone balance</div>
+                <div className={`text-xl font-extrabold mt-1 ${project.remainingAwardedBalance !== undefined && project.remainingAwardedBalance < 0 ? 'text-amber-900' : 'text-slate-900'}`}>
+                  {project.remainingAwardedBalance !== undefined
+                    ? project.remainingAwardedBalance < 0
+                      ? `+ ${formatCurrencyCr(Math.abs(project.remainingAwardedBalance))}`
+                      : formatCurrencyCr(project.remainingAwardedBalance)
+                    : 'Not recorded'}
+                </div>
+                <div className={`text-[11px] mt-1 ${project.remainingAwardedBalance !== undefined && project.remainingAwardedBalance < 0 ? 'text-amber-700' : 'text-slate-400'}`}>
+                  {project.remainingAwardedBalance !== undefined && project.remainingAwardedBalance < 0 ? 'Verified disbursals exceed contract award sum' : 'Pending milestone balance'}
+                </div>
               </div>
             </div>
 
             {/* Financial Disbursal Progress Gauge */}
-            {project.sanctionedAmount > 0 && (
+            {project.sanctionedAmount !== undefined && project.sanctionedAmount > 0 && project.hasVerifiedExpenditureRecords && (
               <div className="space-y-2 p-4 rounded-xl bg-slate-50 border border-slate-200/80">
                 <div className="flex justify-between items-center text-xs">
                   <span className="font-semibold text-slate-700">
@@ -357,7 +387,9 @@ export const PublicProjectDetailPage: React.FC<PublicProjectDetailPageProps> = (
             </p>
           </div>
           <div className="text-xs font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-full self-start sm:self-auto">
-            {project.physicalProgressPercent}% Overall Physical Progress
+            {project.physicalProgressPercent !== undefined
+              ? `${project.physicalProgressPercent}% Overall Physical Progress`
+              : 'Physical Progress Not Recorded'}
           </div>
         </div>
 
@@ -365,14 +397,20 @@ export const PublicProjectDetailPage: React.FC<PublicProjectDetailPageProps> = (
         <div className="space-y-1.5 p-4 rounded-xl bg-slate-50 border border-slate-200/80">
           <div className="flex justify-between text-xs font-semibold text-slate-700">
             <span>Overall Physical Completion</span>
-            <span className="text-slate-900">{project.physicalProgressPercent}%</span>
+            <span className="text-slate-900">
+              {project.physicalProgressPercent !== undefined ? `${project.physicalProgressPercent}%` : 'Not recorded'}
+            </span>
           </div>
-          <ProgressBar
-            value={project.physicalProgressPercent}
-            size="md"
-            color="emerald"
-            showPercentage={false}
-          />
+          {project.physicalProgressPercent !== undefined ? (
+            <ProgressBar
+              value={project.physicalProgressPercent}
+              size="md"
+              color="emerald"
+              showPercentage={false}
+            />
+          ) : (
+            <div className="text-[11px] text-slate-400">Not recorded in the available public record</div>
+          )}
         </div>
 
         {/* Itemized Milestones */}
@@ -403,7 +441,7 @@ export const PublicProjectDetailPage: React.FC<PublicProjectDetailPageProps> = (
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="text-[11px] font-semibold text-slate-500">
-                        Weight: {ms.weightPercent}%
+                        {ms.weightPercent !== undefined ? `Weight: ${ms.weightPercent}%` : 'Weight: Not recorded'}
                       </span>
                       <StatusBadge status={ms.status} size="sm" />
                     </div>
@@ -418,14 +456,18 @@ export const PublicProjectDetailPage: React.FC<PublicProjectDetailPageProps> = (
                   <div className="pl-8.5 space-y-1.5">
                     <div className="flex justify-between text-[11px] text-slate-500">
                       <span>Milestone Completion</span>
-                      <span className="font-bold text-slate-700">{ms.progressPercent}%</span>
+                      <span className="font-bold text-slate-700">
+                        {ms.progressPercent !== undefined ? `${ms.progressPercent}%` : 'Not recorded'}
+                      </span>
                     </div>
-                    <ProgressBar
-                      value={ms.progressPercent}
-                      size="sm"
-                      color="emerald"
-                      showPercentage={false}
-                    />
+                    {ms.progressPercent !== undefined && (
+                      <ProgressBar
+                        value={ms.progressPercent}
+                        size="sm"
+                        color="emerald"
+                        showPercentage={false}
+                      />
+                    )}
                   </div>
 
                   <div className="pl-8.5 pt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-400">
@@ -507,9 +549,11 @@ export const PublicProjectDetailPage: React.FC<PublicProjectDetailPageProps> = (
                     Progress Update — {formatDate(upd.date)}
                   </span>
                   <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                      {upd.progressPercentage}% Reported Progress
-                    </span>
+                    {upd.progressPercentage !== undefined && (
+                      <span className="text-xs font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                        {upd.progressPercentage}% Reported Progress
+                      </span>
+                    )}
                     <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-slate-200 text-slate-700">
                       {upd.implementationStatus}
                     </span>
@@ -554,13 +598,15 @@ export const PublicProjectDetailPage: React.FC<PublicProjectDetailPageProps> = (
                       Site Verification on {formatDate(insp.inspectionDate)}
                     </span>
                   </div>
-                  <span className="text-xs font-bold text-emerald-900 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200 self-start sm:self-auto">
-                    {insp.observedProgress}% Observed Progress
-                  </span>
+                  {insp.observedProgress !== undefined && (
+                    <span className="text-xs font-bold text-emerald-900 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200 self-start sm:self-auto">
+                      {insp.observedProgress}% Observed Progress
+                    </span>
+                  )}
                 </div>
 
                 <div className="text-xs text-slate-600 bg-slate-50 p-3 rounded-lg border border-slate-100">
-                  <span className="font-semibold text-slate-800">Verification Status: </span>
+                  <span className="font-semibold text-slate-800">Public Observation: </span>
                   {insp.qualityObservation}
                 </div>
 
@@ -613,14 +659,18 @@ export const PublicProjectDetailPage: React.FC<PublicProjectDetailPageProps> = (
           <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80">
             <div className="text-slate-400 text-[10px]">Disbursal Utilization</div>
             <div className="font-bold text-slate-900 mt-1">
-              {project.accountabilityIndicators.financialUtilizationPercent}%
+              {project.accountabilityIndicators.financialUtilizationPercent !== undefined
+                ? `${project.accountabilityIndicators.financialUtilizationPercent}%`
+                : 'Not recorded'}
             </div>
           </div>
 
           <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80">
             <div className="text-slate-400 text-[10px]">Physical Progress</div>
             <div className="font-bold text-slate-900 mt-1">
-              {project.accountabilityIndicators.physicalProgressPercent}%
+              {project.accountabilityIndicators.physicalProgressPercent !== undefined
+                ? `${project.accountabilityIndicators.physicalProgressPercent}%`
+                : 'Not recorded'}
             </div>
           </div>
 

@@ -7,9 +7,9 @@ import { CanonicalProjectStatus } from './project';
 export interface PublicMilestoneSummaryDTO {
   sequence: number;
   title: string;
-  progressPercent: number;
+  progressPercent?: number;
   status: string;
-  weightPercent: number;
+  weightPercent?: number;
 }
 
 export interface PublicMilestoneDTO {
@@ -18,23 +18,24 @@ export interface PublicMilestoneDTO {
   description?: string;
   plannedEndDate?: string;
   actualEndDate?: string;
-  weightPercent: number;
-  progressPercent: number;
+  weightPercent?: number;
+  progressPercent?: number;
   status: string;
 }
 
 export interface PublicProgressUpdateDTO {
   date: string;
-  progressPercentage: number;
+  progressPercentage?: number;
   summary: string;
   implementationStatus: string;
 }
 
 export interface PublicInspectionDTO {
   inspectionDate: string;
-  observedProgress: number;
+  observedProgress?: number;
   qualityObservation: string;
   publicDirective?: string;
+  inspectionType?: string;
 }
 
 export interface PublicTimelineEventDTO {
@@ -52,8 +53,8 @@ export interface PublicAccountabilityDTO {
   lastInspectionDate: string;
   milestonesCompletedCount: number;
   milestonesTotalCount: number;
-  financialUtilizationPercent: number;
-  physicalProgressPercent: number;
+  financialUtilizationPercent?: number;
+  physicalProgressPercent?: number;
   statusLabel: string;
 }
 
@@ -84,22 +85,24 @@ export interface PublicProjectDTO {
     lat?: number;
     lng?: number;
   };
-  status: CanonicalProjectStatus;
+  status?: CanonicalProjectStatus;
   statusLabel: string;
   implementingAgencyName?: string;
   authorityName?: string;
   mpName?: string;
 
   // Authoritative numeric financials
-  sanctionedAmount: number;
+  sanctionedAmount?: number;
   awardedAmount?: number;
   verifiedExpenditure: number; // Verified public fund disbursal
   hasVerifiedExpenditureRecords?: boolean;
-  remainingAwardedBalance?: number; // awardedAmount - verifiedExpenditure
+  remainingAwardedBalance?: number; // awardedAmount - verifiedExpenditure (negative if over-expended)
+  isOverExpenditure?: boolean;
+  overExpenditureAmount?: number;
   isFinancialIncomplete?: boolean;
 
   // Progress
-  physicalProgressPercent: number;
+  physicalProgressPercent?: number;
   milestonesSummary: PublicMilestoneSummaryDTO[];
   milestones: PublicMilestoneDTO[];
   publicUpdates: PublicProgressUpdateDTO[];

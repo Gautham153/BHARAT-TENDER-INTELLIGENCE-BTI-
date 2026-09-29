@@ -1721,40 +1721,11 @@ service cloud.firestore {
     // 24. Public Projects Projection Collection (/publicProjects/{projectId})
     // Phase 9: Public Transparency & Citizen Social Audit Layer
     // Strictly allowlisted public data projection; public users have read-only access.
-    // Projections are authored and synchronized strictly by authorized government officers from authoritative internal project records.
+    // Projections are authored and synchronized strictly by trusted server operations (/api/data action: sync-public-projection).
+    // Direct client creation, modification, and deletion are strictly forbidden.
     match /publicProjects/{projectId} {
       allow get, list: if true;
-      allow create, update: if isSignedIn()
-        && isGovernmentUser()
-        && request.resource.data.projectId == projectId
-        && request.resource.data.projectName is string
-        && request.resource.data.sanctionedAmount is number
-        && request.resource.data.verifiedExpenditure is number
-        && request.resource.data.physicalProgressPercent is number
-        && request.resource.data.status is string
-        && (request.resource.data.get('publicDisclosureStatus', '') == 'PUBLIC' || request.resource.data.isPubliclyVisible == true)
-        && request.resource.data.keys().hasOnly([
-          'projectId', 'projectNumber', 'projectName', 'description',
-          'category', 'sector', 'location', 'status', 'statusLabel',
-          'implementingAgencyName', 'authorityName', 'mpName',
-          'sanctionedAmount', 'awardedAmount', 'verifiedExpenditure',
-          'hasVerifiedExpenditureRecords', 'remainingAwardedBalance',
-          'isFinancialIncomplete', 'physicalProgressPercent',
-          'milestonesSummary', 'milestones', 'publicUpdates',
-          'publicInspections', 'publicTimeline', 'accountabilityIndicators',
-          'dataProvenance', 'isDemonstrationData', 'isPubliclyVisible', 'publicDisclosureStatus',
-          'lastUpdated', 'startDate', 'plannedCompletionDate', 'actualCompletionDate'
-        ])
-        && !request.resource.data.keys().hasAny([
-          'riskScore', 'riskLevel', 'riskSignals', 'anomalies', 'evidenceChain',
-          'findings', 'internalNotes', 'fraudSignals', 'investigationState', 'aiAdvisory'
-        ])
-        && exists(/databases/$(database)/documents/projects/$(projectId))
-        && (
-          get(/databases/$(database)/documents/projects/$(projectId)).data.get('publicDisclosureStatus', '') == 'PUBLIC' ||
-          get(/databases/$(database)/documents/projects/$(projectId)).data.get('isPubliclyVisible', false) == true
-        );
-      allow delete: if isSignedIn() && isGovernmentUser();
+      allow create, update, delete: if false;
     }
 
     // 25. Citizen Project Reports Collection (/citizenProjectReports/{reportId})
@@ -1908,29 +1879,47 @@ service cloud.firestore {
         (
           isGovernmentUser()
           && request.resource.data.id == documentId
+          && isValidId(documentId)
           && request.resource.data.projectId is string
+          && isValidId(request.resource.data.projectId)
           && exists(/databases/$(database)/documents/projects/$(request.resource.data.projectId))
+          && request.resource.data.storageReference is string
+          && request.resource.data.storageReference.matches('^documents/' + request.resource.data.projectId + '/' + documentId + '_[a-zA-Z0-9._-]+$')
         )
         ||
         // Case 2: Agency upload
         (
           isAgencyUser()
           && request.resource.data.id == documentId
+          && isValidId(documentId)
           && request.resource.data.projectId is string
+          && isValidId(request.resource.data.projectId)
           && request.resource.data.organizationId == getUserOrgId()
           && request.resource.data.uploadedBy == request.auth.uid
           && (request.resource.data.uploaderRole in ['agency', 'AGENCY'])
           && exists(/databases/$(database)/documents/projects/$(request.resource.data.projectId))
           && get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.organizationId == getUserOrgId()
+          && request.resource.data.storageReference is string
+          && request.resource.data.storageReference.matches('^documents/' + request.resource.data.projectId + '/' + documentId + '_[a-zA-Z0-9._-]+$')
         )
       );
 
       allow update: if isSignedIn() && (
-        // Case 1: Government review and lifecycle decision update
+        // Case 1: Government review and lifecycle decision update (upload & storage provenance strictly immutable)
         (
           isGovernmentUser()
           && request.resource.data.id == resource.data.id
           && request.resource.data.projectId == resource.data.projectId
+          && request.resource.data.organizationId == resource.data.organizationId
+          && request.resource.data.storageReference == resource.data.storageReference
+          && request.resource.data.originalFileName == resource.data.originalFileName
+          && request.resource.data.get('fileHash', '') == resource.data.get('fileHash', '')
+          && request.resource.data.mimeType == resource.data.mimeType
+          && request.resource.data.fileSize == resource.data.fileSize
+          && request.resource.data.uploadedBy == resource.data.uploadedBy
+          && request.resource.data.uploaderRole == resource.data.uploaderRole
+          && request.resource.data.uploadedAt == resource.data.uploadedAt
+          && request.resource.data.createdAt == resource.data.createdAt
         )
         ||
         // Case 2: Agency operational update (strictly preserving all authoritative, extraction, review, and validation fields)

@@ -1,5 +1,5 @@
 // Bharat Tender Intelligence (BTI) — Document Service
-// Phase 11: Document Ingestion, Lifecycle Management & Orchestration
+// Phase 11: Document Ingestion, Lifecycle Management & Supabase Storage Orchestration
 
 import {
   collection,
@@ -13,8 +13,8 @@ import {
   orderBy,
   writeBatch,
 } from 'firebase/firestore';
-import { ref, uploadBytes } from 'firebase/storage';
-import { db, auth, storage } from '../firebase/firebase.js';
+import { db, auth } from '../firebase/firebase.js';
+import { supabase, DEFAULT_STORAGE_BUCKET } from '../supabase/supabase.js';
 import {
   isLiveFirestoreSession,
   isDemoSession,
@@ -114,8 +114,46 @@ export class DocumentService {
   }
 
   /**
+   * Generates a short-lived signed download URL for private, authenticated document access.
+   * Verifies Firebase authentication and project/document access boundaries on the server.
+   */
+  static async getDocumentDownloadUrl(
+    documentId: string
+  ): Promise<{ downloadUrl: string; fileName: string; mimeType: string }> {
+    if (!documentId) {
+      throw new Error('Document ID is required.');
+    }
+
+    let token = '';
+    if (auth?.currentUser) {
+      token = await auth.currentUser.getIdToken();
+    }
+
+    const res = await fetch(`/api/data?action=document-download-url&documentId=${encodeURIComponent(documentId)}`, {
+      method: 'GET',
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    });
+
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({}));
+      throw new Error(errJson?.error || `Failed to generate download URL (status ${res.status})`);
+    }
+
+    const data = await res.json();
+    return {
+      downloadUrl: data.downloadUrl,
+      fileName: data.fileName || 'document.pdf',
+      mimeType: data.mimeType || 'application/pdf',
+    };
+  }
+
+  /**
    * Uploads and registers a new project document.
-   * Performs validation, stores binary in secure vault, creates metadata record, and triggers extraction.
+   * 1. Obtains authorized Supabase Storage signed upload URL via server.
+   * 2. Uploads binary directly to Supabase Storage (bypasses 4.5MB Vercel serverless body limit).
+   * 3. Confirms vault registration, writes Firestore metadata & audit record, and triggers extraction.
    */
   static async uploadDocument(input: DocumentUploadInput, user: any): Promise<ProjectDocument> {
     const { projectId, documentType, originalFileName, mimeType, fileSize, file, fileDataUrl } = input;
@@ -158,7 +196,7 @@ export class DocumentService {
     const nowIso = new Date().toISOString();
     const documentId = `doc-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
     const safeFileName = originalFileName.replace(/[^a-zA-Z0-9._-]/g, '_');
-    let storageReference = `storage/documents/${project.id}/${documentId}_${safeFileName}`;
+    let storageReference = `documents/${project.id}/${documentId}_${safeFileName}`;
     let fileHash: string | undefined;
 
     // Compute client-side SHA-256 hash
@@ -181,18 +219,93 @@ export class DocumentService {
       // hash calculation fallback
     }
 
+    let token = '';
+    if (auth?.currentUser) {
+      token = await auth.currentUser.getIdToken();
+    }
+
     let uploadedDirectlyToStorage = false;
 
-    // Direct binary upload to Firebase Cloud Storage (bypasses 4.5MB serverless JSON request limit)
+    // 1. Direct binary upload to Supabase Storage via Server-Authorized Upload URL
     if (file) {
-      if (!storage) {
+      // Request authorized upload URL from server
+      let uploadUrlRes: Response;
+      try {
+        uploadUrlRes = await fetch('/api/data', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            action: 'document-upload-url',
+            documentId,
+            projectId: project.id,
+            fileName: originalFileName,
+            mimeType: mimeType || 'application/pdf',
+            fileSize,
+            fileHash,
+          }),
+        });
+      } catch (reqErr: any) {
         throw new Error(
-          'Document Storage Error: Firebase Storage is not configured. Please ensure storage bucket is configured.'
+          `Document Upload Request Failed: Unable to request upload authorization (${reqErr?.message || 'Network error'}).`
         );
       }
+
+      if (!uploadUrlRes.ok) {
+        let errMsg = `Upload authorization failed with status ${uploadUrlRes.status}`;
+        try {
+          const errJson = await uploadUrlRes.json();
+          if (errJson?.error) errMsg = errJson.error;
+        } catch {}
+        throw new Error(`Document Storage Authorization Error: ${errMsg}`);
+      }
+
+      const uploadUrlData = await uploadUrlRes.json();
+      const { uploadUrl, token: uploadToken, storagePath, storageReference: serverRef, bucket: uploadBucket } = uploadUrlData;
+      if (serverRef) {
+        storageReference = serverRef;
+      }
+
+      // FIX 5: Use single source of truth for Supabase bucket name returned by server
+      const targetBucket = uploadBucket || DEFAULT_STORAGE_BUCKET;
+
+      // Upload binary directly to Supabase Storage
       try {
-        const fileStorageRef = ref(storage, storageReference);
-        await uploadBytes(fileStorageRef, file, { contentType: mimeType || 'application/pdf' });
+        let uploaded = false;
+
+        // Try Supabase client uploadToSignedUrl if client SDK is configured and uploadToken provided
+        if (supabase && uploadToken && storagePath) {
+          try {
+            const { error: sbErr } = await supabase.storage
+              .from(targetBucket)
+              .uploadToSignedUrl(storagePath, uploadToken, file, {
+                contentType: mimeType || 'application/pdf',
+              });
+            if (!sbErr) {
+              uploaded = true;
+            }
+          } catch {
+            // fallback to direct HTTP PUT
+          }
+        }
+
+        // Direct HTTP PUT to uploadUrl if not already uploaded
+        if (!uploaded) {
+          const putRes = await fetch(uploadUrl, {
+            method: 'PUT',
+            headers: {
+              'Content-Type': mimeType || 'application/pdf',
+            },
+            body: file,
+          });
+
+          if (!putRes.ok) {
+            throw new Error(`Direct storage upload returned status ${putRes.status}`);
+          }
+        }
+
         uploadedDirectlyToStorage = true;
       } catch (storageErr: any) {
         throw new Error(
@@ -200,7 +313,6 @@ export class DocumentService {
         );
       }
     } else if (fileDataUrl) {
-      // Base64 is strictly allowed only for small legacy/demo payloads (<= 2MB)
       if (fileSize > 2 * 1024 * 1024) {
         throw new Error(
           'Document Upload Error: Documents exceeding 2MB must be uploaded as a binary file directly to storage.'
@@ -210,12 +322,7 @@ export class DocumentService {
       throw new Error('Document Upload Error: Document file binary is required.');
     }
 
-    // Call server storage vault endpoint to authorize, verify provenance, and register storageReference
-    let token = '';
-    if (auth?.currentUser) {
-      token = await auth.currentUser.getIdToken();
-    }
-
+    // 2. Call server storage vault endpoint to authorize, verify provenance, and register storageReference
     const uploadPayload: any = {
       action: 'document-upload',
       documentId,
@@ -227,7 +334,6 @@ export class DocumentService {
       fileSize,
     };
 
-    // If file was not passed and small base64 was provided (demo mode), supply it
     if (!file && fileDataUrl) {
       uploadPayload.fileDataUrl = fileDataUrl;
     }
@@ -263,20 +369,18 @@ export class DocumentService {
         }
       }
       throw new Error(
-        `Document Vault Error: Unable to upload file to storage vault (${vaultErr?.message || 'Network error'}).`
+        `Document Vault Error: Unable to complete file verification in storage vault (${vaultErr?.message || 'Network error'}).`
       );
     }
 
     if (!vaultRes.ok) {
-      let errMsg = `Storage vault upload failed with status ${vaultRes.status}`;
+      let errMsg = `Storage vault verification failed with status ${vaultRes.status}`;
       try {
         const errJson = await vaultRes.json();
         if (errJson?.error) {
           errMsg = errJson.error;
         }
-      } catch {
-        // ignore json parse error
-      }
+      } catch {}
 
       if (uploadedDirectlyToStorage) {
         try {
@@ -307,6 +411,20 @@ export class DocumentService {
       fileHash = vaultJson.fileHash || fileHash;
     }
 
+    // FIX 2: Server-verified file size must be authoritative
+    let verifiedFileSize = fileSize;
+    if (typeof vaultJson.fileSize === 'number' && vaultJson.fileSize > 0) {
+      verifiedFileSize = vaultJson.fileSize;
+    } else if (file) {
+      throw new Error('Document Vault Error: Authoritative server verification failed to provide verified file size.');
+    }
+
+    // FIX 3: Server-verified MIME type must be authoritative
+    let verifiedMimeType = mimeType;
+    if (vaultJson.mimeType) {
+      verifiedMimeType = vaultJson.mimeType;
+    }
+
     const newDoc: ProjectDocument = {
       id: documentId,
       projectId,
@@ -320,8 +438,8 @@ export class DocumentService {
       originalFileName,
       storageReference,
       fileHash,
-      mimeType,
-      fileSize,
+      mimeType: verifiedMimeType,
+      fileSize: verifiedFileSize,
       uploadedBy: user?.id || user?.uid || 'user',
       uploaderName: user?.name || user?.displayName || 'Authorized User',
       uploaderRole: userRole.includes('gov') ? 'government' : 'agency',
@@ -349,15 +467,15 @@ export class DocumentService {
         documentId,
         documentType,
         originalFileName,
-        fileSize,
+        fileSize: verifiedFileSize,
       },
       metadata: {
         documentId,
         documentType,
         originalFileName,
-        fileSize,
+        fileSize: verifiedFileSize,
       },
-      notes: `Document [${documentType}] "${originalFileName}" uploaded by ${user?.name || 'User'}. Initialized for processing.`,
+      notes: `Document [${documentType}] "${originalFileName}" uploaded by ${user?.name || 'User'}. Stored in Supabase Storage vault.`,
     };
 
     const batch = writeBatch(db);
@@ -369,7 +487,7 @@ export class DocumentService {
     try {
       await batch.commit();
     } catch (batchErr: any) {
-      // If vault upload was performed, clean up the orphaned binary on Firestore registration failure
+      // Clean up orphaned binary from Supabase Storage on Firestore registration failure
       let orphanToken = '';
       if (auth?.currentUser) {
         try {

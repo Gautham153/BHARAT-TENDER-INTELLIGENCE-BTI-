@@ -67,7 +67,7 @@ export const DEMO_DOCUMENT_AGENCY_B: ProjectDocument = {
   documentType: 'INVOICE',
   detectedDocumentType: 'INVOICE',
   originalFileName: 'Agency_B_Concrete_Invoice_INV-99.pdf',
-  storageReference: 'storage/documents/proj-demo-agency-b/doc-demo-agency-b_invoice.pdf',
+  storageReference: 'documents/proj-demo-agency-b/doc-demo-agency-b_invoice.pdf',
   fileHash: 'f4ca4238a0b923820dcc509a6f75849b27ae41e4649b934ca495991b7852b999',
   mimeType: 'application/pdf',
   fileSize: 312000,

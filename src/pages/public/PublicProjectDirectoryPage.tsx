@@ -290,14 +290,20 @@ export const PublicProjectDirectoryPage: React.FC<PublicProjectDirectoryPageProp
                 <div className="flex items-center gap-1.5 text-xs text-slate-500">
                   <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                   <span className="truncate">
-                    {project.location.district}, {project.location.state} ({project.location.constituency})
+                    {[
+                      project.location?.district,
+                      project.location?.state,
+                      project.location?.constituency ? `(${project.location.constituency})` : undefined,
+                    ]
+                      .filter(Boolean)
+                      .join(', ') || 'Location not recorded'}
                   </span>
                 </div>
 
                 <div className="text-xs text-slate-600">
                   <span className="text-slate-400">Agency: </span>
                   <span className="font-semibold text-slate-800 truncate block">
-                    {project.implementingAgencyName || 'Designated Agency'}
+                    {project.implementingAgencyName || 'Not recorded'}
                   </span>
                 </div>
 
@@ -306,13 +312,17 @@ export const PublicProjectDirectoryPage: React.FC<PublicProjectDirectoryPageProp
                   <div>
                     <div className="text-slate-400 text-[10px]">Sanctioned Outlay</div>
                     <div className="font-extrabold text-slate-900">
-                      ₹ {(project.sanctionedAmount / 10000000).toFixed(2)} Cr
+                      {project.sanctionedAmount !== undefined
+                        ? `₹ ${(project.sanctionedAmount / 10000000).toFixed(2)} Cr`
+                        : 'Not recorded'}
                     </div>
                   </div>
                   <div>
                     <div className="text-slate-400 text-[10px]">Verified Disbursal</div>
-                    <div className="font-extrabold text-emerald-800">
-                      ₹ {(project.verifiedExpenditure / 10000000).toFixed(2)} Cr
+                    <div className={`font-extrabold ${project.hasVerifiedExpenditureRecords ? 'text-emerald-800' : 'text-slate-500 font-medium'}`}>
+                      {project.hasVerifiedExpenditureRecords
+                        ? `₹ ${(project.verifiedExpenditure / 10000000).toFixed(2)} Cr`
+                        : 'Not recorded'}
                     </div>
                   </div>
                 </div>
@@ -322,15 +332,17 @@ export const PublicProjectDirectoryPage: React.FC<PublicProjectDirectoryPageProp
                   <div className="flex justify-between text-xs">
                     <span className="text-slate-500 font-medium">Physical Progress</span>
                     <span className="font-bold text-slate-800">
-                      {project.physicalProgressPercent}%
+                      {project.physicalProgressPercent !== undefined ? `${project.physicalProgressPercent}%` : 'Not recorded'}
                     </span>
                   </div>
-                  <ProgressBar
-                    value={project.physicalProgressPercent}
-                    size="sm"
-                    color="emerald"
-                    showPercentage={false}
-                  />
+                  {project.physicalProgressPercent !== undefined && (
+                    <ProgressBar
+                      value={project.physicalProgressPercent}
+                      size="sm"
+                      color="emerald"
+                      showPercentage={false}
+                    />
+                  )}
                 </div>
               </div>
 

@@ -1,11 +1,13 @@
 // Bharat Tender Intelligence (BTI) — Serverless Data Handler
 // Consolidated /api/data serverless function for Vercel & Cloud deployment
-// Dispatches storage vault operations (upload, download, cleanup-orphan) with strict RBAC
+// Dispatches storage vault operations (upload-url, upload, download-url, download, cleanup-orphan) with strict RBAC
 
 import path from 'node:path';
 import { DocumentIntelligenceServerService } from '../server/document/DocumentIntelligenceServerService.js';
+import { PublicTransparencyServerService } from '../server/transparency/PublicTransparencyServerService.js';
 
 const documentIntelligenceServer = new DocumentIntelligenceServerService();
+const publicTransparencyServer = new PublicTransparencyServerService();
 
 function resolveStatusCode(err: any): number {
   if (typeof err?.statusCode === 'number' && err.statusCode >= 400 && err.statusCode <= 599) {
@@ -93,6 +95,10 @@ function sanitizeErrorMessage(err: unknown): string {
   if (apiKey && apiKey.trim().length > 0) {
     message = message.split(apiKey.trim()).join('[REDACTED_API_KEY]');
   }
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (serviceKey && serviceKey.trim().length > 0) {
+    message = message.split(serviceKey.trim()).join('[REDACTED_KEY]');
+  }
   message = message.replace(/key=[a-zA-Z0-9_\-]+/gi, 'key=[REDACTED]');
   message = message.replace(/Bearer\s+[a-zA-Z0-9_\.\-]+/gi, 'Bearer [REDACTED]');
   return message;
@@ -101,13 +107,18 @@ function sanitizeErrorMessage(err: unknown): string {
 export default async function handler(req: any, res: any) {
   const authHeader = req.headers?.authorization || req.headers?.['authorization'];
 
-  // Handle GET (Document Download)
+  // Handle GET (Document Download & Signed URL generation)
   if (req.method === 'GET') {
     const action = req.query?.action;
-    if (action === 'document-download' || action === 'download-document') {
+    if (
+      action === 'document-download' ||
+      action === 'download-document' ||
+      action === 'document-download-url'
+    ) {
       try {
         const documentId = req.query?.documentId as string | undefined;
         const storageReference = (req.query?.storageReference || req.query?.ref) as string | undefined;
+        const format = (req.query?.format || '').toLowerCase();
 
         if (!documentId && !storageReference) {
           return res.status(400).json({
@@ -116,17 +127,36 @@ export default async function handler(req: any, res: any) {
           });
         }
 
-        const fileData = await documentIntelligenceServer.getDocumentFile({
+        // Case A: Binary stream requested explicitly (e.g. for server proxy or legacy tests)
+        if (format === 'binary' || format === 'stream') {
+          const fileData = await documentIntelligenceServer.getDocumentFile({
+            documentId,
+            storageReference,
+            authHeader,
+          });
+
+          const fileName = path.basename(storageReference || `${documentId || 'document'}.pdf`);
+          res.setHeader('Content-Type', fileData.mimeType);
+          res.setHeader('Content-Length', fileData.buffer.length);
+          res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
+          return res.status(200).send(fileData.buffer);
+        }
+
+        // Case B (Default / Standard): Return short-lived Supabase signed download URL
+        const downloadResult = await documentIntelligenceServer.getDocumentDownloadUrl({
           documentId,
           storageReference,
           authHeader,
         });
 
-        const fileName = path.basename(storageReference || `${documentId || 'document'}.pdf`);
-        res.setHeader('Content-Type', fileData.mimeType);
-        res.setHeader('Content-Length', fileData.buffer.length);
-        res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
-        return res.status(200).send(fileData.buffer);
+        if (format === 'redirect') {
+          return res.redirect(302, downloadResult.downloadUrl);
+        }
+
+        return res.status(200).json({
+          success: true,
+          ...downloadResult,
+        });
       } catch (err: any) {
         const statusCode = resolveStatusCode(err);
         const message = sanitizeErrorMessage(err);
@@ -136,16 +166,41 @@ export default async function handler(req: any, res: any) {
 
     return res.status(400).json({
       success: false,
-      error: `Unsupported GET action: '${action || 'none'}'. Supported actions: document-download.`,
+      error: `Unsupported GET action: '${action || 'none'}'. Supported actions: document-download, document-download-url.`,
     });
   }
 
-  // Handle POST (Document Upload & Cleanup)
+  // Handle POST (Document Upload URL, Verification & Cleanup)
   if (req.method === 'POST') {
     const payload = req.body || {};
     const action = payload.action;
 
     try {
+      // Action 1: Request Authorized Supabase Storage Upload URL
+      if (action === 'document-upload-url' || action === 'document-upload-initiate') {
+        const { documentId, projectId, fileName, mimeType, fileSize, fileHash } = payload;
+
+        if (!documentId || !projectId || !fileName || !fileSize) {
+          return res.status(400).json({
+            success: false,
+            error: 'Invalid Request: documentId, projectId, fileName, and fileSize are required to request an upload URL.',
+          });
+        }
+
+        const result = await documentIntelligenceServer.requestUploadUrl({
+          documentId,
+          projectId,
+          fileName,
+          mimeType: mimeType || 'application/pdf',
+          fileSize: Number(fileSize),
+          fileHash,
+          authHeader,
+        });
+
+        return res.status(200).json({ success: true, ...result });
+      }
+
+      // Action 2: Document Verification & Registration
       if (action === 'document-upload' || action === 'upload-document') {
         const {
           documentId,
@@ -183,6 +238,7 @@ export default async function handler(req: any, res: any) {
         return res.status(200).json({ success: true, ...result });
       }
 
+      // Action 3: Orphan Vault Binary Cleanup (Rollback on Firestore metadata failure)
       if (action === 'document-cleanup-orphan' || action === 'cleanup-orphan') {
         const { documentId, projectId, storageReference } = payload;
         if (!documentId || !projectId) {
@@ -202,9 +258,27 @@ export default async function handler(req: any, res: any) {
         return res.status(200).json({ success: true, ...result });
       }
 
+      // Action 4: Server-Authored Public Transparency Projection Synchronization
+      if (action === 'sync-public-projection' || action === 'sync-projection') {
+        const { projectId } = payload;
+        if (!projectId) {
+          return res.status(400).json({
+            success: false,
+            error: 'Invalid Request: projectId is required for public projection synchronization.',
+          });
+        }
+
+        const result = await publicTransparencyServer.syncPublicProjection({
+          projectId,
+          authHeader,
+        });
+
+        return res.status(200).json(result);
+      }
+
       return res.status(400).json({
         success: false,
-        error: `Unsupported POST action: '${action || 'none'}'. Supported actions: document-upload, document-cleanup-orphan.`,
+        error: `Unsupported POST action: '${action || 'none'}'. Supported actions: document-upload-url, document-upload, document-cleanup-orphan, sync-public-projection.`,
       });
     } catch (err: any) {
       const statusCode = resolveStatusCode(err);

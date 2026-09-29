@@ -19,6 +19,7 @@ import {
   Calendar,
 } from 'lucide-react';
 import { PublicTransparencyService } from '../../services/transparency/publicTransparencyService';
+import { isDemoSession } from '../../services/firebase/projects';
 import { PublicProjectDTO } from '../../types/publicTransparency';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
@@ -37,6 +38,7 @@ export const TransparencyLandingPage: React.FC<TransparencyLandingPageProps> = (
     totalVerifiedDisbursed: number;
     byStatus: Record<string, number>;
     recentProjects: PublicProjectDTO[];
+    isDemonstration?: boolean;
   } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -59,6 +61,8 @@ export const TransparencyLandingPage: React.FC<TransparencyLandingPageProps> = (
       isMounted = false;
     };
   }, []);
+
+  const isDemo = Boolean(metrics?.isDemonstration || isDemoSession());
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -120,16 +124,18 @@ export const TransparencyLandingPage: React.FC<TransparencyLandingPageProps> = (
         </div>
       </div>
 
-      {/* Demonstration Data Banner */}
-      <div className="p-4 rounded-xl bg-amber-50 border border-amber-200/90 text-amber-950 flex items-start gap-3 shadow-2xs">
-        <Info className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
-        <div className="text-xs sm:text-sm space-y-1">
-          <div className="font-bold text-amber-900">Demonstration Data Notice</div>
-          <p className="text-amber-800 leading-relaxed">
-            Demonstration Data — Not a live government data feed. Projects displayed in this prototype are synthesized MPLAD records created strictly for public transparency verification, open-data projection testing, and social audit demonstrations.
-          </p>
+      {/* Demonstration Data Banner - ONLY shown in explicit demonstration environments / data */}
+      {isDemo && (
+        <div className="p-4 rounded-xl bg-amber-50 border border-amber-200/90 text-amber-950 flex items-start gap-3 shadow-2xs">
+          <Info className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+          <div className="text-xs sm:text-sm space-y-1">
+            <div className="font-bold text-amber-900">Demonstration Data Notice</div>
+            <p className="text-amber-800 leading-relaxed">
+              Demonstration Data — Not a live government data feed. Projects displayed in this prototype are synthesized MPLAD records created strictly for public transparency verification, open-data projection testing, and social audit demonstrations.
+            </p>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Macro Indicators */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
@@ -302,7 +308,9 @@ export const TransparencyLandingPage: React.FC<TransparencyLandingPageProps> = (
                     <div>
                       <div className="text-slate-400 text-[11px]">Sanctioned Outlay</div>
                       <div className="font-extrabold text-slate-900">
-                        ₹ {(project.sanctionedAmount / 10000000).toFixed(2)} Cr
+                        {project.sanctionedAmount !== undefined
+                          ? `₹ ${(project.sanctionedAmount / 10000000).toFixed(2)} Cr`
+                          : 'Not recorded'}
                       </div>
                     </div>
                     <div>
@@ -318,15 +326,17 @@ export const TransparencyLandingPage: React.FC<TransparencyLandingPageProps> = (
                     <div className="flex justify-between text-xs">
                       <span className="text-slate-500 font-medium">Physical Progress</span>
                       <span className="font-bold text-slate-800">
-                        {project.physicalProgressPercent}%
+                        {project.physicalProgressPercent !== undefined ? `${project.physicalProgressPercent}%` : 'Not recorded'}
                       </span>
                     </div>
-                    <ProgressBar
-                      value={project.physicalProgressPercent}
-                      size="sm"
-                      color="emerald"
-                      showPercentage={false}
-                    />
+                    {project.physicalProgressPercent !== undefined && (
+                      <ProgressBar
+                        value={project.physicalProgressPercent}
+                        size="sm"
+                        color="emerald"
+                        showPercentage={false}
+                      />
+                    )}
                   </div>
                 </div>
 

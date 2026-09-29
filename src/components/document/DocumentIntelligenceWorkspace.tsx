@@ -322,6 +322,29 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
     }
   };
 
+  // Handle Download Document (Short-Lived Signed URL)
+  const handleDownloadDocument = async (docItem: ProjectDocument, e?: React.MouseEvent) => {
+    if (e) {
+      e.stopPropagation();
+    }
+    try {
+      const { downloadUrl, fileName } = await DocumentService.getDocumentDownloadUrl(docItem.id);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.download = fileName || docItem.originalFileName || 'document.pdf';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err: any) {
+      showToast('Download Failed', {
+        message: err.message || 'Unable to retrieve document from storage vault.',
+        type: 'error',
+      });
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Document Intelligence Header */}
@@ -568,6 +591,18 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
                         {doc.processingStatus}
                       </span>
                     )}
+
+                    {/* Download Button */}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={(e) => handleDownloadDocument(doc, e)}
+                      className="text-xs h-7 px-2.5 text-slate-700 hover:text-blue-700 border-slate-300"
+                      title="Download document from secure Supabase vault"
+                    >
+                      <Download className="w-3.5 h-3.5 mr-1" />
+                      Download
+                    </Button>
 
                     {isExpanded ? (
                       <ChevronUp className="w-4 h-4 text-slate-400" />
@@ -863,9 +898,19 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
                         </p>
                       )}
 
-                      {/* Reprocess & Actions Toolbar (Government Only) */}
-                      {isGov && (
-                        <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                      {/* Actions Toolbar */}
+                      <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={(e) => handleDownloadDocument(doc, e)}
+                          className="text-xs"
+                          title="Download document from secure Supabase vault"
+                        >
+                          <Download className="w-3.5 h-3.5 mr-1.5" />
+                          Download Original
+                        </Button>
+                        {isGov && (
                           <Button
                             variant="outline"
                             size="sm"
@@ -876,8 +921,8 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
                             <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${isReprocessing ? 'animate-spin' : ''}`} />
                             Reprocess Extraction
                           </Button>
-                        </div>
-                      )}
+                        )}
+                      </div>
                     </div>
                   </div>
                 )}

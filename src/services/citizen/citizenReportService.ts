@@ -246,7 +246,7 @@ export class CitizenReportService {
       submittedAt: nowIso,
       updatedAt: nowIso,
       status: 'SUBMITTED',
-      isDemonstrationData: isDemoSession() || projectId.includes('demo') || projectId.includes('2026'),
+      isDemonstrationData: isDemoSession(),
     };
 
     // Record Append-Only Audit Event with actorRole: 'public'

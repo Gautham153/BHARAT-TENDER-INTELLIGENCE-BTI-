@@ -261,6 +261,8 @@ export interface ProjectInspection {
   milestoneObservations?: ProjectInspectionMilestoneObservation[];
 
   observations: string;
+  publicObservation?: string;
+  publicDirective?: string;
   issues?: string[];
   correctiveActions?: string[];
   recommendation?: string;
