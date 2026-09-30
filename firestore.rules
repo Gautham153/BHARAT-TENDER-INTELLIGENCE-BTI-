@@ -1569,15 +1569,15 @@ service cloud.firestore {
           ] && exists(/databases/$(database)/documents/projects/$(incoming().projectId))) ||
 
           // Phase 11: Document Ingestion, Extraction, Validation & Review Actions
-          // DOCUMENT_UPLOADED -> referenced document created in getAfter()
-          (incoming().action == 'DOCUMENT_UPLOADED'
+          // DOCUMENT_UPLOADED / DOCUMENT_REVISION_SUBMITTED -> referenced document created in getAfter()
+          (incoming().action in ['DOCUMENT_UPLOADED', 'DOCUMENT_REVISION_SUBMITTED']
            && incoming().get('newState', {}).get('documentId', '') is string
            && incoming().newState.documentId.size() > 0
            && !exists(/databases/$(database)/documents/projectDocuments/$(incoming().newState.documentId))
            && getAfter(/databases/$(database)/documents/projectDocuments/$(incoming().newState.documentId)).data.projectId == incoming().projectId) ||
 
-          // DOCUMENT_EXTRACTION_FAILED / DOCUMENT_CROSS_VALIDATION_COMPLETED / DOCUMENT_REVIEW_REQUESTED -> referenced document processed in getAfter()
-          (incoming().action in ['DOCUMENT_EXTRACTION_FAILED', 'DOCUMENT_CROSS_VALIDATION_COMPLETED', 'DOCUMENT_REVIEW_REQUESTED']
+          // DOCUMENT_EXTRACTION_FAILED / DOCUMENT_CROSS_VALIDATION_COMPLETED / DOCUMENT_REVIEW_REQUESTED / DOCUMENT_PROCESSING_STARTED / DOCUMENT_EXTRACTION_COMPLETED -> referenced document processed in getAfter()
+          (incoming().action in ['DOCUMENT_EXTRACTION_FAILED', 'DOCUMENT_CROSS_VALIDATION_COMPLETED', 'DOCUMENT_REVIEW_REQUESTED', 'DOCUMENT_PROCESSING_STARTED', 'DOCUMENT_EXTRACTION_COMPLETED']
            && incoming().get('newState', {}).get('documentId', '') is string
            && incoming().newState.documentId.size() > 0
            && (
@@ -1586,8 +1586,8 @@ service cloud.firestore {
                : (exists(/databases/$(database)/documents/projectDocuments/$(incoming().newState.documentId)) && get(/databases/$(database)/documents/projectDocuments/$(incoming().newState.documentId)).data.projectId == incoming().projectId)
            )) ||
 
-          // DOCUMENT_REVIEWED -> referenced document reviewed in getAfter()
-          (incoming().action == 'DOCUMENT_REVIEWED'
+          // DOCUMENT_REVIEWED / DOCUMENT_VERIFICATION_REQUESTED / DOCUMENT_VERIFICATION_COMPLETED / DOCUMENT_REVISION_REQUESTED -> referenced document reviewed in getAfter()
+          (incoming().action in ['DOCUMENT_REVIEWED', 'DOCUMENT_VERIFICATION_REQUESTED', 'DOCUMENT_VERIFICATION_COMPLETED', 'DOCUMENT_REVISION_REQUESTED']
            && incoming().get('newState', {}).get('documentId', '') is string
            && incoming().newState.documentId.size() > 0
            && (
@@ -1631,7 +1631,7 @@ service cloud.firestore {
                 ]
                 ||
                 (
-                  incoming().action == 'DOCUMENT_UPLOADED'
+                  incoming().action in ['DOCUMENT_UPLOADED', 'DOCUMENT_REVISION_SUBMITTED']
                   && incoming().get('newState', {}).get('documentId', '') is string
                   && getAfter(/databases/$(database)/documents/projectDocuments/$(incoming().newState.documentId)).data.organizationId == getUserOrgId()
                 )
@@ -1683,13 +1683,19 @@ service cloud.firestore {
                     'CITIZEN_REPORT_EVIDENCE_VIEWED',
                     'DOCUMENT_UPLOADED',
                     'DOCUMENT_REVIEWED',
-                    'DOCUMENT_REPROCESS_REQUESTED'
+                    'DOCUMENT_REPROCESS_REQUESTED',
+                    'DOCUMENT_PROCESSING_STARTED',
+                    'DOCUMENT_VERIFICATION_REQUESTED',
+                    'DOCUMENT_VERIFICATION_COMPLETED',
+                    'DOCUMENT_REVISION_REQUESTED'
                   ]
                 )
                 ||
                 (
                   incoming().actorRole == 'system'
                   && incoming().action in [
+                    'DOCUMENT_PROCESSING_STARTED',
+                    'DOCUMENT_EXTRACTION_COMPLETED',
                     'DOCUMENT_EXTRACTION_FAILED',
                     'DOCUMENT_CROSS_VALIDATION_COMPLETED',
                     'DOCUMENT_REVIEW_REQUESTED'
@@ -1708,10 +1714,7 @@ service cloud.firestore {
           && incoming().action == 'CITIZEN_REPORT_SUBMITTED'
           && incoming().projectId is string
           && exists(/databases/$(database)/documents/projects/$(incoming().projectId))
-          && (
-            get(/databases/$(database)/documents/projects/$(incoming().projectId)).data.get('publicDisclosureStatus', '') == 'PUBLIC' ||
-            get(/databases/$(database)/documents/projects/$(incoming().projectId)).data.get('isPubliclyVisible', false) == true
-          )
+          && get(/databases/$(database)/documents/projects/$(incoming().projectId)).data.get('publicDisclosureStatus', '') == 'PUBLIC'
         )
       );
 
@@ -1738,10 +1741,7 @@ service cloud.firestore {
       allow create: if request.resource.data.reportId == reportId
         && request.resource.data.projectId is string
         && exists(/databases/$(database)/documents/projects/$(request.resource.data.projectId))
-        && (
-          get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.get('publicDisclosureStatus', '') == 'PUBLIC' ||
-          get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.get('isPubliclyVisible', false) == true
-        )
+        && get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.get('publicDisclosureStatus', '') == 'PUBLIC'
         && request.resource.data.natureOfAnomaly in [
           'GHOST_PROJECT',
           'PROGRESS_MISREPRESENTATION',
@@ -1783,10 +1783,7 @@ service cloud.firestore {
       allow create: if request.resource.data.reportId == reportId
         && request.resource.data.projectId is string
         && exists(/databases/$(database)/documents/projects/$(request.resource.data.projectId))
-        && (
-          get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.get('publicDisclosureStatus', '') == 'PUBLIC' ||
-          get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.get('isPubliclyVisible', false) == true
-        )
+        && get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.get('publicDisclosureStatus', '') == 'PUBLIC'
         && existsAfter(/databases/$(database)/documents/citizenProjectReports/$(reportId))
         && getAfter(/databases/$(database)/documents/citizenProjectReports/$(reportId)).data.reportId == reportId
         && getAfter(/databases/$(database)/documents/citizenProjectReports/$(reportId)).data.projectId == request.resource.data.projectId
@@ -1887,7 +1884,7 @@ service cloud.firestore {
           && request.resource.data.storageReference.matches('^documents/' + request.resource.data.projectId + '/' + documentId + '_[a-zA-Z0-9._-]+$')
         )
         ||
-        // Case 2: Agency upload
+        // Case 2: Agency upload (Hardened initial state & Authoritative revision lineage)
         (
           isAgencyUser()
           && request.resource.data.id == documentId
@@ -1901,6 +1898,53 @@ service cloud.firestore {
           && get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.organizationId == getUserOrgId()
           && request.resource.data.storageReference is string
           && request.resource.data.storageReference.matches('^documents/' + request.resource.data.projectId + '/' + documentId + '_[a-zA-Z0-9._-]+$')
+          // Enforce safe initial processing & review lifecycle state
+          && request.resource.data.processingStatus == 'UPLOADED'
+          && request.resource.data.extractionStatus == 'PENDING'
+          && request.resource.data.validationStatus == 'NOT_VALIDATED'
+          && request.resource.data.reviewStatus == 'NONE_REQUIRED'
+          // Prohibit agency establishment of intelligence, review, or verification fields
+          && !request.resource.data.keys().hasAny([
+            'verificationDecision',
+            'verificationNotes',
+            'verifiedBy',
+            'verifiedByName',
+            'verifiedAt',
+            'reviewedBy',
+            'reviewedByName',
+            'reviewedAt',
+            'reviewNotes',
+            'extractedData',
+            'detectedDocumentType',
+            'extractionProvider',
+            'extractionModel',
+            'extractionTimestamp',
+            'crossValidationResults',
+            'crossValidationSummary',
+            'evidenceId'
+          ])
+          // Authoritative revision lineage enforcement
+          && (
+            // Sub-case 2A: Non-revision document upload (revision lineage fields prohibited)
+            (
+              !request.resource.data.keys().hasAny(['revisionOfDocumentId', 'revisionNumber'])
+              || (request.resource.data.get('revisionOfDocumentId', null) == null && request.resource.data.get('revisionNumber', null) == null)
+            )
+            ||
+            // Sub-case 2B: Controlled agency revision submission
+            (
+              request.resource.data.keys().hasAll(['revisionOfDocumentId', 'revisionNumber'])
+              && request.resource.data.revisionOfDocumentId is string
+              && isValidId(request.resource.data.revisionOfDocumentId)
+              && request.resource.data.revisionNumber is int
+              && request.resource.data.revisionNumber >= 1
+              && exists(/databases/$(database)/documents/projectDocuments/$(request.resource.data.revisionOfDocumentId))
+              && get(/databases/$(database)/documents/projectDocuments/$(request.resource.data.revisionOfDocumentId)).data.projectId == request.resource.data.projectId
+              && get(/databases/$(database)/documents/projectDocuments/$(request.resource.data.revisionOfDocumentId)).data.organizationId == getUserOrgId()
+              && get(/databases/$(database)/documents/projectDocuments/$(request.resource.data.revisionOfDocumentId)).data.reviewStatus == 'REVISION_REQUESTED'
+              && request.resource.data.revisionNumber == (get(/databases/$(database)/documents/projectDocuments/$(request.resource.data.revisionOfDocumentId)).data.get('revisionNumber', 0) + 1)
+            )
+          )
         )
       );
 
@@ -1920,6 +1964,41 @@ service cloud.firestore {
           && request.resource.data.uploaderRole == resource.data.uploaderRole
           && request.resource.data.uploadedAt == resource.data.uploadedAt
           && request.resource.data.createdAt == resource.data.createdAt
+          // Enforce document verification state machine for government reviews
+          && (
+            request.resource.data.reviewStatus == resource.data.reviewStatus
+            || (
+              request.resource.data.reviewStatus == 'VERIFICATION_IN_PROGRESS'
+              && resource.data.reviewStatus == 'VERIFICATION_REQUIRED'
+            )
+            || (
+              request.resource.data.reviewStatus == 'VERIFIED'
+              && resource.data.reviewStatus == 'VERIFICATION_IN_PROGRESS'
+            )
+            || (
+              request.resource.data.reviewStatus == 'VERIFICATION_REQUIRED'
+              && resource.data.get('reviewStatus', 'NONE_REQUIRED') in ['REVIEW_REQUIRED', 'ACKNOWLEDGED', 'VERIFICATION_REQUIRED', 'REVISION_REQUESTED', 'NONE_REQUIRED', 'RESOLVED']
+            )
+            || (
+              request.resource.data.reviewStatus == 'REVISION_REQUESTED'
+              && resource.data.get('reviewStatus', 'NONE_REQUIRED') in ['REVIEW_REQUIRED', 'ACKNOWLEDGED', 'VERIFICATION_REQUIRED', 'VERIFICATION_IN_PROGRESS', 'NONE_REQUIRED']
+            )
+            || (
+              request.resource.data.reviewStatus == 'ACKNOWLEDGED'
+              && resource.data.get('reviewStatus', 'NONE_REQUIRED') != 'VERIFIED'
+            )
+            || (
+              request.resource.data.reviewStatus == 'RESOLVED'
+            )
+            || (
+              // Automated extraction / validation transitions
+              request.resource.data.reviewStatus in ['NONE_REQUIRED', 'REVIEW_REQUIRED']
+              && (
+                resource.data.get('reviewStatus', 'NONE_REQUIRED') in ['NONE_REQUIRED', 'REVIEW_REQUIRED']
+                || resource.data.processingStatus in ['UPLOADED', 'PROCESSING']
+              )
+            )
+          )
         )
         ||
         // Case 2: Agency operational update (strictly preserving all authoritative, extraction, review, and validation fields)
@@ -1943,6 +2022,15 @@ service cloud.firestore {
           && request.resource.data.get('reviewedByName', '') == resource.data.get('reviewedByName', '')
           && request.resource.data.get('reviewedAt', '') == resource.data.get('reviewedAt', '')
           && request.resource.data.get('reviewNotes', '') == resource.data.get('reviewNotes', '')
+          // Strict immutability of government verification workflow
+          && request.resource.data.get('verificationDecision', '') == resource.data.get('verificationDecision', '')
+          && request.resource.data.get('verificationNotes', '') == resource.data.get('verificationNotes', '')
+          && request.resource.data.get('verifiedBy', '') == resource.data.get('verifiedBy', '')
+          && request.resource.data.get('verifiedByName', '') == resource.data.get('verifiedByName', '')
+          && request.resource.data.get('verifiedAt', '') == resource.data.get('verifiedAt', '')
+          // Strict immutability of revision lineage
+          && request.resource.data.get('revisionOfDocumentId', '') == resource.data.get('revisionOfDocumentId', '')
+          && request.resource.data.get('revisionNumber', 0) == resource.data.get('revisionNumber', 0)
           // Strict immutability of intelligence, extraction, cross-validation, and processing fields
           && request.resource.data.processingStatus == resource.data.processingStatus
           && request.resource.data.extractionStatus == resource.data.extractionStatus

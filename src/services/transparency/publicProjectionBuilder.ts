@@ -25,9 +25,7 @@ import {
 
 export function isProjectPubliclyDisclosed(project: any): boolean {
   if (!project) return false;
-  if (project.publicDisclosureStatus === 'PUBLIC') return true;
-  if (project.isPubliclyVisible === true && project.publicDisclosureStatus !== 'RESTRICTED') return true;
-  return false;
+  return project.publicDisclosureStatus === 'PUBLIC';
 }
 
 /**
@@ -481,10 +479,10 @@ export function buildAuthoritativePublicProjectProjection(params: {
       publicTimeline.push({
         id: `${project.id}-upd-${idx + 1}`,
         type: 'UPDATE',
-        title: `Field Progress Filing #${idx + 1}`,
+        title: `Progress Update #${idx + 1}`,
         date: new Date(uDate).toLocaleDateString('en-IN'),
         rawDate: uDate,
-        description: u.workCompletedDescription?.trim() || (u as any).summary?.trim() || 'Field progress filing recorded.',
+        description: u.workCompletedDescription?.trim() || (u as any).summary?.trim() || 'Progress update recorded.',
         progressPercent: u.physicalProgressPercent ?? (u as any).progressPercentage,
       });
     }
@@ -497,10 +495,12 @@ export function buildAuthoritativePublicProjectProjection(params: {
       publicTimeline.push({
         id: `${project.id}-insp-${idx + 1}`,
         type: 'INSPECTION',
-        title: `Statutory Field Inspection #${idx + 1}`,
+        title: `Inspection / Progress Update #${idx + 1}`,
         date: new Date(ins.inspectionDate).toLocaleDateString('en-IN'),
         rawDate: ins.inspectionDate,
-        description: ins.publicObservation?.trim() || (ins as any).qualityObservation?.trim() || 'Statutory field inspection recorded on site.',
+        description: (typeof ins.publicObservation === 'string' && ins.publicObservation.trim().length > 0)
+          ? ins.publicObservation.trim()
+          : 'Public observation not recorded in the available public record.',
         progressPercent: observedProg,
       });
     }

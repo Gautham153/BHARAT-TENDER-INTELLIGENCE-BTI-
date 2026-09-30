@@ -30,6 +30,87 @@ import { mockProjects } from '../../src/data/mockData.js';
 
 export class PublicTransparencyServerService {
   /**
+   * Authoritatively deletes a project's public transparency projection.
+   * Authenticates caller, verifies government role, validates projectId safety,
+   * and deletes publicProjects/{projectId} directly from Firestore REST API.
+   * Surfaces failures rather than silently treating them as successful (except 404).
+   */
+  async deletePublicProjection(params: {
+    projectId: string;
+    authHeader?: string;
+  }): Promise<{
+    success: boolean;
+    action: 'deleted';
+    projectId: string;
+  }> {
+    const { projectId, authHeader } = params;
+
+    // 1. Validate projectId
+    if (!projectId || typeof projectId !== 'string' || projectId.trim().length === 0) {
+      const err: any = new Error('Invalid Request: projectId is required for public projection deletion.');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const cleanProjectId = projectId.trim();
+    if (
+      cleanProjectId.includes('/') ||
+      cleanProjectId.includes('\\') ||
+      cleanProjectId.includes('..') ||
+      cleanProjectId.includes('\0')
+    ) {
+      const err: any = new Error('Invalid Request: Malformed projectId.');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    // 2. Authenticate Firebase user and verify government role
+    const caller: AuthenticatedUser = await verifyServerAuth(authHeader);
+    if (caller.role !== 'government') {
+      const err: any = new Error(
+        `Access Denied: Only authorized government officers may trigger public transparency projection deletion (caller role: '${caller.role}').`
+      );
+      err.statusCode = 403;
+      throw err;
+    }
+
+    const inDemoMode = isServerDemoModeEnabled();
+    const firebaseProjectId = process.env.VITE_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID;
+
+    // 3. Explicit Server Demo Mode Path
+    if (inDemoMode) {
+      if (firebaseProjectId) {
+        await this.deleteFirestoreProjection(firebaseProjectId, cleanProjectId);
+      }
+      return {
+        success: true,
+        action: 'deleted',
+        projectId: cleanProjectId,
+      };
+    }
+
+    // 4. Production / Live Mode
+    if (!firebaseProjectId || firebaseProjectId.trim().length === 0) {
+      const err: any = new Error(
+        'Server Configuration Error: Firebase Project ID is not configured. Public projection cannot be removed.'
+      );
+      err.statusCode = 500;
+      throw err;
+    }
+
+    const serverToken = await getServerFirestoreAccessToken();
+    const bearerToken = serverToken || (authHeader ? authHeader.replace(/^Bearer\s+/i, '').trim() : undefined);
+
+    await this.deleteFirestoreProjection(firebaseProjectId.trim(), cleanProjectId, bearerToken);
+
+    return {
+      success: true,
+      action: 'deleted',
+      projectId: cleanProjectId,
+    };
+  }
+
+  /**
    * Authoritatively synchronizes a project's public transparency projection.
    * Authenticates caller, verifies government role, reads authoritative records,
    * constructs allowlisted public DTO, and writes to publicProjects/{projectId}.

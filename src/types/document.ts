@@ -45,7 +45,22 @@ export type DocumentReviewStatus =
   | 'NONE_REQUIRED'
   | 'REVIEW_REQUIRED'
   | 'ACKNOWLEDGED'
+  | 'VERIFICATION_REQUIRED'
+  | 'VERIFICATION_IN_PROGRESS'
+  | 'VERIFIED'
+  | 'REVISION_REQUESTED'
   | 'RESOLVED';
+
+export const DOCUMENT_REVIEW_STATUS_LABELS: Record<DocumentReviewStatus, string> = {
+  NONE_REQUIRED: 'No Review Required',
+  REVIEW_REQUIRED: 'Review Required',
+  ACKNOWLEDGED: 'Government Review Acknowledged',
+  VERIFICATION_REQUIRED: 'Verification Required',
+  VERIFICATION_IN_PROGRESS: 'Verification In Progress',
+  VERIFIED: 'Government Verification Completed',
+  REVISION_REQUESTED: 'Agency Revision Requested',
+  RESOLVED: 'Review Resolved',
+};
 
 export type CrossValidationCategory =
   | 'MATCH'
@@ -213,6 +228,17 @@ export interface ProjectDocument {
   reviewedAt?: string;
   reviewNotes?: string;
 
+  // Government Verification Workflow (Section 6)
+  verificationDecision?: string;
+  verificationNotes?: string;
+  verifiedBy?: string;
+  verifiedByName?: string;
+  verifiedAt?: string;
+
+  // Controlled Agency Revision Lineage (Section 7)
+  revisionOfDocumentId?: string;
+  revisionNumber?: number;
+
   // Demonstration indicator
   isDemonstrationData?: boolean;
 
@@ -230,10 +256,19 @@ export interface DocumentUploadInput {
   fileDataUrl?: string; // base64 representation for transport/vault
   fileBuffer?: ArrayBuffer;
   notes?: string;
+  revisionOfDocumentId?: string;
+  revisionNumber?: number;
 }
 
 export interface DocumentReviewInput {
   documentId: string;
-  action: 'ACKNOWLEDGE' | 'MARK_RESOLVED' | 'REQUEST_REVISION';
+  action:
+    | 'ACKNOWLEDGE'
+    | 'MARK_VERIFICATION'
+    | 'START_VERIFICATION'
+    | 'COMPLETE_VERIFICATION'
+    | 'REQUEST_REVISION'
+    | 'MARK_RESOLVED';
   reviewNotes: string;
+  verificationDecision?: string;
 }

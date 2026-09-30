@@ -73,6 +73,7 @@ export class DocumentIntelligenceServerService {
     mimeType: string;
     fileSize: number;
     fileHash?: string;
+    revisionOfDocumentId?: string;
     authHeader?: string;
   }): Promise<{
     uploadUrl: string;
@@ -81,7 +82,7 @@ export class DocumentIntelligenceServerService {
     storagePath: string;
     bucket: string;
   }> {
-    const { documentId, projectId, fileName, mimeType, fileSize, authHeader } = params;
+    const { documentId, projectId, fileName, mimeType, fileSize, revisionOfDocumentId, authHeader } = params;
 
     // 1. MIME type validation
     const normalizedMime = (mimeType || '').trim().toLowerCase();
@@ -185,6 +186,43 @@ export class DocumentIntelligenceServerService {
       }
     }
 
+    // 7. Authoritative revision lineage validation
+    if (revisionOfDocumentId && typeof revisionOfDocumentId === 'string' && revisionOfDocumentId.trim().length > 0) {
+      const parentId = revisionOfDocumentId.trim();
+      const parentDoc = await getAuthoritativeDocument(parentId, token);
+      if (!parentDoc) {
+        const err: any = new Error(
+          `Revision Error: Referenced parent document '${parentId}' does not exist in authoritative records.`
+        );
+        err.statusCode = 404;
+        throw err;
+      }
+      if (parentDoc.projectId !== project.id) {
+        const err: any = new Error(
+          `Revision Error: Referenced parent document belongs to project '${parentDoc.projectId}', not '${project.id}'. Cross-project revisions are prohibited.`
+        );
+        err.statusCode = 400;
+        throw err;
+      }
+      if (isAgency && !isGov) {
+        const agencyOrgId = authResult.organizationId;
+        if (parentDoc.organizationId && agencyOrgId && parentDoc.organizationId !== agencyOrgId) {
+          const err: any = new Error(
+            'Revision Error: Access Denied. Parent document belongs to a different organization.'
+          );
+          err.statusCode = 403;
+          throw err;
+        }
+      }
+      if (parentDoc.reviewStatus !== 'REVISION_REQUESTED') {
+        const err: any = new Error(
+          `Revision Error: Document '${parentDoc.originalFileName}' does not require revision (current status: ${parentDoc.reviewStatus}). Revisions are only permitted when government review has requested a revision.`
+        );
+        err.statusCode = 400;
+        throw err;
+      }
+    }
+
     const safeName = `${documentId}_${path.basename(fileName).replace(/[^a-zA-Z0-9._-]/g, '_')}`;
     const storagePath = `${project.id}/${safeName}`;
     const expectedStorageRef = `documents/${storagePath}`;
@@ -237,6 +275,7 @@ export class DocumentIntelligenceServerService {
     fileHash?: string;
     fileSize?: number;
     bufferOrBase64?: string | Buffer;
+    revisionOfDocumentId?: string;
     authHeader?: string;
   }): Promise<{ storageReference: string; fileHash: string; fileSize: number; mimeType: string }> {
     const {
@@ -248,6 +287,7 @@ export class DocumentIntelligenceServerService {
       fileHash: suppliedFileHash,
       fileSize: suppliedFileSize,
       bufferOrBase64,
+      revisionOfDocumentId,
       authHeader,
     } = params;
 
@@ -324,6 +364,43 @@ export class DocumentIntelligenceServerService {
           'Access Denied: You can only upload documents for projects awarded to your organization.'
         );
         err.statusCode = 403;
+        throw err;
+      }
+    }
+
+    // Authoritative revision lineage validation
+    if (revisionOfDocumentId && typeof revisionOfDocumentId === 'string' && revisionOfDocumentId.trim().length > 0) {
+      const parentId = revisionOfDocumentId.trim();
+      const parentDoc = await getAuthoritativeDocument(parentId, token);
+      if (!parentDoc) {
+        const err: any = new Error(
+          `Revision Error: Referenced parent document '${parentId}' does not exist in authoritative records.`
+        );
+        err.statusCode = 404;
+        throw err;
+      }
+      if (parentDoc.projectId !== project.id) {
+        const err: any = new Error(
+          `Revision Error: Referenced parent document belongs to project '${parentDoc.projectId}', not '${project.id}'. Cross-project revisions are prohibited.`
+        );
+        err.statusCode = 400;
+        throw err;
+      }
+      if (isAgency && !isGov) {
+        const agencyOrgId = authResult.organizationId;
+        if (parentDoc.organizationId && agencyOrgId && parentDoc.organizationId !== agencyOrgId) {
+          const err: any = new Error(
+            'Revision Error: Access Denied. Parent document belongs to a different organization.'
+          );
+          err.statusCode = 403;
+          throw err;
+        }
+      }
+      if (parentDoc.reviewStatus !== 'REVISION_REQUESTED') {
+        const err: any = new Error(
+          `Revision Error: Document '${parentDoc.originalFileName}' does not require revision (current status: ${parentDoc.reviewStatus}). Revisions are only permitted when government review has requested a revision.`
+        );
+        err.statusCode = 400;
         throw err;
       }
     }

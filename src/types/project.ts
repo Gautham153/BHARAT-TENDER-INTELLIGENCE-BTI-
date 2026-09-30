@@ -137,17 +137,14 @@ export type PublicDisclosureStatus = 'PUBLIC' | 'RESTRICTED';
 /**
  * Authoritative fail-closed disclosure evaluation:
  * - Explicit 'PUBLIC' -> true
- * - Explicit 'RESTRICTED' -> false
- * - Legacy missing status -> fail-closed false (unless isPubliclyVisible === true was explicitly established previously)
+ * - Anything else -> false
  */
 export function isProjectPubliclyDisclosed(project?: {
   publicDisclosureStatus?: PublicDisclosureStatus;
   isPubliclyVisible?: boolean;
 } | null): boolean {
   if (!project) return false;
-  if (project.publicDisclosureStatus === 'RESTRICTED') return false;
-  if (project.publicDisclosureStatus === 'PUBLIC') return true;
-  return project.isPubliclyVisible === true;
+  return project.publicDisclosureStatus === 'PUBLIC';
 }
 
 /**
@@ -382,7 +379,11 @@ export type ProjectAuditAction =
   | 'DOCUMENT_CROSS_VALIDATION_COMPLETED'
   | 'DOCUMENT_REVIEW_REQUESTED'
   | 'DOCUMENT_REVIEWED'
-  | 'DOCUMENT_REPROCESS_REQUESTED';
+  | 'DOCUMENT_REPROCESS_REQUESTED'
+  | 'DOCUMENT_VERIFICATION_REQUESTED'
+  | 'DOCUMENT_VERIFICATION_COMPLETED'
+  | 'DOCUMENT_REVISION_REQUESTED'
+  | 'DOCUMENT_REVISION_SUBMITTED';
 
 export interface ProjectAuditEvent {
   eventId: string;

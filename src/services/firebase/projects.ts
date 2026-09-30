@@ -1303,34 +1303,74 @@ export class ProjectService {
         : `Public disclosure restricted (RESTRICTED). Reason: ${reason || 'Applicable disclosure controls applied.'}`,
     };
 
-    if (isLiveFirestoreSession() && db) {
-      const batch = writeBatch(db);
-      const updatePayload: Record<string, any> = {
-        publicDisclosureStatus: status,
-        isPubliclyVisible,
-        publicDisclosureUpdatedBy: authoritativeActorId,
-        publicDisclosureUpdatedAt: nowIso,
-        updatedAt: nowIso,
-        lastStatusChangeEventId: eventId,
-      };
-      if (reason?.trim()) {
-        updatePayload.publicDisclosureReason = reason.trim();
-      }
-      batch.set(
-        doc(db, PROJECTS_COLLECTION, projectId),
-        sanitizeFirestorePayload(updatePayload),
-        { merge: true }
-      );
-      batch.set(doc(db, AUDIT_EVENTS_COLLECTION, eventId), sanitizeFirestorePayload(auditEvent));
-      await batch.commit();
+    if (status === 'RESTRICTED') {
+      if (isLiveFirestoreSession() && db) {
+        // Step 1: Pre-emptively delete the public projection BEFORE modifying authoritative state
+        // If deletion fails, do NOT commit project change (leave project PUBLIC)
+        try {
+          await PublicTransparencyService.deletePublicProjection(projectId);
+        } catch (err: any) {
+          console.error('[ProjectService] Failed to delete public projection prior to restriction:', err);
+          throw new Error(`Failed to remove public transparency projection: ${err?.message || 'Unknown error'}`);
+        }
 
-      try {
-        await PublicTransparencyService.syncPublicProjection(updated);
-      } catch (err) {
-        console.warn('[ProjectService] Failed to sync public projection disclosure change:', err);
+        // Step 2: Only after public projection is deleted, commit RESTRICTED status and audit event
+        const batch = writeBatch(db);
+        const updatePayload: Record<string, any> = {
+          publicDisclosureStatus: status,
+          isPubliclyVisible,
+          publicDisclosureUpdatedBy: authoritativeActorId,
+          publicDisclosureUpdatedAt: nowIso,
+          updatedAt: nowIso,
+          lastStatusChangeEventId: eventId,
+        };
+        if (reason?.trim()) {
+          updatePayload.publicDisclosureReason = reason.trim();
+        }
+        batch.set(
+          doc(db, PROJECTS_COLLECTION, projectId),
+          sanitizeFirestorePayload(updatePayload),
+          { merge: true }
+        );
+        batch.set(doc(db, AUDIT_EVENTS_COLLECTION, eventId), sanitizeFirestorePayload(auditEvent));
+        await batch.commit();
+      } else {
+        this.updateProjectLocally(updated, auditEvent);
       }
     } else {
-      this.updateProjectLocally(updated, auditEvent);
+      // status === 'PUBLIC'
+      if (isLiveFirestoreSession() && db) {
+        // Step 1: Commit authoritative PUBLIC disclosure state
+        const batch = writeBatch(db);
+        const updatePayload: Record<string, any> = {
+          publicDisclosureStatus: status,
+          isPubliclyVisible,
+          publicDisclosureUpdatedBy: authoritativeActorId,
+          publicDisclosureUpdatedAt: nowIso,
+          updatedAt: nowIso,
+          lastStatusChangeEventId: eventId,
+        };
+        if (reason?.trim()) {
+          updatePayload.publicDisclosureReason = reason.trim();
+        }
+        batch.set(
+          doc(db, PROJECTS_COLLECTION, projectId),
+          sanitizeFirestorePayload(updatePayload),
+          { merge: true }
+        );
+        batch.set(doc(db, AUDIT_EVENTS_COLLECTION, eventId), sanitizeFirestorePayload(auditEvent));
+        await batch.commit();
+
+        // Step 2: Synchronize public projection
+        try {
+          await PublicTransparencyService.syncPublicProjection(updated);
+        } catch (err: any) {
+          console.error('[ProjectService] Failed to sync public projection disclosure change:', err);
+          throw new Error(`Failed to synchronize public transparency projection: ${err?.message || 'Unknown error'}`);
+        }
+      } else {
+        this.updateProjectLocally(updated, auditEvent);
+      }
     }
 
     return updated;

@@ -488,25 +488,64 @@ export class PublicTransparencyService {
       token = 'bti-demo-token-government';
     }
 
-    try {
-      const res = await fetch('/api/data', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({
-          action: 'sync-public-projection',
-          projectId,
-        }),
-      });
+    const res = await fetch('/api/data', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({
+        action: 'sync-public-projection',
+        projectId,
+      }),
+    });
 
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        console.warn('[PublicTransparencyService] Server projection sync response:', res.status, data?.error);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      const errorMsg = data?.error || data?.message || `Server returned HTTP ${res.status}`;
+      throw new Error(`Public projection sync failed: ${errorMsg}`);
+    }
+  }
+
+  /**
+   * Trusted Mutation Boundary: Authoritatively deletes the public projection for a project.
+   * Calls the server endpoint (POST /api/data action: "delete-public-projection").
+   * Used when restricting public disclosure to guarantee no stale public projection exists before
+   * committing the RESTRICTED status to Firestore.
+   */
+  static async deletePublicProjection(projectId: string): Promise<void> {
+    if (!projectId) return;
+
+    let token: string | undefined;
+    try {
+      const { auth } = await import('../firebase/firebase');
+      if (auth?.currentUser) {
+        token = await auth.currentUser.getIdToken();
       }
-    } catch (err) {
-      console.warn('[PublicTransparencyService] Failed to trigger server public projection sync:', err);
+    } catch {
+      // Offline / fallback
+    }
+
+    if (!token && isDemoSession()) {
+      token = 'bti-demo-token-government';
+    }
+
+    const res = await fetch('/api/data', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({
+        action: 'delete-public-projection',
+        projectId,
+      }),
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      const errorMsg = data?.error || data?.message || `Server returned HTTP ${res.status}`;
+      throw new Error(`Public projection deletion failed: ${errorMsg}`);
     }
   }
 }

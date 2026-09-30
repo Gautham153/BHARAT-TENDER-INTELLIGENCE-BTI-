@@ -28,6 +28,8 @@ import {
   Download,
   AlertCircle,
   Check,
+  Play,
+  CornerDownRight,
 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
@@ -41,6 +43,7 @@ import {
   DocumentType,
   DOCUMENT_TYPE_LABELS,
   DOCUMENT_INCONSISTENCY_LABELS,
+  DOCUMENT_REVIEW_STATUS_LABELS,
   DocumentInconsistencyIndicator,
   DocumentProcessingStatus,
   DocumentReviewStatus,
@@ -52,11 +55,13 @@ export interface DocumentIntelligenceWorkspaceProps {
   project: Project;
   userRole?: 'government' | 'agency';
   onNavigate?: (path: string) => void;
+  targetDocumentId?: string;
 }
 
 export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspaceProps> = ({
   project,
   userRole = 'government',
+  targetDocumentId,
 }) => {
   const { user } = useAuth();
   const { showToast } = useToast();
@@ -74,6 +79,7 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
 
   // Upload Modal State
   const [showUploadModal, setShowUploadModal] = useState<boolean>(false);
+  const [revisionTargetDoc, setRevisionTargetDoc] = useState<ProjectDocument | null>(null);
   const [uploadType, setUploadType] = useState<DocumentType>('INVOICE');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [fileBase64, setFileBase64] = useState<string>('');
@@ -83,12 +89,16 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
 
   // Human Review Modal State
   const [reviewingDoc, setReviewingDoc] = useState<ProjectDocument | null>(null);
-  const [reviewAction, setReviewAction] = useState<'ACKNOWLEDGE' | 'MARK_RESOLVED' | 'REQUEST_REVISION'>('ACKNOWLEDGE');
+  const [reviewAction, setReviewAction] = useState<
+    'ACKNOWLEDGE' | 'MARK_VERIFICATION' | 'START_VERIFICATION' | 'COMPLETE_VERIFICATION' | 'REQUEST_REVISION' | 'MARK_RESOLVED'
+  >('ACKNOWLEDGE');
+  const [verificationDecision, setVerificationDecision] = useState<string>('VERIFIED_ACCURATE');
   const [reviewNotes, setReviewNotes] = useState<string>('');
   const [submittingReview, setSubmittingReview] = useState<boolean>(false);
 
-  // Reprocessing state
+  // Reprocessing & Processing states
   const [reprocessingDocId, setReprocessingDocId] = useState<string | null>(null);
+  const [startingProcessingDocId, setStartingProcessingDocId] = useState<string | null>(null);
 
   // Load documents for project
   const loadDocuments = useCallback(async () => {
@@ -124,22 +134,36 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
     });
   };
 
-  // Expand first document by default when loaded
+  // Expand target document and ensure it is visible when targetDocumentId is provided
   useEffect(() => {
-    if (documents.length > 0 && expandedDocIds.size === 0) {
-      setExpandedDocIds(new Set([documents[0].id]));
+    if (documents.length > 0) {
+      if (targetDocumentId && documents.some((d) => d.id === targetDocumentId)) {
+        setExpandedDocIds((prev) => new Set([...prev, targetDocumentId]));
+        setFilterStatus('ALL');
+        setFilterType('ALL');
+        setSearchQuery('');
+      } else if (expandedDocIds.size === 0) {
+        setExpandedDocIds(new Set([documents[0].id]));
+      }
     }
-  }, [documents]);
+  }, [documents, targetDocumentId]);
 
-  // Compute metrics
+  // Compute metrics (Section 19)
   const metrics = useMemo(() => {
     const total = documents.length;
-    const validatedClean = documents.filter((d) => d.validationStatus === 'VALIDATED_CLEAN').length;
+    const validatedClean = documents.filter(
+      (d) => d.validationStatus === 'VALIDATED_CLEAN' || d.reviewStatus === 'VERIFIED' || d.reviewStatus === 'RESOLVED'
+    ).length;
     const reviewRequired = documents.filter(
-      (d) => d.validationStatus === 'INCONSISTENCY_DETECTED' || d.reviewStatus === 'REVIEW_REQUIRED'
+      (d) =>
+        d.validationStatus === 'INCONSISTENCY_DETECTED' ||
+        d.reviewStatus === 'REVIEW_REQUIRED' ||
+        d.reviewStatus === 'VERIFICATION_REQUIRED' ||
+        d.reviewStatus === 'VERIFICATION_IN_PROGRESS' ||
+        d.reviewStatus === 'REVISION_REQUESTED'
     ).length;
     const processing = documents.filter(
-      (d) => d.processingStatus === 'PROCESSING' || d.processingStatus === 'UPLOADED'
+      (d) => d.processingStatus === 'PROCESSING' || d.processingStatus === 'UPLOADED' || d.extractionStatus === 'PENDING'
     ).length;
     return { total, validatedClean, reviewRequired, processing };
   }, [documents]);
@@ -148,9 +172,11 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
   const filteredDocuments = useMemo(() => {
     return documents.filter((doc) => {
       if (filterType !== 'ALL' && doc.documentType !== filterType) return false;
-      if (filterStatus === 'CLEAN' && doc.validationStatus !== 'VALIDATED_CLEAN') return false;
-      if (filterStatus === 'REVIEW_REQUIRED' && doc.validationStatus !== 'INCONSISTENCY_DETECTED') return false;
-      if (filterStatus === 'PROCESSING' && doc.processingStatus !== 'PROCESSING') return false;
+      if (filterStatus === 'CLEAN' && !(doc.validationStatus === 'VALIDATED_CLEAN' || doc.reviewStatus === 'VERIFIED' || doc.reviewStatus === 'RESOLVED')) return false;
+      if (filterStatus === 'VERIFICATION_REQUIRED' && !(doc.reviewStatus === 'VERIFICATION_REQUIRED' || doc.reviewStatus === 'VERIFICATION_IN_PROGRESS')) return false;
+      if (filterStatus === 'REVIEW_REQUIRED' && !(doc.validationStatus === 'INCONSISTENCY_DETECTED' || doc.reviewStatus === 'REVIEW_REQUIRED' || doc.reviewStatus === 'ACKNOWLEDGED')) return false;
+      if (filterStatus === 'REVISION_REQUESTED' && doc.reviewStatus !== 'REVISION_REQUESTED') return false;
+      if (filterStatus === 'PROCESSING' && !(doc.processingStatus === 'PROCESSING' || doc.processingStatus === 'UPLOADED' || doc.extractionStatus === 'PENDING')) return false;
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         const matchName = doc.originalFileName.toLowerCase().includes(q);
@@ -220,6 +246,7 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
 
     setUploading(true);
     try {
+      const isRevision = Boolean(revisionTargetDoc);
       const newDoc = await DocumentService.uploadDocument(
         {
           projectId: project.id,
@@ -229,18 +256,41 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
           fileSize: selectedFile.size,
           file: selectedFile,
           notes: uploadNotes,
+          revisionOfDocumentId: revisionTargetDoc?.id,
+          revisionNumber: revisionTargetDoc ? (revisionTargetDoc.revisionNumber || 1) + 1 : undefined,
         },
         user
       );
 
-      showToast('Document Ingested Successfully', {
-        message: isGov
-          ? `"${selectedFile.name}" registered. Structured extraction & deterministic cross-validation initiated.`
-          : `"${selectedFile.name}" uploaded successfully. Awaiting government document processing.`,
-        type: 'success',
-      });
+      // Section 20 & 21: Accurate UI Outcomes
+      if (isGov) {
+        if (newDoc.validationStatus === 'VALIDATED_CLEAN') {
+          showToast('Document Processed Successfully', {
+            message: `"${selectedFile.name}" verified clean against authoritative project baselines.`,
+            type: 'success',
+          });
+        } else if (newDoc.processingStatus === 'EXTRACTION_FAILED') {
+          showToast('Document Extraction Failed', {
+            message: `"${selectedFile.name}" registered. Extraction failed — manual officer review required.`,
+            type: 'warning',
+          });
+        } else {
+          showToast('Document Processed — Verification Required', {
+            message: `"${selectedFile.name}" processed. Baseline variances detected requiring verification.`,
+            type: 'warning',
+          });
+        }
+      } else {
+        showToast('Document Uploaded Successfully', {
+          message: isRevision
+            ? `Revision submitted for "${revisionTargetDoc?.originalFileName}". Awaiting government processing.`
+            : `"${selectedFile.name}" uploaded successfully. Awaiting government processing.`,
+          type: 'success',
+        });
+      }
 
       setShowUploadModal(false);
+      setRevisionTargetDoc(null);
       setSelectedFile(null);
       setFileBase64('');
       setFileHashPreview('');
@@ -257,6 +307,39 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
       });
     } finally {
       setUploading(false);
+    }
+  };
+
+  // Section 3: Explicit Government "Start Processing" for newly submitted documents
+  const handleStartProcessing = async (docId: string) => {
+    setStartingProcessingDocId(docId);
+    try {
+      const updated = await DocumentService.processDocumentExtraction(docId, user);
+      if (updated.validationStatus === 'VALIDATED_CLEAN') {
+        showToast('Processing Completed', {
+          message: 'Document extraction and cross-validation completed. Full baseline alignment confirmed.',
+          type: 'success',
+        });
+      } else if (updated.processingStatus === 'EXTRACTION_FAILED') {
+        showToast('Extraction Failed', {
+          message: updated.processingError || 'Automatic extraction failed. Document preserved for manual review.',
+          type: 'warning',
+        });
+      } else {
+        showToast('Verification Required', {
+          message: 'Document processed. Baseline variances detected requiring officer review.',
+          type: 'warning',
+        });
+      }
+      setDocuments((prev) => prev.map((d) => (d.id === updated.id ? updated : d)));
+    } catch (err: any) {
+      console.error('[DocumentIntelligenceWorkspace] Start processing error:', err);
+      showToast('Processing Error', {
+        message: err.message || 'Could not process document.',
+        type: 'error',
+      });
+    } finally {
+      setStartingProcessingDocId(null);
     }
   };
 
@@ -279,12 +362,22 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
           documentId: reviewingDoc.id,
           action: reviewAction,
           reviewNotes: reviewNotes.trim(),
+          verificationDecision: reviewAction === 'COMPLETE_VERIFICATION' ? verificationDecision : undefined,
         },
         user
       );
 
-      showToast('Human Review Recorded', {
-        message: `Official review decision (${reviewAction}) saved with audit trail.`,
+      const decisionLabels: Record<string, string> = {
+        ACKNOWLEDGE: 'Government review acknowledged (verification pending)',
+        MARK_VERIFICATION: 'Marked for official verification',
+        START_VERIFICATION: 'Verification in progress',
+        COMPLETE_VERIFICATION: 'Official verification completed',
+        REQUEST_REVISION: 'Agency revision requested',
+        MARK_RESOLVED: 'Discrepancy marked resolved',
+      };
+
+      showToast('Official Review Recorded', {
+        message: decisionLabels[reviewAction] || `Review decision saved with audit trail.`,
         type: 'success',
       });
 
@@ -302,7 +395,7 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
     }
   };
 
-  // Handle Reprocess Document
+  // Handle Reprocess Document (Explicit rerun for already processed documents)
   const handleReprocess = async (docId: string) => {
     setReprocessingDocId(docId);
     try {
@@ -449,9 +542,11 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
             className="text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-slate-700 font-medium"
           >
             <option value="ALL">All Statuses</option>
-            <option value="CLEAN">Validated Clean</option>
-            <option value="REVIEW_REQUIRED">Review Required (Variance)</option>
-            <option value="PROCESSING">Processing / In-Flight</option>
+            <option value="CLEAN">Clean & Verified</option>
+            <option value="VERIFICATION_REQUIRED">Verification Required</option>
+            <option value="REVIEW_REQUIRED">Review Required</option>
+            <option value="REVISION_REQUESTED">Revision Requested</option>
+            <option value="PROCESSING">Processing Queue (In-Flight / Awaiting)</option>
           </select>
         </div>
 
@@ -525,10 +620,12 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
                   <div className="flex items-start gap-3 min-w-0">
                     <div
                       className={`p-2.5 rounded-lg shrink-0 ${
-                        hasDiscrepancy
-                          ? 'bg-amber-100 text-amber-800'
-                          : doc.validationStatus === 'VALIDATED_CLEAN'
+                        doc.reviewStatus === 'VERIFIED' || doc.validationStatus === 'VALIDATED_CLEAN' || doc.reviewStatus === 'RESOLVED'
                           ? 'bg-emerald-100 text-emerald-800'
+                          : doc.reviewStatus === 'REVISION_REQUESTED' || doc.processingStatus === 'EXTRACTION_FAILED'
+                          ? 'bg-rose-100 text-rose-800'
+                          : doc.reviewStatus === 'VERIFICATION_REQUIRED' || hasDiscrepancy
+                          ? 'bg-amber-100 text-amber-800'
                           : 'bg-blue-100 text-blue-800'
                       }`}
                     >
@@ -536,6 +633,18 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
                     </div>
 
                     <div className="min-w-0">
+                      {/* Section 9: Visual Linking of Revisions */}
+                      {doc.revisionOfDocumentId && (
+                        <div className="flex items-center gap-1.5 text-[11px] text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200 w-fit mb-1 font-semibold">
+                          <CornerDownRight className="w-3 h-3 text-indigo-600 shrink-0" />
+                          <span>Revision #{doc.revisionNumber || 1}</span>
+                          <span className="text-indigo-400 font-normal">•</span>
+                          <span className="text-indigo-600 font-normal truncate">
+                            Of document {doc.revisionOfDocumentId}
+                          </span>
+                        </div>
+                      )}
+
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-bold text-sm text-slate-900 truncate">
                           {doc.originalFileName}
@@ -561,20 +670,65 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
                           </>
                         )}
                       </div>
+
+                      {/* Display child revisions if any */}
+                      {(() => {
+                        const childRevisions = documents.filter((d) => d.revisionOfDocumentId === doc.id);
+                        if (childRevisions.length === 0) return null;
+                        return (
+                          <div className="flex items-center gap-1.5 text-[11px] text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded border border-emerald-200 w-fit mt-1.5 font-medium">
+                            <RefreshCw className="w-3 h-3 text-emerald-600" />
+                            <span>
+                              Linked Revision(s) Submitted:{' '}
+                              {childRevisions.map((r) => `Rev #${r.revisionNumber || 1} (${r.originalFileName})`).join(', ')}
+                            </span>
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
 
                   <div className="flex items-center gap-3 self-end sm:self-center shrink-0">
-                    {/* Status Badge */}
-                    {doc.validationStatus === 'VALIDATED_CLEAN' ? (
+                    {/* Status Badge (Section 18) */}
+                    {doc.reviewStatus === 'VERIFIED' ? (
+                      <span className="flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-300">
+                        <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                        Government Verification Completed
+                      </span>
+                    ) : doc.reviewStatus === 'VERIFICATION_REQUIRED' ? (
+                      <span className="flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full bg-amber-50 text-amber-900 border border-amber-300">
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                        Verification Required
+                      </span>
+                    ) : doc.reviewStatus === 'VERIFICATION_IN_PROGRESS' ? (
+                      <span className="flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-900 border border-indigo-300">
+                        <Clock className="w-3.5 h-3.5 text-indigo-600" />
+                        Verification In Progress
+                      </span>
+                    ) : doc.reviewStatus === 'REVISION_REQUESTED' ? (
+                      <span className="flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full bg-rose-50 text-rose-900 border border-rose-300">
+                        <RefreshCw className="w-3.5 h-3.5 text-rose-600" />
+                        Agency Revision Requested
+                      </span>
+                    ) : doc.reviewStatus === 'RESOLVED' ? (
+                      <span className="flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-300">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                        Review Resolved
+                      </span>
+                    ) : doc.reviewStatus === 'ACKNOWLEDGED' ? (
+                      <span className="flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full bg-blue-50 text-blue-800 border border-blue-300">
+                        <Info className="w-3.5 h-3.5 text-blue-600" />
+                        Government Review Acknowledged
+                      </span>
+                    ) : doc.validationStatus === 'VALIDATED_CLEAN' ? (
                       <span className="flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-300">
                         <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
                         Corroborated Clean
                       </span>
-                    ) : hasDiscrepancy ? (
-                      <span className="flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full bg-amber-50 text-amber-900 border border-amber-300">
-                        <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
-                        Variance Requiring Verification ({summary?.mismatchCount || 1})
+                    ) : doc.processingStatus === 'EXTRACTION_FAILED' ? (
+                      <span className="flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full bg-rose-50 text-rose-800 border border-rose-300">
+                        <AlertCircle className="w-3.5 h-3.5 text-rose-600" />
+                        Extraction Failed
                       </span>
                     ) : doc.processingStatus === 'PROCESSING' ? (
                       <span className="flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-800 border border-indigo-200">
@@ -584,7 +738,12 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
                     ) : doc.processingStatus === 'UPLOADED' || doc.extractionStatus === 'PENDING' ? (
                       <span className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
                         <Clock className="w-3.5 h-3.5 text-slate-500" />
-                        Uploaded (Awaiting Processing)
+                        Awaiting Government Processing
+                      </span>
+                    ) : hasDiscrepancy ? (
+                      <span className="flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full bg-amber-50 text-amber-900 border border-amber-300">
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                        Variance Requiring Review ({summary?.mismatchCount || 1})
                       </span>
                     ) : (
                       <span className="text-xs font-medium px-2 py-0.5 rounded bg-slate-100 text-slate-600">
@@ -856,17 +1015,146 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
                         )}
                       </div>
 
-                      {doc.reviewStatus === 'RESOLVED' || doc.reviewStatus === 'ACKNOWLEDGED' ? (
+                      {doc.reviewStatus === 'VERIFIED' ? (
+                        <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-900 space-y-1">
+                          <div className="flex items-center gap-1.5 font-bold">
+                            <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                            Government Verification Completed ({doc.verificationDecision || 'VERIFIED'})
+                          </div>
+                          {(doc.verificationNotes || doc.reviewNotes) && (
+                            <p className="text-emerald-800 text-[11px] pl-5.5 italic">
+                              "{doc.verificationNotes || doc.reviewNotes}"
+                            </p>
+                          )}
+                          {doc.verifiedByName && (
+                            <div className="text-[10px] text-emerald-700 pl-5.5 font-mono">
+                              Verified by {doc.verifiedByName} on {new Date(doc.verifiedAt || doc.reviewedAt || doc.updatedAt).toLocaleDateString('en-IN')}
+                            </div>
+                          )}
+                        </div>
+                      ) : doc.reviewStatus === 'VERIFICATION_REQUIRED' ? (
+                        <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-1.5 font-bold">
+                              <AlertTriangle className="w-4 h-4 text-amber-600" />
+                              Verification Required (Flagged for Official Verification)
+                            </div>
+                            {isGov && (
+                              <Button
+                                size="sm"
+                                onClick={() => {
+                                  setReviewingDoc(doc);
+                                  setReviewAction('COMPLETE_VERIFICATION');
+                                  setReviewNotes('');
+                                }}
+                                className="text-xs bg-amber-600 hover:bg-amber-700 text-white font-semibold"
+                              >
+                                <ShieldCheck className="w-3.5 h-3.5 mr-1" />
+                                Complete Verification
+                              </Button>
+                            )}
+                          </div>
+                          {doc.reviewNotes && (
+                            <p className="text-amber-800 text-[11px] italic">Review Scope: "{doc.reviewNotes}"</p>
+                          )}
+                        </div>
+                      ) : doc.reviewStatus === 'VERIFICATION_IN_PROGRESS' ? (
+                        <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-lg text-xs text-indigo-900 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-1.5 font-bold">
+                              <Clock className="w-4 h-4 text-indigo-600" />
+                              Verification In Progress
+                            </div>
+                            {isGov && (
+                              <Button
+                                size="sm"
+                                onClick={() => {
+                                  setReviewingDoc(doc);
+                                  setReviewAction('COMPLETE_VERIFICATION');
+                                  setReviewNotes('');
+                                }}
+                                className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-semibold"
+                              >
+                                <ShieldCheck className="w-3.5 h-3.5 mr-1" />
+                                Record Verification Result
+                              </Button>
+                            )}
+                          </div>
+                          {doc.reviewNotes && (
+                            <p className="text-indigo-800 text-[11px] italic">Notes: "{doc.reviewNotes}"</p>
+                          )}
+                        </div>
+                      ) : doc.reviewStatus === 'REVISION_REQUESTED' ? (
+                        <div className="p-3 bg-rose-50 border border-rose-300 rounded-lg space-y-2">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-1.5 font-bold text-xs text-rose-950">
+                              <RefreshCw className="w-4 h-4 text-rose-600" />
+                              Agency Revision Requested by Government
+                            </div>
+                            {!isGov && (
+                              <Button
+                                size="sm"
+                                onClick={() => {
+                                  setRevisionTargetDoc(doc);
+                                  setUploadType(doc.documentType);
+                                  setShowUploadModal(true);
+                                }}
+                                className="text-xs bg-rose-700 hover:bg-rose-800 text-white font-semibold shadow-xs"
+                              >
+                                <Upload className="w-3.5 h-3.5 mr-1" />
+                                Submit Revision
+                              </Button>
+                            )}
+                          </div>
+                          {doc.reviewNotes && (
+                            <div className="text-xs text-rose-900 bg-white/80 p-2.5 rounded border border-rose-200">
+                              <span className="font-bold block text-[11px] text-rose-700 uppercase mb-0.5">
+                                Government Revision Instructions:
+                              </span>
+                              <p className="italic">"{doc.reviewNotes}"</p>
+                            </div>
+                          )}
+                          <p className="text-[11px] text-rose-800">
+                            The original document remains preserved. Submitting a revised document will register Revision #{(doc.revisionNumber || 1) + 1} and await government processing.
+                          </p>
+                        </div>
+                      ) : doc.reviewStatus === 'RESOLVED' ? (
                         <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-900 space-y-1">
                           <div className="flex items-center gap-1.5 font-bold">
                             <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                            Official Review Completed ({doc.reviewStatus})
+                            Review Resolved (Closed by Government)
                           </div>
                           {doc.reviewNotes && (
                             <p className="text-emerald-800 text-[11px] pl-5.5 italic">"{doc.reviewNotes}"</p>
                           )}
                         </div>
-                      ) : isGov && hasDiscrepancy ? (
+                      ) : doc.reviewStatus === 'ACKNOWLEDGED' ? (
+                        <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-900 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-1.5 font-bold">
+                              <Info className="w-4 h-4 text-blue-600" />
+                              Government Review Acknowledged (Verification Pending)
+                            </div>
+                            {isGov && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                  setReviewingDoc(doc);
+                                  setReviewAction('MARK_VERIFICATION');
+                                  setReviewNotes(doc.reviewNotes || '');
+                                }}
+                                className="text-xs text-blue-700 border-blue-300"
+                              >
+                                Flag for Verification
+                              </Button>
+                            )}
+                          </div>
+                          {doc.reviewNotes && (
+                            <p className="text-blue-800 text-[11px] italic">Acknowledgement Notes: "{doc.reviewNotes}"</p>
+                          )}
+                        </div>
+                      ) : isGov && (hasDiscrepancy || doc.reviewStatus === 'REVIEW_REQUIRED') ? (
                         <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg space-y-2">
                           <div className="flex items-center justify-between">
                             <span className="font-bold text-xs text-amber-900">
@@ -876,6 +1164,7 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
                               size="sm"
                               onClick={() => {
                                 setReviewingDoc(doc);
+                                setReviewAction('ACKNOWLEDGE');
                                 setReviewNotes('');
                               }}
                               className="text-xs bg-amber-600 hover:bg-amber-700 text-white font-semibold"
@@ -910,17 +1199,31 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
                           <Download className="w-3.5 h-3.5 mr-1.5" />
                           Download Original
                         </Button>
+
+                        {/* Section 3 & 17: Government Start Processing vs Reprocess Extraction */}
                         {isGov && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleReprocess(doc.id)}
-                            disabled={isReprocessing}
-                            className="text-xs"
-                          >
-                            <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${isReprocessing ? 'animate-spin' : ''}`} />
-                            Reprocess Extraction
-                          </Button>
+                          doc.processingStatus === 'UPLOADED' && doc.extractionStatus === 'PENDING' ? (
+                            <Button
+                              size="sm"
+                              onClick={() => handleStartProcessing(doc.id)}
+                              disabled={startingProcessingDocId === doc.id}
+                              className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-xs"
+                            >
+                              <Play className={`w-3.5 h-3.5 mr-1.5 ${startingProcessingDocId === doc.id ? 'animate-pulse' : ''}`} />
+                              {startingProcessingDocId === doc.id ? 'Processing...' : 'Start Processing'}
+                            </Button>
+                          ) : (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleReprocess(doc.id)}
+                              disabled={isReprocessing}
+                              className="text-xs"
+                            >
+                              <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${isReprocessing ? 'animate-spin' : ''}`} />
+                              Reprocess Extraction
+                            </Button>
+                          )
                         )}
                       </div>
                     </div>
@@ -935,10 +1238,29 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
       {/* Upload Document Modal */}
       <Modal
         isOpen={showUploadModal}
-        onClose={() => setShowUploadModal(false)}
-        title="Upload Project Document to Vault"
+        onClose={() => {
+          setShowUploadModal(false);
+          setRevisionTargetDoc(null);
+        }}
+        title={
+          revisionTargetDoc
+            ? `Submit Revision for: ${revisionTargetDoc.originalFileName}`
+            : 'Upload Project Document to Vault'
+        }
       >
         <form onSubmit={handleUploadSubmit} className="space-y-4 text-xs text-slate-800">
+          {revisionTargetDoc && (
+            <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-lg text-xs space-y-1">
+              <div className="font-bold flex items-center gap-1.5 text-indigo-900">
+                <RefreshCw className="w-3.5 h-3.5 text-indigo-600" />
+                Submitting Controlled Revision #{(revisionTargetDoc.revisionNumber || 1) + 1}
+              </div>
+              <p className="text-[11px] text-indigo-800">
+                The original document remains permanently preserved in the audit vault. This submission will be registered as a linked revision awaiting government review.
+              </p>
+            </div>
+          )}
+
           <div>
             <label className="block font-bold text-slate-700 mb-1">Declared Document Type *</label>
             <select
@@ -982,12 +1304,19 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
           )}
 
           <div>
-            <label className="block font-bold text-slate-700 mb-1">Administrative Notes (Optional)</label>
+            <label className="block font-bold text-slate-700 mb-1">
+              {revisionTargetDoc ? 'Revision Explanation & Notes *' : 'Administrative Notes (Optional)'}
+            </label>
             <textarea
               value={uploadNotes}
               onChange={(e) => setUploadNotes(e.target.value)}
-              placeholder="e.g. Interim running bill #3 covering milestone 2 superstructure works."
+              placeholder={
+                revisionTargetDoc
+                  ? 'Explain the corrections made in this revised document submission...'
+                  : 'e.g. Interim running bill #3 covering milestone 2 superstructure works.'
+              }
               rows={2}
+              required={Boolean(revisionTargetDoc)}
               className="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500"
             />
           </div>
@@ -997,7 +1326,10 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
               type="button"
               variant="outline"
               size="sm"
-              onClick={() => setShowUploadModal(false)}
+              onClick={() => {
+                setShowUploadModal(false);
+                setRevisionTargetDoc(null);
+              }}
               disabled={uploading}
             >
               Cancel
@@ -1011,7 +1343,12 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
               {uploading ? (
                 <>
                   <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" />
-                  Storing & Extracting...
+                  Storing & Registering...
+                </>
+              ) : revisionTargetDoc ? (
+                <>
+                  <Upload className="w-3.5 h-3.5 mr-1.5" />
+                  Submit Document Revision
                 </>
               ) : (
                 <>
@@ -1024,7 +1361,7 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
         </form>
       </Modal>
 
-      {/* Human Review Modal */}
+      {/* Human Review Modal (Section 5 & 6) */}
       {reviewingDoc && (
         <Modal
           isOpen={Boolean(reviewingDoc)}
@@ -1038,29 +1375,78 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
               </span>
               <p className="text-amber-800 text-[11px]">
                 {reviewingDoc.crossValidationSummary?.inconsistencies?.join(', ') ||
-                  'Extracted document values differ from project baseline records.'}
+                  'Extracted document values differ from authoritative project records.'}
               </p>
             </div>
 
             <div>
-              <label className="block font-bold text-slate-700 mb-1">Review Determination *</label>
+              <label className="block font-bold text-slate-700 mb-1">Official Review Determination *</label>
               <select
                 value={reviewAction}
                 onChange={(e) => setReviewAction(e.target.value as any)}
                 className="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg font-medium"
               >
-                <option value="ACKNOWLEDGE">Acknowledge Discrepancy (Flag for Verification)</option>
-                <option value="MARK_RESOLVED">Mark Resolved (Legitimate Variance / Rectified)</option>
-                <option value="REQUEST_REVISION">Request Agency Revision (Reject Submission)</option>
+                <option value="ACKNOWLEDGE">Acknowledge Inconsistency (Records awareness; verification pending)</option>
+                <option value="MARK_VERIFICATION">Mark for Verification (Flag formal verification task)</option>
+                <option value="START_VERIFICATION">Initiate Verification (Begin field / document verification)</option>
+                <option value="COMPLETE_VERIFICATION">Complete Official Verification (Record verification outcome)</option>
+                <option value="REQUEST_REVISION">Request Agency Revision (Require revised document submission)</option>
+                <option value="MARK_RESOLVED">Mark Resolved (Legitimate variance verified & reconciled)</option>
               </select>
+              <p className="text-[11px] text-slate-500 mt-1 italic">
+                {reviewAction === 'ACKNOWLEDGE'
+                  ? 'Note: Acknowledgment records administrative awareness only. It does not verify the document as accurate or valid.'
+                  : reviewAction === 'MARK_VERIFICATION'
+                  ? 'Note: Flags this document for an official statutory verification or engineering site audit.'
+                  : reviewAction === 'START_VERIFICATION'
+                  ? 'Note: Sets status to Verification In Progress while active field or technical audit is conducted.'
+                  : reviewAction === 'COMPLETE_VERIFICATION'
+                  ? 'Note: Officially records statutory verification findings and final determination on record.'
+                  : reviewAction === 'REQUEST_REVISION'
+                  ? 'Note: Agency will be notified to submit a corrected document revision. Original document remains permanently preserved.'
+                  : 'Note: Closes the discrepancy after official administrative justification is entered.'}
+              </p>
             </div>
 
+            {reviewAction === 'COMPLETE_VERIFICATION' && (
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Verification Decision *</label>
+                <select
+                  value={verificationDecision}
+                  onChange={(e) => setVerificationDecision(e.target.value)}
+                  className="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg font-medium"
+                >
+                  <option value="VERIFIED_ACCURATE">Verified Accurate (Field cross-check verified document)</option>
+                  <option value="RECTIFIED">Rectified (Clerical or baseline variance reconciled)</option>
+                  <option value="DISCREPANCY_SUBSTANTIATED">Discrepancy Substantiated (Inconsistency confirmed on record)</option>
+                </select>
+              </div>
+            )}
+
             <div>
-              <label className="block font-bold text-slate-700 mb-1">Official Review Notes *</label>
+              <label className="block font-bold text-slate-700 mb-1">
+                {reviewAction === 'COMPLETE_VERIFICATION'
+                  ? 'Official Verification Notes & Findings *'
+                  : reviewAction === 'MARK_VERIFICATION'
+                  ? 'Verification Scope & Review Instructions *'
+                  : reviewAction === 'REQUEST_REVISION'
+                  ? 'Revision Instructions for Agency (Visible to Agency) *'
+                  : reviewAction === 'MARK_RESOLVED'
+                  ? 'Resolution Justification Notes *'
+                  : 'Official Administrative Justification Notes *'}
+              </label>
               <textarea
                 value={reviewNotes}
                 onChange={(e) => setReviewNotes(e.target.value)}
-                placeholder="Enter administrative justification, site inspection cross-check notes, or revision instructions..."
+                placeholder={
+                  reviewAction === 'COMPLETE_VERIFICATION'
+                    ? 'Enter official field verification findings, cross-checked records, and determination rationale...'
+                    : reviewAction === 'REQUEST_REVISION'
+                    ? 'Specify exactly what corrections or supporting documentation the agency must submit...'
+                    : reviewAction === 'MARK_VERIFICATION'
+                    ? 'State the specific discrepancies requiring site inspection or financial audit verification...'
+                    : 'Enter administrative justification, site inspection cross-check notes, or review notes...'
+                }
                 rows={3}
                 required
                 className="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -1083,7 +1469,17 @@ export const DocumentIntelligenceWorkspace: React.FC<DocumentIntelligenceWorkspa
                 disabled={submittingReview || !reviewNotes.trim()}
                 className="bg-blue-600 hover:bg-blue-700 text-white font-semibold"
               >
-                {submittingReview ? 'Recording Decision...' : 'Save Official Review Decision'}
+                {submittingReview
+                  ? 'Saving...'
+                  : reviewAction === 'COMPLETE_VERIFICATION'
+                  ? 'Complete Government Verification'
+                  : reviewAction === 'MARK_VERIFICATION'
+                  ? 'Flag for Verification'
+                  : reviewAction === 'REQUEST_REVISION'
+                  ? 'Request Agency Revision'
+                  : reviewAction === 'MARK_RESOLVED'
+                  ? 'Resolve Discrepancy'
+                  : 'Save Official Review Decision'}
               </Button>
             </div>
           </form>

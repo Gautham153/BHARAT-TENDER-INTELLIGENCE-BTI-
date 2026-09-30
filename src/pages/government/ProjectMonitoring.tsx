@@ -81,6 +81,8 @@ import {
 } from '../../types/project';
 import { formatCurrencyINR } from '../../components/tenders/TenderOpportunityCard';
 import { DocumentIntelligenceWorkspace } from '../../components/document/DocumentIntelligenceWorkspace';
+import { DocumentService } from '../../services/document/documentService';
+import { ProjectDocument } from '../../types/document';
 
 type ActiveTab =
   | 'overview'
@@ -115,6 +117,8 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
   const [progressUpdates, setProgressUpdates] = useState<ProjectProgressUpdate[]>([]);
   const [financialRecords, setFinancialRecords] = useState<ProjectFinancialRecord[]>([]);
   const [inspections, setInspections] = useState<ProjectInspection[]>([]);
+  const [projectDocuments, setProjectDocuments] = useState<ProjectDocument[]>([]);
+  const [selectedTargetDocId, setSelectedTargetDocId] = useState<string | undefined>(undefined);
   const [exceptions, setExceptions] = useState<ProjectException[]>([]);
   const [auditEvents, setAuditEvents] = useState<ProjectAuditEvent[]>([]);
   const [projectAnomalies, setProjectAnomalies] = useState<ProjectAnomaly[]>([]);
@@ -293,12 +297,13 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
   const loadProjectDetails = useCallback(async (projectId: string) => {
     setDrawerLoading(true);
     try {
-      // 1. First load the existing project sub-records required by deterministic checks
-      const [m, u, f, i] = await Promise.all([
+      // 1. First load the existing project sub-records required by deterministic checks and document intelligence
+      const [m, u, f, i, docs] = await Promise.all([
         ProjectService.getMilestones(projectId),
         ProjectService.getProgressUpdates(projectId),
         ProjectService.getFinancialRecords(projectId),
         ProjectService.getInspections(projectId),
+        DocumentService.getDocumentsForProject(projectId, user).catch(() => []),
       ]);
 
       // 2. Run deterministic exception checks
@@ -317,6 +322,7 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
       setProgressUpdates(u);
       setFinancialRecords(f);
       setInspections(i);
+      setProjectDocuments(docs);
       setExceptions(e);
       setAuditEvents(a);
       setProjectAnomalies(anoms);
@@ -334,7 +340,50 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
     } finally {
       setDrawerLoading(false);
     }
-  }, [showToast]);
+  }, [showToast, user]);
+
+  // Section 10 & 24: Operational Document Intelligence Verification & Review Queue metrics
+  const pendingVerificationCount = useMemo(() => {
+    return projectDocuments.filter(
+      (d) => d.reviewStatus === 'VERIFICATION_REQUIRED' || d.reviewStatus === 'VERIFICATION_IN_PROGRESS'
+    ).length;
+  }, [projectDocuments]);
+
+  const pendingInconsistentCount = useMemo(() => {
+    return projectDocuments.filter(
+      (d) =>
+        d.reviewStatus === 'REVIEW_REQUIRED' ||
+        d.validationStatus === 'INCONSISTENCY_DETECTED' ||
+        (d.crossValidationSummary?.mismatchCount || 0) > 0
+    ).length;
+  }, [projectDocuments]);
+
+  const pendingProcessingCount = useMemo(() => {
+    return projectDocuments.filter(
+      (d) => d.processingStatus === 'UPLOADED' || d.extractionStatus === 'PENDING'
+    ).length;
+  }, [projectDocuments]);
+
+  const pendingRevisionCount = useMemo(() => {
+    return projectDocuments.filter((d) => d.reviewStatus === 'REVISION_REQUESTED').length;
+  }, [projectDocuments]);
+
+  // Unique document IDs requiring action to prevent double-counting across overlapping categories
+  const pendingActionDocuments = useMemo(() => {
+    return projectDocuments.filter(
+      (d) =>
+        d.processingStatus === 'UPLOADED' ||
+        d.extractionStatus === 'PENDING' ||
+        d.reviewStatus === 'VERIFICATION_REQUIRED' ||
+        d.reviewStatus === 'VERIFICATION_IN_PROGRESS' ||
+        d.reviewStatus === 'REVIEW_REQUIRED' ||
+        d.reviewStatus === 'REVISION_REQUESTED' ||
+        d.validationStatus === 'INCONSISTENCY_DETECTED' ||
+        (d.crossValidationSummary?.mismatchCount || 0) > 0
+    );
+  }, [projectDocuments]);
+
+  const totalPendingDocActions = pendingActionDocuments.length;
 
   const handleSelectProject = (project: Project) => {
     setSelectedProject(project);
@@ -1474,7 +1523,13 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
                 { id: 'progress', label: `Site Updates (${progressUpdates.length})`, icon: Activity },
                 { id: 'financials', label: `Expenditures (${financialRecords.length})`, icon: Coins },
                 { id: 'inspections', label: `Inspections (${inspections.length})`, icon: ShieldCheck },
-                { id: 'documents', label: 'Documents & Intelligence', icon: FileText },
+                {
+                  id: 'documents',
+                  label: totalPendingDocActions > 0
+                    ? `Documents (${totalPendingDocActions} Action)`
+                    : `Documents (${projectDocuments.length})`,
+                  icon: FileText,
+                },
                 {
                   id: 'exceptions',
                   label: `Exceptions (${exceptions.filter((e) => e.status !== 'RESOLVED').length})`,
@@ -2018,9 +2073,137 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
               </div>
             )}
 
-            {/* Tab 6: Monitoring Exceptions */}
+            {/* Tab 6: Monitoring Exceptions & Document Verification Queue */}
             {activeTab === 'exceptions' && (
               <div className="space-y-4">
+                {/* Section 10: Operational Document Verification & Review Queue */}
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
+                    <div className="flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-blue-700" />
+                      <h4 className="font-bold text-xs text-slate-900 uppercase tracking-wider">
+                        Document Verification & Operational Review Queue
+                      </h4>
+                    </div>
+                    {totalPendingDocActions > 0 ? (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300">
+                        {totalPendingDocActions} Action{totalPendingDocActions > 1 ? 's' : ''} Pending
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">
+                        All Documents Clear
+                      </span>
+                    )}
+                  </div>
+
+                  {totalPendingDocActions === 0 ? (
+                    <div className="p-3 bg-emerald-50/60 border border-emerald-200 rounded-lg flex items-center justify-between text-xs text-emerald-900">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <span>All project documents are corroborated clean or verified. No pending document verification tasks.</span>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setActiveTab('documents')}
+                        className="text-xs text-emerald-800 border-emerald-300 h-7"
+                      >
+                        View Documents ({projectDocuments.length})
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2.5">
+                      <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-amber-950">
+                        <div>
+                          <div className="font-bold flex items-center gap-1.5">
+                            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                            <span>Actionable Document Intelligence Tasks Requiring Officer Review</span>
+                          </div>
+                          <div className="text-[11px] text-amber-900 mt-1 flex items-center gap-3 flex-wrap">
+                            {pendingProcessingCount > 0 && (
+                              <span>• {pendingProcessingCount} awaiting government processing</span>
+                            )}
+                            {pendingVerificationCount > 0 && (
+                              <span>• {pendingVerificationCount} flagged for official verification</span>
+                            )}
+                            {pendingInconsistentCount > 0 && (
+                              <span>• {pendingInconsistentCount} with baseline variances detected</span>
+                            )}
+                            {pendingRevisionCount > 0 && (
+                              <span>• {pendingRevisionCount} agency revision{pendingRevisionCount > 1 ? 's' : ''} requested</span>
+                            )}
+                          </div>
+                        </div>
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            setSelectedTargetDocId(undefined);
+                            setActiveTab('documents');
+                          }}
+                          className="bg-blue-700 hover:bg-blue-800 text-white font-semibold text-xs shrink-0 shadow-xs"
+                        >
+                          Open Document Queue &rarr;
+                        </Button>
+                      </div>
+
+                      {/* Compact listing of pending documents */}
+                      <div className="grid grid-cols-1 gap-2">
+                        {pendingActionDocuments.map((docItem) => (
+                            <div
+                              key={docItem.id}
+                              className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg flex items-center justify-between gap-3 text-xs"
+                            >
+                              <div className="min-w-0">
+                                <div className="font-bold text-slate-900 truncate">
+                                  {docItem.originalFileName}
+                                </div>
+                                <div className="text-[11px] text-slate-500 flex items-center gap-2 mt-0.5">
+                                  <span>{docItem.documentType}</span>
+                                  <span>•</span>
+                                  <span>Uploaded by {docItem.uploaderName || docItem.uploadedBy} ({docItem.uploaderRole})</span>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2 shrink-0">
+                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                                  docItem.reviewStatus === 'VERIFICATION_REQUIRED'
+                                    ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                                    : docItem.reviewStatus === 'VERIFICATION_IN_PROGRESS'
+                                    ? 'bg-indigo-100 text-indigo-900 border border-indigo-300'
+                                    : docItem.reviewStatus === 'REVISION_REQUESTED'
+                                    ? 'bg-purple-100 text-purple-900 border border-purple-300'
+                                    : docItem.processingStatus === 'UPLOADED'
+                                    ? 'bg-slate-200 text-slate-800'
+                                    : 'bg-rose-100 text-rose-900 border border-rose-300'
+                                }`}>
+                                  {docItem.reviewStatus === 'VERIFICATION_REQUIRED'
+                                    ? 'Verification Required'
+                                    : docItem.reviewStatus === 'VERIFICATION_IN_PROGRESS'
+                                    ? 'Verification In Progress'
+                                    : docItem.reviewStatus === 'REVISION_REQUESTED'
+                                    ? 'Agency Revision Requested'
+                                    : docItem.processingStatus === 'UPLOADED'
+                                    ? 'Awaiting Processing'
+                                    : 'Discrepancy Review'}
+                                </span>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => {
+                                    setSelectedTargetDocId(docItem.id);
+                                    setActiveTab('documents');
+                                  }}
+                                  className="text-xs h-7 px-2 text-blue-700 border-blue-300 hover:bg-blue-50"
+                                >
+                                  Review Document
+                                </Button>
+                              </div>
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <div>
                   <h4 className="font-bold text-slate-900 text-xs">Deterministic Monitoring Exceptions</h4>
                   <p className="text-[11px] text-slate-500">
@@ -2637,6 +2820,7 @@ export const ProjectMonitoring: React.FC<{ onNavigate: (path: string) => void }>
                 project={selectedProject}
                 userRole="government"
                 onNavigate={onNavigate}
+                targetDocumentId={selectedTargetDocId}
               />
             )}
 

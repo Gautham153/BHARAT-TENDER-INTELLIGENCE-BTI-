@@ -178,7 +178,7 @@ export default async function handler(req: any, res: any) {
     try {
       // Action 1: Request Authorized Supabase Storage Upload URL
       if (action === 'document-upload-url' || action === 'document-upload-initiate') {
-        const { documentId, projectId, fileName, mimeType, fileSize, fileHash } = payload;
+        const { documentId, projectId, fileName, mimeType, fileSize, fileHash, revisionOfDocumentId } = payload;
 
         if (!documentId || !projectId || !fileName || !fileSize) {
           return res.status(400).json({
@@ -194,6 +194,7 @@ export default async function handler(req: any, res: any) {
           mimeType: mimeType || 'application/pdf',
           fileSize: Number(fileSize),
           fileHash,
+          revisionOfDocumentId,
           authHeader,
         });
 
@@ -213,6 +214,7 @@ export default async function handler(req: any, res: any) {
           fileDataUrl,
           bufferBase64,
           buffer,
+          revisionOfDocumentId,
         } = payload;
         const binary = fileDataUrl || bufferBase64 || buffer;
 
@@ -232,6 +234,7 @@ export default async function handler(req: any, res: any) {
           fileHash,
           fileSize: typeof fileSize === 'number' ? fileSize : undefined,
           bufferOrBase64: binary,
+          revisionOfDocumentId,
           authHeader,
         });
 
@@ -276,9 +279,27 @@ export default async function handler(req: any, res: any) {
         return res.status(200).json(result);
       }
 
+      // Action 5: Server-Authored Public Transparency Projection Deletion (Fail-Closed Restriction)
+      if (action === 'delete-public-projection' || action === 'delete-projection') {
+        const { projectId } = payload;
+        if (!projectId) {
+          return res.status(400).json({
+            success: false,
+            error: 'Invalid Request: projectId is required for public projection deletion.',
+          });
+        }
+
+        const result = await publicTransparencyServer.deletePublicProjection({
+          projectId,
+          authHeader,
+        });
+
+        return res.status(200).json(result);
+      }
+
       return res.status(400).json({
         success: false,
-        error: `Unsupported POST action: '${action || 'none'}'. Supported actions: document-upload-url, document-upload, document-cleanup-orphan, sync-public-projection.`,
+        error: `Unsupported POST action: '${action || 'none'}'. Supported actions: document-upload-url, document-upload, document-cleanup-orphan, sync-public-projection, delete-public-projection.`,
       });
     } catch (err: any) {
       const statusCode = resolveStatusCode(err);
